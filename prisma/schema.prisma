@@ -1,0 +1,545 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoleName {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum PlatformMode {
+  OFFICIAL_API
+  COMPATIBLE_API
+  BROWSER_ASSISTED
+  MANUAL
+}
+
+enum PlatformAvailability {
+  READY
+  API_REVIEW_REQUIRED
+  API_RESEARCH_REQUIRED
+  CREDENTIAL_REQUIRED
+  MANUAL_ONLY
+}
+
+enum AccountStatus {
+  CONNECTED
+  EXPIRED
+  RECONNECT_REQUIRED
+  DISABLED
+  ERROR
+}
+
+enum CredentialStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+enum SourceType {
+  MANUAL
+  URL
+  RSS
+  SITEMAP
+  WORDPRESS
+}
+
+enum SourceArticleStatus {
+  DISCOVERED
+  FETCHED
+  DUPLICATE
+  FAILED
+}
+
+enum ContentStatus {
+  DRAFT
+  FETCHED
+  AI_GENERATING
+  GENERATED
+  WAITING_REVIEW
+  APPROVED
+  ARCHIVED
+}
+
+enum VariantStatus {
+  DRAFT
+  GENERATED
+  APPROVED
+  REJECTED
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  PARTIAL
+  CANCELLED
+}
+
+enum PublishJobStatus {
+  SCHEDULED
+  QUEUED
+  PUBLISHING
+  PROCESSING
+  PUBLISHED
+  RETRY
+  FAILED
+  NEEDS_ACTION
+  POSSIBLE_DUPLICATE
+  CANCELLED
+}
+
+enum AttemptStatus {
+  STARTED
+  SUCCEEDED
+  RETRYABLE_FAILURE
+  PERMANENT_FAILURE
+}
+
+enum PublishedPostStatus {
+  PUBLISHED
+  DELETED
+  UNKNOWN
+}
+
+enum OAuthStateStatus {
+  PENDING
+  CONSUMED
+  EXPIRED
+}
+
+model User {
+  id              String                @id @default(uuid()) @db.Uuid
+  email           String                @unique
+  passwordHash    String
+  displayName     String
+  enabled         Boolean               @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  roles           UserRole[]
+  refreshSessions RefreshTokenSession[]
+  sources         ContentSource[]
+  contents        Content[]
+  campaigns       Campaign[]
+  media           MediaAsset[]
+  platformAccounts PlatformAccount[]
+  auditLogs       AuditLog[]            @relation("AuditActor")
+  oauthStates     OAuthState[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String     @id @default(uuid()) @db.Uuid
+  name        RoleName   @unique
+  description String?
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  userId String @db.Uuid
+  roleId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RefreshTokenSession {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?
+  ipAddress  String?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("refresh_token_sessions")
+}
+
+model Platform {
+  id           String                    @id @default(uuid()) @db.Uuid
+  slug         String                    @unique
+  name         String
+  mode         PlatformMode
+  availability PlatformAvailability
+  docsUrl      String?
+  enabled      Boolean                   @default(false)
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  capability   PlatformCapability?
+  accounts     PlatformAccount[]
+  variants     ContentVariant[]
+  prompts      PromptTemplate[]
+
+  @@map("platforms")
+}
+
+model PlatformCapability {
+  id        String   @id @default(uuid()) @db.Uuid
+  platformId String  @unique @db.Uuid
+  text      Boolean  @default(true)
+  image     Boolean  @default(false)
+  video     Boolean  @default(false)
+  article   Boolean  @default(false)
+  delete    Boolean  @default(false)
+  schedule  Boolean  @default(false)
+  analytics Boolean  @default(false)
+  maxText   Int?
+  maxImages Int?
+  metadata  Json     @default("{}")
+  platform  Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  @@map("platform_capabilities")
+}
+
+model PlatformAccount {
+  id             String              @id @default(uuid()) @db.Uuid
+  ownerId        String              @db.Uuid
+  platformId     String              @db.Uuid
+  name           String
+  username       String?
+  externalId     String?
+  settings       Json                @default("{}")
+  enabled        Boolean             @default(true)
+  status         AccountStatus       @default(RECONNECT_REQUIRED)
+  lastTestedAt   DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  platform       Platform            @relation(fields: [platformId], references: [id], onDelete: Restrict)
+  owner          User                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  credential     PlatformCredential?
+  oauthToken     OAuthToken?
+  campaignTargets CampaignTarget[]
+  publishJobs    PublishJob[]
+  publishedPosts PublishedPost[]
+
+  @@unique([platformId, externalId])
+  @@index([platformId, enabled, status])
+  @@index([ownerId, enabled])
+  @@map("platform_accounts")
+}
+
+model PlatformCredential {
+  id               String           @id @default(uuid()) @db.Uuid
+  platformAccountId String          @unique @db.Uuid
+  encryptedPayload String
+  keyVersion       String
+  status           CredentialStatus @default(ACTIVE)
+  expiresAt        DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  account          PlatformAccount  @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
+
+  @@map("platform_credentials")
+}
+
+model OAuthToken {
+  id                    String          @id @default(uuid()) @db.Uuid
+  platformAccountId     String          @unique @db.Uuid
+  encryptedAccessToken  String
+  encryptedRefreshToken String?
+  scopes                String[]
+  tokenType             String          @default("Bearer")
+  expiresAt             DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  account               PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
+
+  @@map("oauth_tokens")
+}
+
+model ContentSource {
+  id          String          @id @default(uuid()) @db.Uuid
+  ownerId     String          @db.Uuid
+  name        String
+  type        SourceType
+  url         String?
+  config      Json            @default("{}")
+  enabled     Boolean         @default(true)
+  lastFetchedAt DateTime?
+  nextFetchAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  owner       User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  articles    SourceArticle[]
+
+  @@index([ownerId, enabled])
+  @@map("content_sources")
+}
+
+model SourceArticle {
+  id           String              @id @default(uuid()) @db.Uuid
+  sourceId     String              @db.Uuid
+  externalId   String?
+  canonicalUrl String?
+  title        String
+  description  String?
+  mainContent  String
+  author       String?
+  publishedAt  DateTime?
+  images       String[]
+  tags         String[]
+  categories   String[]
+  contentHash  String
+  rawMetadata  Json                @default("{}")
+  status       SourceArticleStatus @default(FETCHED)
+  errorMessage String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  source       ContentSource       @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  content      Content?
+
+  @@unique([sourceId, canonicalUrl])
+  @@index([contentHash])
+  @@map("source_articles")
+}
+
+model Content {
+  id              String           @id @default(uuid()) @db.Uuid
+  ownerId         String           @db.Uuid
+  sourceArticleId String?          @unique @db.Uuid
+  title           String
+  body            String
+  summary         String?
+  language        String           @default("vi")
+  canonicalUrl    String?
+  contentHash     String
+  aiAnalysis      Json?
+  status          ContentStatus    @default(DRAFT)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  owner           User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  sourceArticle   SourceArticle?   @relation(fields: [sourceArticleId], references: [id], onDelete: SetNull)
+  variants        ContentVariant[]
+  media           MediaAsset[]
+  campaigns       Campaign[]
+
+  @@index([ownerId, status])
+  @@index([contentHash])
+  @@map("contents")
+}
+
+model ContentVariant {
+  id          String        @id @default(uuid()) @db.Uuid
+  contentId   String        @db.Uuid
+  platformId  String        @db.Uuid
+  title       String?
+  body        String
+  summary     String?
+  hashtags    String[]
+  cta         String?
+  recommended Boolean       @default(true)
+  reason      String?
+  mediaRecommendation Json?
+  status      VariantStatus @default(GENERATED)
+  version     Int           @default(1)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  content     Content       @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  platform    Platform      @relation(fields: [platformId], references: [id], onDelete: Restrict)
+  media       MediaAsset[]
+  targets     CampaignTarget[]
+
+  @@unique([contentId, platformId, version])
+  @@index([contentId, status])
+  @@map("content_variants")
+}
+
+model MediaAsset {
+  id          String          @id @default(uuid()) @db.Uuid
+  ownerId     String          @db.Uuid
+  contentId   String?         @db.Uuid
+  variantId   String?         @db.Uuid
+  type        MediaType
+  storageKey  String          @unique
+  publicUrl   String?
+  mimeType    String
+  sizeBytes   BigInt
+  width       Int?
+  height      Int?
+  durationMs  Int?
+  checksum    String
+  metadata    Json            @default("{}")
+  createdAt   DateTime        @default(now())
+  owner       User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  content     Content?        @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  variant     ContentVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@map("media_assets")
+}
+
+model PromptTemplate {
+  id           String    @id @default(uuid()) @db.Uuid
+  platformId   String?   @db.Uuid
+  name         String
+  systemPrompt String
+  userTemplate String
+  schema       Json
+  version      Int       @default(1)
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  platform     Platform? @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  @@unique([platformId, name, version])
+  @@index([platformId, active])
+  @@map("prompt_templates")
+}
+
+model Campaign {
+  id          String           @id @default(uuid()) @db.Uuid
+  ownerId     String           @db.Uuid
+  contentId   String           @db.Uuid
+  name        String
+  status      CampaignStatus   @default(DRAFT)
+  scheduledAt DateTime?
+  timezone    String           @default("UTC")
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  owner       User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  content     Content          @relation(fields: [contentId], references: [id], onDelete: Restrict)
+  targets     CampaignTarget[]
+
+  @@index([status, scheduledAt])
+  @@map("campaigns")
+}
+
+model CampaignTarget {
+  id                String          @id @default(uuid()) @db.Uuid
+  campaignId        String          @db.Uuid
+  platformAccountId String          @db.Uuid
+  contentVariantId  String          @db.Uuid
+  enabled           Boolean         @default(true)
+  overrides         Json            @default("{}")
+  campaign          Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  platformAccount   PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Restrict)
+  contentVariant    ContentVariant  @relation(fields: [contentVariantId], references: [id], onDelete: Restrict)
+  publishJobs       PublishJob[]
+
+  @@unique([campaignId, platformAccountId])
+  @@map("campaign_targets")
+}
+
+model PublishJob {
+  id                String           @id @default(uuid()) @db.Uuid
+  campaignTargetId  String           @db.Uuid
+  platformAccountId String           @db.Uuid
+  idempotencyKey    String           @unique
+  status            PublishJobStatus @default(SCHEDULED)
+  scheduledAt       DateTime
+  nextAttemptAt     DateTime?
+  attemptCount      Int              @default(0)
+  maxAttempts       Int              @default(3)
+  lastErrorCode     String?
+  lastErrorMessage  String?
+  lockedAt          DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  target            CampaignTarget   @relation(fields: [campaignTargetId], references: [id], onDelete: Cascade)
+  platformAccount   PlatformAccount  @relation(fields: [platformAccountId], references: [id], onDelete: Restrict)
+  attempts          PublishAttempt[]
+  publishedPost     PublishedPost?
+
+  @@index([status, scheduledAt])
+  @@index([status, nextAttemptAt])
+  @@map("publish_jobs")
+}
+
+model PublishAttempt {
+  id             String        @id @default(uuid()) @db.Uuid
+  publishJobId   String        @db.Uuid
+  attemptNumber  Int
+  status         AttemptStatus
+  requestMetadata Json?
+  responseMetadata Json?
+  errorCode      String?
+  errorMessage   String?
+  startedAt      DateTime      @default(now())
+  finishedAt     DateTime?
+  job            PublishJob    @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
+
+  @@unique([publishJobId, attemptNumber])
+  @@map("publish_attempts")
+}
+
+model PublishedPost {
+  id                String              @id @default(uuid()) @db.Uuid
+  publishJobId      String              @unique @db.Uuid
+  platformAccountId String              @db.Uuid
+  externalPostId    String
+  url               String?
+  status            PublishedPostStatus @default(PUBLISHED)
+  publishedAt       DateTime            @default(now())
+  metadata          Json                @default("{}")
+  job               PublishJob          @relation(fields: [publishJobId], references: [id], onDelete: Restrict)
+  platformAccount   PlatformAccount     @relation(fields: [platformAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([platformAccountId, externalPostId])
+  @@map("published_posts")
+}
+
+model AuditLog {
+  id          String    @id @default(uuid()) @db.Uuid
+  actorId     String?   @db.Uuid
+  action      String
+  entityType  String
+  entityId    String?
+  requestId   String?
+  ipAddress   String?
+  before      Json?
+  after       Json?
+  createdAt   DateTime  @default(now())
+  actor       User?     @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  description String?
+  secret      Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+model OAuthState {
+  id           String           @id @default(uuid()) @db.Uuid
+  userId       String           @db.Uuid
+  provider     String
+  stateHash    String           @unique
+  codeVerifier String?
+  redirectUri  String
+  status       OAuthStateStatus @default(PENDING)
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  createdAt    DateTime         @default(now())
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([provider, status, expiresAt])
+  @@map("oauth_states")
+}
