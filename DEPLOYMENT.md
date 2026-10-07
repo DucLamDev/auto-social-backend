@@ -306,7 +306,7 @@ sudo docker compose --env-file .env ps
 curl --fail --silent http://127.0.0.1:3000/api/health
 ```
 
-Compose cũng truyền `NEXT_PUBLIC_APP_NAME` và `NEXT_PUBLIC_POLL_INTERVAL_MS` từ `.env` thành build args. Image mặc định có tên `social-publisher-frontend:local`; trước mỗi upgrade hãy tag lại image cũ bằng release/commit để rollback, hoặc thay `image:` bằng tag bất biến trong quy trình release.
+Compose cũng truyền `NEXT_PUBLIC_APP_NAME` và `NEXT_PUBLIC_POLL_INTERVAL_MS` từ `.env` thành build args. Trên production, luôn đặt `FRONTEND_IMAGE=social-publisher-frontend:<RELEASE_TAG>` trong `.env` trước khi build; chỉ local development mới nên dùng giá trị mặc định `:local`. Giữ tag release trước đó để rollback mà không rebuild.
 
 ## 9. Reverse proxy và TLS bằng Caddy
 
