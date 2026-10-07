@@ -234,7 +234,7 @@ export class ManualPayloadContractDto {
   @ApiProperty({ enum: PublishJobStatus }) status!: PublishJobStatus;
   @ApiProperty() platform!: string;
   @ApiProperty() accountName!: string;
-  @ApiPropertyOptional() title?: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) title?: string | null;
   @ApiProperty() body!: string;
   @ApiProperty({ type: [String] }) hashtags!: string[];
   @ApiPropertyOptional() suggestedExternalPostId?: string;
@@ -265,7 +265,7 @@ export class AdminUserContractDto {
   @ApiProperty({ format: 'email' }) email!: string;
   @ApiProperty() displayName!: string;
   @ApiProperty() enabled!: boolean;
-  @ApiPropertyOptional({ format: 'date-time' }) lastLoginAt?: string;
+  @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true }) lastLoginAt?: string | null;
   @ApiProperty({ format: 'date-time' }) createdAt!: string;
   @ApiPropertyOptional({ type: 'array', items: { type: 'object', additionalProperties: true } }) roles?: Array<Record<string, unknown>>;
 }
@@ -294,7 +294,7 @@ export class PublishedPostContractDto {
   @ApiProperty({ format: 'uuid' }) publishJobId!: string;
   @ApiProperty({ format: 'uuid' }) platformAccountId!: string;
   @ApiProperty() externalPostId!: string;
-  @ApiPropertyOptional({ format: 'uri' }) url?: string;
+  @ApiPropertyOptional({ type: String, format: 'uri', nullable: true }) url?: string | null;
   @ApiProperty({ format: 'date-time' }) publishedAt!: string;
   @ApiPropertyOptional({ type: 'object', additionalProperties: true }) platformAccount?: Record<string, unknown>;
   @ApiPropertyOptional({ type: 'object', additionalProperties: true }) job?: Record<string, unknown>;
@@ -302,11 +302,11 @@ export class PublishedPostContractDto {
 
 export class MediaAssetContractDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiPropertyOptional({ format: 'uuid' }) contentId?: string;
-  @ApiPropertyOptional({ format: 'uuid' }) variantId?: string;
+  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true }) contentId?: string | null;
+  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true }) variantId?: string | null;
   @ApiProperty({ enum: ['IMAGE', 'VIDEO', 'DOCUMENT'] }) type!: string;
   @ApiProperty() storageKey!: string;
-  @ApiPropertyOptional({ format: 'uri' }) publicUrl?: string;
+  @ApiPropertyOptional({ type: String, format: 'uri', nullable: true }) publicUrl?: string | null;
   @ApiProperty() mimeType!: string;
   @ApiProperty({ description: 'Decimal byte count serialized as a string' }) sizeBytes!: string;
   @ApiProperty() checksum!: string;
@@ -317,28 +317,31 @@ export class PublishAttemptLogContractDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty() attemptNumber!: number;
   @ApiProperty() status!: string;
-  @ApiPropertyOptional() errorCode?: string;
-  @ApiPropertyOptional() errorMessage?: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) errorCode?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) errorMessage?: string | null;
   @ApiProperty({ format: 'date-time' }) startedAt!: string;
-  @ApiPropertyOptional({ format: 'date-time' }) finishedAt?: string;
+  @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true }) finishedAt?: string | null;
   @ApiPropertyOptional({ type: 'object', additionalProperties: true }) job?: Record<string, unknown>;
 }
 
 export class AuditLogContractDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiPropertyOptional({ format: 'uuid' }) actorId?: string;
+  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true }) actorId?: string | null;
   @ApiProperty() action!: string;
   @ApiProperty() entityType!: string;
-  @ApiPropertyOptional() entityId?: string;
-  @ApiPropertyOptional() requestId?: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) entityId?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) requestId?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) ipAddress?: string | null;
   @ApiProperty({ format: 'date-time' }) createdAt!: string;
-  @ApiPropertyOptional({ type: 'object', additionalProperties: true }) actor?: Record<string, unknown>;
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true }) actor?: Record<string, unknown> | null;
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true }) before?: Record<string, unknown> | null;
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true }) after?: Record<string, unknown> | null;
 }
 
 export class SystemSettingContractDto {
   @ApiProperty() key!: string;
   @ApiProperty({ type: 'object', additionalProperties: true }) value!: Record<string, unknown>;
-  @ApiPropertyOptional() description?: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) description?: string | null;
   @ApiProperty() secret!: boolean;
   @ApiProperty({ format: 'date-time' }) updatedAt!: string;
 }

@@ -5805,7 +5805,8 @@
           },
           "lastLoginAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "nullable": true
           },
           "createdAt": {
             "type": "string",
@@ -7189,7 +7190,8 @@
             "type": "string"
           },
           "title": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "body": {
             "type": "string"
@@ -7251,7 +7253,8 @@
           },
           "url": {
             "type": "string",
-            "format": "uri"
+            "format": "uri",
+            "nullable": true
           },
           "publishedAt": {
             "type": "string",
@@ -7283,11 +7286,13 @@
           },
           "contentId": {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "nullable": true
           },
           "variantId": {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "nullable": true
           },
           "type": {
             "type": "string",
@@ -7302,7 +7307,8 @@
           },
           "publicUrl": {
             "type": "string",
-            "format": "uri"
+            "format": "uri",
+            "nullable": true
           },
           "mimeType": {
             "type": "string"
@@ -7343,10 +7349,12 @@
             "type": "string"
           },
           "errorCode": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "errorMessage": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "startedAt": {
             "type": "string",
@@ -7354,7 +7362,8 @@
           },
           "finishedAt": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "nullable": true
           },
           "job": {
             "type": "object",
@@ -7377,7 +7386,8 @@
           },
           "actorId": {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "nullable": true
           },
           "action": {
             "type": "string"
@@ -7386,10 +7396,16 @@
             "type": "string"
           },
           "entityId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "requestId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
+          },
+          "ipAddress": {
+            "type": "string",
+            "nullable": true
           },
           "createdAt": {
             "type": "string",
@@ -7397,7 +7413,18 @@
           },
           "actor": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "before": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "after": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true
           }
         },
         "required": [
@@ -7418,7 +7445,8 @@
             "additionalProperties": true
           },
           "description": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "secret": {
             "type": "boolean"
