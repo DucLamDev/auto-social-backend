@@ -204,6 +204,14 @@ export class CampaignContractDto {
   @ApiProperty({ format: 'date-time' }) updatedAt!: string;
 }
 
+export class AutomatedCampaignContractDto {
+  @ApiProperty({ type: CampaignContractDto }) campaign!: CampaignContractDto;
+  @ApiProperty({ type: ContentContractDto }) content!: ContentContractDto;
+  @ApiProperty({ minimum: 1 }) generatedVariants!: number;
+  @ApiProperty({ minimum: 1 }) jobsCreated!: number;
+  @ApiProperty({ description: 'Whether the campaign was activated for immediate or scheduled delivery.' }) activated!: boolean;
+}
+
 export class PublishJobContractDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ enum: PublishJobStatus }) status!: PublishJobStatus;

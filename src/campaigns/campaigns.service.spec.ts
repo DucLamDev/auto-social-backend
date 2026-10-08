@@ -124,6 +124,26 @@ describe('CampaignsService', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it('does not activate a draft campaign with no targets or jobs', async () => {
+    const update = jest.fn();
+    const prisma = {
+      campaign: {
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'campaign-1',
+          status: CampaignStatus.DRAFT,
+          scheduledAt: new Date(),
+          targets: [],
+        }),
+        update,
+      },
+    } as unknown as PrismaService;
+    const service = new CampaignsService(prisma, {} as PublishQueueService);
+
+    await expect(service.publish('owner-1', 'campaign-1'))
+      .rejects.toThrow('at least one target with a publish job');
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('does not roll a job back after an ambiguous enqueue failure if a worker already claimed it', async () => {
     const rollback = jest.fn().mockResolvedValue({ count: 0 });
     const prisma = {

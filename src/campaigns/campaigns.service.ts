@@ -122,6 +122,9 @@ export class CampaignsService {
     if (campaign.status !== CampaignStatus.DRAFT) {
       throw new ConflictException('Only a draft campaign can be published');
     }
+    if (!campaign.targets.length || campaign.targets.some((target) => target.publishJobs.length === 0)) {
+      throw new BadRequestException('A campaign needs at least one target with a publish job before activation');
+    }
     const now = new Date();
     const publishNow = !campaign.scheduledAt || campaign.scheduledAt <= now;
     await this.prisma.campaign.update({
