@@ -6,6 +6,7 @@ import { ConnectorsBootstrapService } from './connectors-bootstrap.service';
 import { ConnectorsController } from './connectors.controller';
 import { ConnectorRegistryService } from './core/connector-registry.service';
 import { DevToConnector } from './devto/devto.connector';
+import { DiscourseConnector } from './discourse/discourse.connector';
 import { DiscordConnector } from './discord/discord.connector';
 import { InstagramConnector } from './instagram/instagram.connector';
 import { LinkedInConnector } from './linkedin/linkedin.connector';
@@ -22,6 +23,7 @@ const implementations = [
   WordPressConnector,
   BloggerConnector,
   DevToConnector,
+  DiscourseConnector,
   DiscordConnector,
   BlueskyConnector,
   MastodonConnector,

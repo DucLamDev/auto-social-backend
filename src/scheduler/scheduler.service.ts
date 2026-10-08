@@ -1,9 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { CampaignStatus, PublishJobStatus } from '@prisma/client';
+import { AttemptStatus, CampaignStatus, PublishJobStatus } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { PublishQueueService } from '../queue/publish-queue.service';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
+import {
+  WORKER_CRASH_UNCERTAIN_RESULT_CODE,
+  WORKER_CRASH_UNCERTAIN_RESULT_MESSAGE,
+} from '../publishing/publishing.constants';
 
 const STALE_DELIVERY_AFTER_MS = 15 * 60_000;
 
@@ -57,14 +61,53 @@ export class SchedulerService {
       if (!claimed.count) continue;
       try { await this.queue.enqueue(job.id, job.platformAccount.platform.slug); }
       catch (error) {
-        await this.prisma.publishJob.update({ where: { id: job.id }, data: { status: job.status } });
+        await this.prisma.publishJob.updateMany({
+          where: { id: job.id, status: PublishJobStatus.QUEUED },
+          data: { status: job.status },
+        });
         this.logger.error(`Failed to enqueue ${job.id}: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
     }
-    await this.prisma.publishJob.updateMany({
-      where: { status: PublishJobStatus.PUBLISHING, lockedAt: { lt: staleDeliveryBefore } },
-      data: { status: PublishJobStatus.POSSIBLE_DUPLICATE, lastErrorCode: 'WORKER_CRASH_UNCERTAIN_RESULT', lastErrorMessage: 'Worker stopped after publish began; manual verification is required', lockedAt: null },
+    const reconciledDeliveries = await this.prisma.publishJob.updateMany({
+      where: {
+        OR: [
+          { status: PublishJobStatus.PUBLISHING, lockedAt: { lt: staleDeliveryBefore } },
+          {
+            status: PublishJobStatus.POSSIBLE_DUPLICATE,
+            lastErrorCode: WORKER_CRASH_UNCERTAIN_RESULT_CODE,
+          },
+        ],
+      },
+      data: {
+        status: PublishJobStatus.NEEDS_ACTION,
+        nextAttemptAt: null,
+        lastErrorCode: WORKER_CRASH_UNCERTAIN_RESULT_CODE,
+        lastErrorMessage: WORKER_CRASH_UNCERTAIN_RESULT_MESSAGE,
+        lockedAt: null,
+      },
     });
+    if (reconciledDeliveries.count) {
+      await this.prisma.publishAttempt.updateMany({
+        where: {
+          status: AttemptStatus.STARTED,
+          job: {
+            status: PublishJobStatus.NEEDS_ACTION,
+            lastErrorCode: WORKER_CRASH_UNCERTAIN_RESULT_CODE,
+          },
+        },
+        data: {
+          status: AttemptStatus.PERMANENT_FAILURE,
+          finishedAt: new Date(),
+          responseMetadata: {
+            reconciliationRequired: true,
+            submissionUncertain: true,
+            originalErrorCode: WORKER_CRASH_UNCERTAIN_RESULT_CODE,
+          },
+          errorCode: WORKER_CRASH_UNCERTAIN_RESULT_CODE,
+          errorMessage: WORKER_CRASH_UNCERTAIN_RESULT_MESSAGE,
+        },
+      });
+    }
     await this.campaignStatus.reconcileTerminal();
   }
 }

@@ -7,6 +7,7 @@ import { ManualPublishedDto } from './dto/manual-published.dto';
 import { ListPublishJobsQueryDto } from './dto/list-publish-jobs-query.dto';
 import { paginatedData } from '../common/interceptors/api-response.interceptor';
 import { PublishJobMetricsQueryDto } from './dto/publish-job-metrics-query.dto';
+import { WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
 
 @Injectable()
 export class PublishJobsService {
@@ -110,7 +111,92 @@ export class PublishJobsService {
     });
     try { await this.queue.enqueue(job.id, job.platformAccount.platform.slug); }
     catch (error) {
-      await this.prisma.publishJob.update({ where: { id }, data: { status: PublishJobStatus.RETRY, nextAttemptAt: new Date(Date.now() + 30_000) } });
+      await this.prisma.publishJob.updateMany({
+        where: { id, status: PublishJobStatus.QUEUED },
+        data: {
+          status: PublishJobStatus.RETRY,
+          nextAttemptAt: new Date(Date.now() + 30_000),
+        },
+      });
+      throw error;
+    }
+    return { queued: true };
+  }
+
+  async reconcileNotFound(ownerId: string, id: string, confirmedNotFound: boolean) {
+    if (confirmedNotFound !== true) {
+      throw new BadRequestException('Explicit not-found confirmation is required');
+    }
+    const job = await this.prisma.publishJob.findFirstOrThrow({
+      where: { id, target: { campaign: { ownerId } } },
+      include: {
+        platformAccount: { include: { platform: true } },
+        target: { select: { campaignId: true } },
+        attempts: { orderBy: { attemptNumber: 'desc' }, take: 1 },
+      },
+    });
+    const attempt = job.attempts[0];
+    const responseMetadata = attempt?.responseMetadata
+      && typeof attempt.responseMetadata === 'object'
+      && !Array.isArray(attempt.responseMetadata)
+      ? attempt.responseMetadata as Record<string, unknown>
+      : {};
+    const workerCrashUncertain = job.lastErrorCode === WORKER_CRASH_UNCERTAIN_RESULT_CODE;
+    const connectorSubmissionUncertain = responseMetadata.reconciliationRequired === true
+      && responseMetadata.submissionUncertain === true
+      && responseMetadata.moderationQueue !== true
+      && responseMetadata.providerAccepted !== true
+      && responseMetadata.persistenceRecoveryRequired !== true;
+    if (
+      job.status !== PublishJobStatus.NEEDS_ACTION
+      || (!connectorSubmissionUncertain && !workerCrashUncertain)
+    ) {
+      throw new BadRequestException(
+        'Only an uncertain submission confirmed absent from the provider can be queued again',
+      );
+    }
+
+    await this.prisma.$transaction(async (transaction) => {
+      const claimed = await transaction.publishJob.updateMany({
+        where: { id, status: PublishJobStatus.NEEDS_ACTION },
+        data: {
+          status: PublishJobStatus.QUEUED,
+          nextAttemptAt: null,
+          lockedAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      });
+      if (!claimed.count) {
+        throw new BadRequestException('The publish job is no longer awaiting reconciliation');
+      }
+      if (attempt) {
+        await transaction.publishAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            responseMetadata: {
+              ...responseMetadata,
+              operatorConfirmedNotFound: true,
+              operatorConfirmedNotFoundAt: new Date().toISOString(),
+            },
+          },
+        });
+      }
+      await transaction.campaign.updateMany({
+        where: { id: job.target.campaignId, status: CampaignStatus.PARTIAL },
+        data: { status: CampaignStatus.RUNNING },
+      });
+    });
+    try {
+      await this.queue.enqueue(job.id, job.platformAccount.platform.slug);
+    } catch (error) {
+      await this.prisma.publishJob.updateMany({
+        where: { id, status: PublishJobStatus.QUEUED },
+        data: {
+          status: PublishJobStatus.RETRY,
+          nextAttemptAt: new Date(Date.now() + 30_000),
+        },
+      });
       throw error;
     }
     return { queued: true };
@@ -166,10 +252,49 @@ export class PublishJobsService {
     });
     if (job.status !== PublishJobStatus.NEEDS_ACTION) throw new BadRequestException('Only NEEDS_ACTION jobs can be manually marked published');
     await this.prisma.$transaction(async (transaction) => {
-      await transaction.publishedPost.create({ data: { publishJobId: job.id, platformAccountId: job.platformAccountId, externalPostId: dto.externalPostId, url: dto.url, metadata: { manual: true } } });
-      await transaction.publishJob.update({ where: { id }, data: { status: PublishJobStatus.PUBLISHED } });
+      const claimed = await transaction.publishJob.updateMany({
+        where: { id, status: PublishJobStatus.NEEDS_ACTION },
+        data: {
+          status: PublishJobStatus.PUBLISHED,
+          nextAttemptAt: null,
+          lockedAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      });
+      if (!claimed.count) {
+        throw new BadRequestException('The publish job is no longer awaiting confirmation');
+      }
       const attempt = await transaction.publishAttempt.findFirst({ where: { publishJobId: id }, orderBy: { attemptNumber: 'desc' } });
-      if (attempt) await transaction.publishAttempt.update({ where: { id: attempt.id }, data: { status: AttemptStatus.SUCCEEDED, finishedAt: new Date(), responseMetadata: { manual: true } } });
+      const existingMetadata = attempt?.responseMetadata
+        && typeof attempt.responseMetadata === 'object'
+        && !Array.isArray(attempt.responseMetadata)
+        ? attempt.responseMetadata as Record<string, unknown>
+        : {};
+      const existingUrl = typeof existingMetadata.url === 'string'
+        ? existingMetadata.url
+        : undefined;
+      const publishedUrl = dto.url ?? existingUrl;
+      const confirmationMetadata = {
+        ...existingMetadata,
+        manual: true,
+        manualConfirmed: true,
+        externalPostId: dto.externalPostId,
+        ...(publishedUrl ? { url: publishedUrl } : {}),
+      } as Prisma.InputJsonObject;
+      await transaction.publishedPost.create({ data: { publishJobId: job.id, platformAccountId: job.platformAccountId, externalPostId: dto.externalPostId, url: publishedUrl, metadata: confirmationMetadata } });
+      if (attempt) {
+        await transaction.publishAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: AttemptStatus.SUCCEEDED,
+            finishedAt: new Date(),
+            responseMetadata: confirmationMetadata,
+            errorCode: null,
+            errorMessage: null,
+          },
+        });
+      }
     });
     await this.campaignStatus.refresh(job.target.campaignId);
     return { published: true };

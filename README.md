@@ -11,7 +11,7 @@ Backend độc lập cho nền tảng phân phối nội dung đa kênh. Reposit
 - Nguồn `URL | RSS | SITEMAP | WORDPRESS | MANUAL`, sanitize HTML; crawler và các connector dùng base URL động đều có SSRF guard, DNS validation/pinning và kiểm tra redirect.
 - OpenAI Responses API với JSON Schema/Structured Outputs; prompt lưu trong database.
 - Campaign → target → publish job; scheduler, retry 30s/120s/600s, DLQ, per-job lock, cross-job fingerprint lock (`account + content hash`), rate limit và idempotency key.
-- Connector tự động MVP: Instagram (một ảnh), Threads (text/một ảnh), X (text), LinkedIn (text), WordPress (article), Blogger (article), dev.to (article), Discord (text), Bluesky (text), Mastodon (text).
+- Connector tự động MVP: Instagram (một ảnh), Threads (text/một ảnh), X (text), LinkedIn (text), WordPress (article), Blogger (article), dev.to (article), Discourse (topic text/article), Discord (text), Bluesky (text), Mastodon (text).
 - Reddit và TikTok chạy `MANUAL/NEEDS_ACTION`; hệ thống không bypass CAPTCHA, 2FA, anti-bot hay chính sách nền tảng.
 - OAuth hoàn chỉnh hiện có cho LinkedIn và Google→Blogger. Provider khác hiển thị rõ `API_REVIEW_REQUIRED`, `API_RESEARCH_REQUIRED` hoặc `MANUAL`.
 
@@ -62,7 +62,7 @@ corepack pnpm openapi:export
 | `src/auth`, `src/users` | Login/refresh/logout/me, JWT, RBAC, user admin | Guard global bảo vệ mọi route trừ `@Public()` |
 | `src/platforms` | Catalog và capability của platform | Frontend đọc capability; seed đồng bộ với connector thật |
 | `src/platform-accounts`, `src/credentials`, `src/oauth` | Destination theo owner, secret mã hóa, OAuth state/token | Worker giải mã server-side ngay trước khi gọi connector |
-| `src/connectors` | Interface, registry và adapter API chính thức/manual | `PublishingService` chỉ biết `SocialPublisher`, không biết chi tiết từng API |
+| `src/connectors` | Interface, registry và adapter API chính thức/compatible/manual | `PublishingService` chỉ biết `SocialPublisher`, không biết chi tiết từng API |
 | `src/crawler`, `src/content-sources`, `src/source-articles` | Discover/fetch/clean nội dung nguồn | Tạo `SourceArticle`, sau đó promote thành `Content` |
 | `src/contents`, `src/ai`, `src/prompts`, `src/content-variants` | Nội dung chuẩn, prompt DB và bản viết theo platform | AI chỉ sinh variant, tuyệt đối không publish |
 | `src/campaigns` | Chọn content, variant và nhiều account | Tạo target/job với idempotency key ổn định |
@@ -92,5 +92,6 @@ ContentSource → SourceArticle → Content → AI ContentVariant
 - [SECURITY.md](SECURITY.md)
 - [DEPLOYMENT.md](DEPLOYMENT.md)
 - [SOCIAL_CONFIGURATION.md](SOCIAL_CONFIGURATION.md)
+- [DISCOURSE_CONFIGURATION.md](DISCOURSE_CONFIGURATION.md)
 - [EXTENDED_PLATFORM_CATALOG.md](EXTENDED_PLATFORM_CATALOG.md)
 - [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md)

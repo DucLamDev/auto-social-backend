@@ -146,7 +146,10 @@ export class CampaignsService {
     if (!claimed.count) return;
     try { await this.queue.enqueue(jobId, platform); }
     catch (error) {
-      await this.prisma.publishJob.update({ where: { id: jobId }, data: { status: PublishJobStatus.SCHEDULED } });
+      await this.prisma.publishJob.updateMany({
+        where: { id: jobId, status: PublishJobStatus.QUEUED },
+        data: { status: PublishJobStatus.SCHEDULED },
+      });
       throw error;
     }
   }

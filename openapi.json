@@ -4182,6 +4182,121 @@
         ]
       }
     },
+    "/api/v1/publish-jobs/{id}/reconcile-not-found": {
+      "post": {
+        "operationId": "PublishJobs_reconcileNotFound",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileNotFoundDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MutationResultContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "publish-jobs"
+        ]
+      }
+    },
     "/api/v1/publish-jobs/{id}/mark-published": {
       "post": {
         "operationId": "PublishJobs_markPublished",
@@ -6229,6 +6344,11 @@
             "type": "object",
             "additionalProperties": true,
             "writeOnly": true
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Non-secret connector settings to merge into the existing account settings."
           }
         },
         "required": [
@@ -6260,6 +6380,10 @@
           },
           "message": {
             "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
           }
         },
         "required": [
@@ -7219,6 +7343,19 @@
           "hashtags"
         ]
       },
+      "ReconcileNotFoundDto": {
+        "type": "object",
+        "properties": {
+          "confirmedNotFound": {
+            "type": "boolean",
+            "example": true,
+            "description": "Explicit confirmation that the operator checked topics and moderation queues"
+          }
+        },
+        "required": [
+          "confirmedNotFound"
+        ]
+      },
       "ManualPublishedDto": {
         "type": "object",
         "properties": {
@@ -7363,6 +7500,11 @@
           "finishedAt": {
             "type": "string",
             "format": "date-time",
+            "nullable": true
+          },
+          "responseMetadata": {
+            "type": "object",
+            "additionalProperties": true,
             "nullable": true
           },
           "job": {

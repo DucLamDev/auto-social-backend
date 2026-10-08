@@ -11,4 +11,14 @@ describe('connector retry classification', () => {
     expect(mapHttpError(401)).toMatchObject({ code: ErrorCode.PLATFORM_TOKEN_EXPIRED, retryable: false });
     expect(mapHttpError(403)).toMatchObject({ code: ErrorCode.PLATFORM_PERMISSION_DENIED, retryable: false });
   });
+
+  it('preserves the HTTP status for connector-specific error handling', () => {
+    expect(mapHttpError(404, { error_type: 'not_found' })).toMatchObject({
+      safeDetails: {
+        httpStatus: 404,
+        platformResponse: { error_type: 'not_found' },
+      },
+    });
+    expect(mapHttpError(401)).toMatchObject({ safeDetails: { httpStatus: 401 } });
+  });
 });

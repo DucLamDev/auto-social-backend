@@ -123,4 +123,39 @@ describe('CampaignsService', () => {
     expect(update).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
   });
+
+  it('does not roll a job back after an ambiguous enqueue failure if a worker already claimed it', async () => {
+    const rollback = jest.fn().mockResolvedValue({ count: 0 });
+    const prisma = {
+      campaign: {
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'campaign-1',
+          ownerId: 'owner-1',
+          status: CampaignStatus.DRAFT,
+          scheduledAt: null,
+          targets: [{
+            platformAccount: { platform: { slug: 'discourse' } },
+            publishJobs: [{ id: 'job-1', status: PublishJobStatus.SCHEDULED }],
+          }],
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      publishJob: {
+        updateMany: jest.fn()
+          .mockResolvedValueOnce({ count: 1 })
+          .mockImplementation(rollback),
+      },
+    } as unknown as PrismaService;
+    const enqueueError = new Error('confirm response lost');
+    const service = new CampaignsService(
+      prisma,
+      { enqueue: jest.fn().mockRejectedValue(enqueueError) } as unknown as PublishQueueService,
+    );
+
+    await expect(service.publish('owner-1', 'campaign-1')).rejects.toBe(enqueueError);
+    expect(rollback).toHaveBeenCalledWith({
+      where: { id: 'job-1', status: PublishJobStatus.QUEUED },
+      data: { status: PublishJobStatus.SCHEDULED },
+    });
+  });
 });

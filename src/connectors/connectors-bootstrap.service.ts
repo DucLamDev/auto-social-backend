@@ -3,6 +3,7 @@ import { BloggerConnector } from './blogger/blogger.connector';
 import { BlueskyConnector } from './bluesky/bluesky.connector';
 import { ConnectorRegistryService } from './core/connector-registry.service';
 import { DevToConnector } from './devto/devto.connector';
+import { DiscourseConnector } from './discourse/discourse.connector';
 import { DiscordConnector } from './discord/discord.connector';
 import { InstagramConnector } from './instagram/instagram.connector';
 import { LinkedInConnector } from './linkedin/linkedin.connector';
@@ -23,6 +24,7 @@ export class ConnectorsBootstrapService implements OnModuleInit {
     private readonly wordpress: WordPressConnector,
     private readonly blogger: BloggerConnector,
     private readonly devto: DevToConnector,
+    private readonly discourse: DiscourseConnector,
     private readonly discord: DiscordConnector,
     private readonly bluesky: BlueskyConnector,
     private readonly mastodon: MastodonConnector,
@@ -37,6 +39,7 @@ export class ConnectorsBootstrapService implements OnModuleInit {
       this.wordpress,
       this.blogger,
       this.devto,
+      this.discourse,
       this.discord,
       this.bluesky,
       this.mastodon,

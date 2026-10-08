@@ -58,12 +58,33 @@ export class PlatformAccountsService {
     return this.get(ownerId, account.id);
   }
 
-  async updateCredential(ownerId: string, id: string, credential: Record<string, unknown>) {
-    await this.prisma.platformAccount.findFirstOrThrow({ where: { id, ownerId }, select: { id: true } });
-    await this.credentials.upsert(id, credential);
-    await this.prisma.platformAccount.update({
-      where: { id },
-      data: { status: AccountStatus.RECONNECT_REQUIRED, lastTestedAt: null },
+  async updateCredential(
+    ownerId: string,
+    id: string,
+    credential: Record<string, unknown>,
+    settings?: Record<string, unknown>,
+  ) {
+    await this.prisma.$transaction(async (transaction) => {
+      const account = await transaction.platformAccount.findFirstOrThrow({
+        where: { id, ownerId },
+        select: { id: true, settings: true },
+      });
+      const currentSettings = account.settings
+        && typeof account.settings === 'object'
+        && !Array.isArray(account.settings)
+        ? account.settings as Record<string, unknown>
+        : {};
+      await this.credentials.upsert(id, credential, undefined, transaction);
+      await transaction.platformAccount.update({
+        where: { id },
+        data: {
+          ...(settings
+            ? { settings: { ...currentSettings, ...settings } as Prisma.InputJsonObject }
+            : {}),
+          status: AccountStatus.RECONNECT_REQUIRED,
+          lastTestedAt: null,
+        },
+      });
     });
     return this.get(ownerId, id);
   }

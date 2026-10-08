@@ -524,7 +524,7 @@ Không paste log thô vào ticket công khai trước khi chạy secret scanner/
 | CORS/login fail | `FRONTEND_URL`, proxy scheme, cookie Secure/SameSite | Căn origin chính xác; xác minh `TRUST_PROXY=true` chỉ sau trusted proxy |
 | Media container fail | URL có public không, TLS/MIME/redirect/TTL/range; upload có bị từ chối vì MIME không khớp magic bytes | Test URL từ máy ngoài; dùng file đúng định dạng/chữ ký, tạo signed URL mới, không public cả MinIO Console |
 | Hàng đợi tăng | consumer/worker health, provider 429, DB pool, prefetch | Giảm `RABBITMQ_PREFETCH` hoặc số replica `worker` khi provider/DB quá tải; tăng replica có kiểm soát khi worker thiếu năng lực; giữ idempotency |
-| Duplicate nghi ngờ sau timeout | DB idempotency, Redis fingerprint-lock connectivity/contention, external ID/status endpoint | Chuyển `POSSIBLE_DUPLICATE`, đối soát; không blind-retry |
+| Duplicate nghi ngờ sau timeout | DB idempotency, Redis fingerprint-lock connectivity/contention, external ID/status endpoint | Giữ/chuyển `NEEDS_ACTION` để đối soát; chỉ gửi lại cùng job sau xác nhận không tìm thấy, không blind-retry |
 | Không giải mã được credential | encryption key/version đúng bản backup không | Dừng publish; phục hồi key đúng. Không overwrite credential hàng loạt |
 | Disk đầy | Docker logs, DB/WAL, MinIO, backup local | Dọn theo retention có kiểm tra; bật rotation/remote backup, không xóa volume mù |
 

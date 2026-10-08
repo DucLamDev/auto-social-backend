@@ -30,6 +30,7 @@ Một nền tảng có thể đồng thời mang nhiều nhãn. Ví dụ TikTok 
 | WordPress self-hosted | Application Password qua HTTPS | Quyền WordPress của user để upload/publish | `POST /wp-json/wp/v2/posts`; media qua `/wp/v2/media` | Không có review trung tâm; WAF/plugin/role của từng site có thể chặn | `CREDENTIAL_REQUIRED` |
 | Blogger | Google OAuth 2.0 web-server | `https://www.googleapis.com/auth/blogger` | `posts.insert`; có thể tạo draft rồi `posts.publish` | OAuth consent/verification tùy trạng thái app và phân loại scope trong Cloud Console | `CREDENTIAL_REQUIRED`, có thể `API_REVIEW_REQUIRED` |
 | dev.to | API key của DEV/Forem | `api-key` và Accept header API v1 | `POST https://dev.to/api/articles` | Không OAuth/review; tuân thủ anti-spam và rate limit | `CREDENTIAL_REQUIRED` |
+| Discourse | Admin-created Single User API key + `Api-Username` | Granular `global:read` + `topics:write`; user phải được phép tạo topic trong category | `POST <baseUrl>/posts.json` | Forum bên thứ ba phải chủ động cấp quyền; release chưa hỗ trợ User API Key flow hoặc manual Discourse destination | `CREDENTIAL_REQUIRED`; không tạo/bật account nếu admin không cấp key |
 | Discord | Incoming webhook URL/token; hoặc OAuth `webhook.incoming` | Token webhook | Execute Webhook | URL webhook là secret; không cần bot cho use case này | `CREDENTIAL_REQUIRED` |
 | Reddit | OAuth của Data API đã được Reddit phê duyệt | Tối thiểu `submit`; thêm `identity` để xác minh account | `POST /api/submit` sau khi được cấp quyền | Quy trình access hiện yêu cầu approved developer; commercial use cần permission/contract | `API_REVIEW_REQUIRED`, mặc định `NEEDS_ACTION` |
 | Bluesky | AT Protocol OAuth cho ứng dụng nhiều người dùng | Permission set hiện hành cho repo write/blob upload; dùng SDK chính thức | `com.atproto.repo.createRecord`; media qua `uploadBlob` | Không review trung tâm; phải discovery PDS, PKCE/PAR/DPoP | `CREDENTIAL_REQUIRED` |
@@ -49,6 +50,7 @@ Bảng sau là **trần khả năng của API**, không phải cam kết connect
 | WordPress | Có | Có | Có qua media library | Có | Có | Có (`future`) |
 | Blogger | Có | HTML/image reference | Không coi là upload video trực tiếp | Có | Có | Có qua draft/publish date; vẫn quản lý bằng scheduler backend |
 | dev.to | Có | Ảnh bằng URL trong Markdown/`main_image` | Không có upload video được xác minh | Có | Không có delete article được xác minh; có update/unpublish | Không; scheduler backend |
+| Discourse | Có | Không trong connector hiện tại | Không | Có, dưới dạng topic Markdown | Không trong connector hiện tại | Không; scheduler backend |
 | Discord | Có | Có | Có như attachment trong giới hạn webhook | Không | Có với message do webhook tạo | Không; scheduler backend |
 | Reddit | Text/link đã xác minh | Không seed khi chưa test flow media được duyệt | Không seed | Bài self/text | Có điều kiện token/scope | Không; scheduler backend |
 | Bluesky | Có | Có | Có | Không | Có qua record delete | Không; scheduler backend |
@@ -65,7 +67,7 @@ Bảng sau là **trần khả năng của API**, không phải cam kết connect
 6. Media URL mà Meta/TikTok pull phải là HTTPS công khai, không redirect, đúng MIME/size và còn sống đủ lâu. Dùng URL ký có TTL rộng hơn toàn bộ thời gian queue + retry + xử lý; không để URL trỏ vào MinIO private nội bộ.
 7. Scheduler chỉ enqueue job. Worker kiểm tra capability, token expiry, per-account limiter và idempotency trước khi gọi provider. Không blind-retry `401`, `403`, invalid media hay content rejected.
 8. Với `429`, ưu tiên `Retry-After` hoặc rate-limit headers của chính response. Không hard-code một quota toàn hệ thống; khóa Redis phải tách theo `platform + account` và, nếu provider quy định, theo app/endpoint.
-9. Lưu `externalPostId`, response đã redaction, URL công khai và timestamp. Sau timeout không rõ kết quả, gọi status/read endpoint nếu có; nếu không thể kết luận thì dùng `POSSIBLE_DUPLICATE`, không publish lại mù quáng.
+9. Lưu `externalPostId`, response đã redaction, URL công khai và timestamp. Sau timeout không rõ kết quả, gọi status/read endpoint nếu có; nếu không thể kết luận thì dùng `NEEDS_ACTION` với reconciliation metadata, không publish lại mù quáng. `POSSIBLE_DUPLICATE` dành cho job mới bị duplicate guard chặn trước provider boundary.
 10. Mỗi app review cần URL Privacy Policy, Terms, data deletion/revocation flow, screencast từ connect đến publish, mô tả vì sao cần từng scope và tài khoản reviewer. Nội dung khai báo phải đúng với hành vi production.
 
 Hardening hiện tại: các base URL do account cấu hình (`siteUrl`, `baseUrl`, `serviceUrl`, `instanceUrl`) luôn phải là HTTPS công khai. Shared outbound guard resolve toàn bộ DNS record, chặn private/reserved/metadata ranges, pin connection vào IP đã kiểm tra, kiểm tra lại từng redirect và không cho redirect đổi origin để tránh rò credential. Chỉ ADMIN tin cậy được tạo/sửa account; firewall/egress proxy chặn loopback, metadata endpoint và mạng quản trị vẫn là lớp defense-in-depth bắt buộc.
@@ -85,6 +87,7 @@ Phần ma trận phía trên mô tả **trần khả năng của API chính th�
 | `wordpress` | Bài text/HTML có title | `siteUrl`, `username`, `applicationPassword` | Không bắt buộc | `publishStatus` (`publish`, `draft`, `pending`, `private`); local rate settings | Trạng thái khác `publish` trả `NEEDS_ACTION`; chưa upload/gắn media hoặc native schedule; có delete. |
 | `blogger` | Bài có title/body | OAuth tự lưu token; thủ công: `accessToken`, thêm `blogId` nếu thiếu `externalId` | `externalId` = Blogger blog ID | `publishImmediately` boolean; local rate settings | Google OAuth đã bật và có refresh; draft trả `NEEDS_ACTION`; token dán thủ công không tự refresh; có delete, chưa media. |
 | `devto` | Article Markdown có title/body, tags và canonical URL | `apiKey` | Không bắt buộc | `baseUrl` mặc định `https://dev.to/api`; `publishImmediately`; local rate settings | Không delete/media; `publishImmediately=false` tạo draft và trả `NEEDS_ACTION`. |
+| `discourse` | Topic mới có title + Markdown body; destination `defaultTags` theo giới hạn của forum | `apiKey` | Không bắt buộc | `baseUrl`, `apiUsername`, `categoryId`, `defaultTags` (CSV/string array); local rate settings | Bỏ qua hashtag AI; một account cho mỗi forum/category; `external_id` ổn định hỗ trợ đối soát duplicate. Chưa User API Key flow, reply/media/edit/delete/native schedule/manual fallback. Topic vào moderation hoặc create có kết quả chưa chắc chắn trả `NEEDS_ACTION`. |
 | `discord` | Text tối đa 2.000 ký tự | `webhookUrl` | Không bắt buộc | local rate settings | Chưa attachment/media/edit; có delete; chặn hostname webhook không phải Discord chính thức. |
 | `bluesky` | Text tối đa 300 ký tự | `accessJwt`; `did` nếu thiếu `externalId`; tùy chọn `serviceUrl` | `externalId` = DID | local rate settings | Chưa ATProto OAuth/session refresh/PDS discovery/media/delete. `accessJwt` ngắn hạn khiến cấu hình này chỉ phù hợp pilot, không phải tích hợp production bền vững. |
 | `mastodon` | Text | `instanceUrl`, `accessToken` | Không bắt buộc | `visibility`; local rate settings | Chưa dynamic OAuth/media/native schedule; có delete. Giới hạn ký tự vẫn do instance quyết định. |
@@ -138,7 +141,7 @@ Quy trình cho mọi credential thủ công:
 2. Dùng `externalId` cho ID destination ổn định nếu bảng trên yêu cầu; `username` không thay thế ID trừ khi connector nói rõ.
 3. Account API connector mới tạo hoặc vừa rotate credential giữ trạng thái `RECONNECT_REQUIRED`. Gọi `POST /api/v1/platform-accounts/{id}/test`; chỉ test thành công mới chuyển account sang `CONNECTED` và ghi `lastTestedAt`.
 4. Khi test pass, gọi `PATCH /api/v1/platform-accounts/{id}` với `{ "enabled": true }`.
-5. Khi rotate secret, gọi `PUT /api/v1/platform-accounts/{id}/credential` với `{ "credential": { ... } }`, test lại rồi mới tiếp tục campaign.
+5. Khi rotate secret hoặc sửa connector settings, gọi `PUT /api/v1/platform-accounts/{id}/credential` với `{ "credential": { ...đầy đủ secret... }, "settings": { ...field cần merge... } }`, test lại rồi mới tiếp tục campaign. Frontend hỗ trợ luồng này nhưng bắt buộc nhập lại credential vì secret cũ không được đọc về trình duyệt.
 
 Không nhập placeholder `<...>` thật vào API. Không chụp màn hình Swagger có token/webhook/API key và không lưu JSON credential trong shell history hoặc ticket.
 
@@ -319,7 +322,19 @@ API hiện có update và unpublish article; không có delete article thông th
 
 Nguồn chính thức: [Forem API versioning/auth](https://developers.forem.com/api), [Forem API v1](https://developers.forem.com/api/v1), [legacy article docs có rate-limit create](https://developers.forem.com/api/v0), [DEV Terms](https://dev.to/terms).
 
-## 12. Discord
+## 12. Discourse
+
+**Trạng thái:** `COMPATIBLE_API` + `CREDENTIAL_REQUIRED`; code hiện có là generic connector cho các instance Discourse được chủ site cho phép.
+
+Mỗi destination lưu `baseUrl`, `apiUsername`, `categoryId` và tùy chọn `defaultTags` trong settings; `apiKey` nằm trong credential mã hóa. `defaultTags` nhận CSV hoặc string array, nhưng UI dùng chuỗi phân tách bằng dấu phẩy. `baseUrl` là base của installation, vì vậy MongoDB phải giữ path prefix `https://www.mongodb.com/community/forums`; connector tự ghép `/session/current.json`, `/c/{categoryId}/show.json`, `/posts.json` và endpoint lookup external ID. Với Discourse core hiện hành, key cần granular `global:read` + `topics:write`; `global:read` là scope GET của granular key, không phải unrestricted/all-users key.
+
+Connector hiện chỉ tạo **topic mới** có title + Markdown body, map toàn bộ `defaultTags` đã normalize/dedupe thành topic tags dạng `{name}` và gắn `external_id` xác định để đối soát khi create lỗi/không rõ kết quả. Giới hạn tag do chính forum kiểm tra; connector không hard-code hoặc âm thầm cắt payload. Nó cố ý không lấy hashtag AI làm forum tags. Connection test yêu cầu `current_user.can_create_topic=true` và category `permission=1`; minimum/required tag groups chỉ được trả thành cảnh báo vì tổng số tag không chứng minh membership và admin có thể được miễn policy. Tag policy chỉ được xác nhận chắc chắn bằng topic staging. Connector không hỗ trợ reply, media, edit/delete, native schedule, manual fallback hoặc Discourse User API Key authorization flow. Forum do bên thứ ba quản trị như NGINX, Caddy, Replit hoặc MongoDB chỉ dùng được khi admin forum cấp API key/username và category permission; tài khoản thành viên bình thường không thể tự mint key này. Nếu bài bị đưa vào moderation, hoặc timeout/5xx khiến create không thể đối soát chắc chắn, kết quả là `NEEDS_ACTION` và UI không cho copy/đăng lại mù quáng. Sau khi operator xác minh không có topic lẫn bài chờ duyệt, action **Không tìm thấy** mới xếp hàng lại cùng job/idempotency key; kết quả provider đã xác nhận nhưng lỗi lưu DB không được phép resend.
+
+**Smoke test release MVP:** tạo user bot và category staging trên forum bạn quản trị → tạo Single User API key có granular `global:read` + `topics:write` → lưu account và test connection → publish một topic `[TEST]` → xác minh đúng author/category/URL; mô phỏng timeout và xác minh job chuyển sang đối soát thay vì gửi lại → revoke key và xác nhận account lỗi auth. Hướng dẫn field, danh sách engine và quy trình đầy đủ nằm trong [DISCOURSE_CONFIGURATION.md](DISCOURSE_CONFIGURATION.md).
+
+Nguồn chính thức: [Discourse API](https://docs.discourse.org/), [tạo và cấu hình API key](https://meta.discourse.org/t/create-and-configure-an-api-key/230124), [User API Key specification — chưa được source triển khai](https://meta.discourse.org/t/user-api-keys-specification/48536).
+
+## 13. Discord
 
 **Trạng thái:** `OFFICIAL_API_VERIFIED` + `CREDENTIAL_REQUIRED`; không cần bot hoặc app review cho incoming webhook thủ công.
 
@@ -344,7 +359,7 @@ Nếu muốn người dùng chọn server/channel qua OAuth, dùng scope `webhoo
 
 Nguồn chính thức: [Webhook Resource/Execute Webhook](https://docs.discord.com/developers/resources/webhook), [OAuth2 và `webhook.incoming`](https://docs.discord.com/developers/topics/oauth2), [Discord rate limits](https://docs.discord.com/developers/topics/rate-limits).
 
-## 13. Reddit
+## 14. Reddit
 
 **Trạng thái:** API endpoint được xác minh, nhưng connector production là `API_REVIEW_REQUIRED` + `CREDENTIAL_REQUIRED`; mặc định `NEEDS_ACTION` cho đến khi Reddit phê duyệt đúng use case.
 
@@ -371,7 +386,7 @@ Nếu chưa được phê duyệt: AI vẫn tạo bản Reddit, UI cho **Copy Co
 
 Nguồn chính thức: [Developer Platform & Accessing Reddit Data](https://support.reddithelp.com/hc/en-us/articles/14945211791892-Developer-Platform-Accessing-Reddit-Data), [Data API Terms](https://redditinc.com/policies/data-api-terms), [Reddit Data API endpoint reference](https://www.reddit.com/dev/api/), [Devvit Reddit API overview](https://developers.reddit.com/docs/capabilities/server/reddit-api), [Devvit FAQ](https://developers.reddit.com/docs/guides/faq).
 
-## 14. Bluesky / AT Protocol
+## 15. Bluesky / AT Protocol
 
 **Trạng thái:** `OFFICIAL_API_VERIFIED` + `CREDENTIAL_REQUIRED`; không có app review trung tâm.
 
@@ -395,7 +410,7 @@ Nguồn chính thức: [Developer Platform & Accessing Reddit Data](https://supp
 
 Nguồn chính thức: [Bluesky OAuth guidance](https://bsky.network/docs/oauth-client/), [AT Protocol OAuth specification](https://atproto.com/specs/oauth), [Bluesky API/posting](https://bsky.network/docs/bluesky-api/), [rate limits](https://bsky.network/docs/rate-limits/), [video upload](https://bsky.network/docs/about-bluesky-content/video/).
 
-## 15. Mastodon
+## 16. Mastodon
 
 **Trạng thái:** `OFFICIAL_API_VERIFIED` + `CREDENTIAL_REQUIRED`; không có review trung tâm, nhưng từng instance có policy riêng.
 
@@ -418,7 +433,7 @@ Nguồn chính thức: [Bluesky OAuth guidance](https://bsky.network/docs/oauth-
 
 Nguồn chính thức: [Mastodon app guidelines](https://docs.joinmastodon.org/api/guidelines/), [app registration](https://docs.joinmastodon.org/methods/apps/), [OAuth scopes](https://docs.joinmastodon.org/api/oauth-scopes/), [status API](https://docs.joinmastodon.org/methods/statuses/), [media API](https://docs.joinmastodon.org/methods/media/), [rate limits](https://docs.joinmastodon.org/api/rate-limits/).
 
-## 16. TikTok
+## 17. TikTok
 
 **Trạng thái:** `OFFICIAL_API_VERIFIED` + `API_REVIEW_REQUIRED` + `CREDENTIAL_REQUIRED`; với mục tiêu “internal tool tự động cross-post cho các account đội ngũ quản lý”, mặc định `NEEDS_ACTION/MANUAL` cho đến khi TikTok chấp thuận bằng văn bản/audit.
 
@@ -451,7 +466,7 @@ Client chưa audit chỉ được tối đa phạm vi test mà TikTok quy địn
 
 Nguồn chính thức: [Content Posting API - Get Started](https://developers.tiktok.com/docs/en/content-posting-api-get-started), [Content Sharing Guidelines](https://developers.tiktok.com/docs/en/content-sharing-guidelines), [Direct Post reference](https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post), [Media Transfer Guide](https://developers.tiktok.com/docs/en/content-posting-api-media-transfer-guide), [TikTok API scopes](https://developers.tiktok.com/docs/en/tiktok-api-scopes).
 
-## 17. Checklist đưa từng account vào production
+## 18. Checklist đưa từng account vào production
 
 Không bật `enabled=true` chỉ vì đã lưu credential. Với từng account/destination:
 
@@ -468,7 +483,7 @@ Không bật `enabled=true` chỉ vì đã lưu credential. Với từng account
 - [ ] Policy owner, subreddit/channel/blog/site/instance và timezone đã cấu hình.
 - [ ] Có runbook rotate/revoke credential và người chịu trách nhiệm.
 
-## 18. Theo dõi thay đổi API
+## 19. Theo dõi thay đổi API
 
 Hàng tháng và trước mỗi release connector:
 

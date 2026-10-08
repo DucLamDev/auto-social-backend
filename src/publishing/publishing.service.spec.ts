@@ -17,6 +17,40 @@ import {
   PublishingService,
 } from './publishing.service';
 
+function publishJobFixture(status: PublishJobStatus = PublishJobStatus.QUEUED) {
+  return {
+    id: 'job-1',
+    status,
+    publishedPost: null,
+    attempts: [],
+    platformAccountId: 'account-1',
+    idempotencyKey: 'key-1',
+    attemptCount: 0,
+    maxAttempts: 3,
+    platformAccount: {
+      id: 'account-1',
+      enabled: true,
+      status: AccountStatus.CONNECTED,
+      settings: {},
+      platform: { slug: 'x', enabled: true },
+    },
+    target: {
+      overrides: { allowDuplicate: true },
+      campaignId: 'campaign-1',
+      campaign: { id: 'campaign-1' },
+      contentVariant: {
+        status: VariantStatus.APPROVED,
+        title: 'A topic',
+        body: 'hello',
+        summary: null,
+        hashtags: [],
+        media: [],
+        content: { canonicalUrl: null, contentHash: 'content-hash', media: [] },
+      },
+    },
+  };
+}
+
 describe('PublishingService idempotency', () => {
   it('inherits canonical content media and combines it with variant-specific media', () => {
     const canonical = {
@@ -142,6 +176,7 @@ describe('PublishingService idempotency', () => {
     const prisma = {
       publishJob: {
         findUniqueOrThrow: jest.fn(({ where }: { where: { id: string } }) => Promise.resolve(jobs.get(where.id))),
+        findFirst: jest.fn().mockResolvedValue(null),
         update: jobUpdate,
       },
       publishedPost: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -210,6 +245,341 @@ describe('PublishingService idempotency', () => {
       where: { id: 'job-2' },
       data: expect.objectContaining({ status: PublishJobStatus.RETRY }) as unknown,
     }));
+  });
+
+  it.each([
+    ['a published topic', { externalId: 'topic-42', url: 'https://forum.example/t/topic/42', status: 'PUBLISHED' as const }],
+    ['a moderation submission', {
+      externalId: 'pending-77',
+      status: 'NEEDS_ACTION' as const,
+      metadata: { moderationQueue: true, pendingPostId: 77 },
+    }],
+  ])('moves %s to reconciliation when result persistence fails after provider acceptance', async (_label, result) => {
+    const job = publishJobFixture();
+    const stateAfterFailedPersistence = {
+      id: job.id,
+      status: PublishJobStatus.PUBLISHING,
+      publishedPost: null,
+      attempts: [{ id: 'attempt-1', status: 'STARTED', responseMetadata: null }],
+    };
+    const jobUpdate = jest.fn().mockResolvedValue({});
+    const jobUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const attemptUpdate = jest.fn().mockResolvedValue({});
+    const transactionClient = {
+      publishJob: { update: jobUpdate, updateMany: jobUpdateMany },
+      publishAttempt: {
+        create: jest.fn().mockResolvedValue({ id: 'attempt-1' }),
+        update: attemptUpdate,
+      },
+      publishedPost: { create: jest.fn().mockResolvedValue({}) },
+    };
+    let transactionNumber = 0;
+    const prisma = {
+      publishJob: {
+        findUniqueOrThrow: jest.fn()
+          .mockResolvedValueOnce(job)
+          .mockResolvedValueOnce(stateAfterFailedPersistence),
+      },
+      $transaction: jest.fn(async (callback: (client: typeof transactionClient) => Promise<unknown>) => {
+        transactionNumber += 1;
+        if (transactionNumber === 2) throw new Error('database response lost');
+        return callback(transactionClient);
+      }),
+    } as unknown as PrismaService;
+    const publish = jest.fn().mockResolvedValue(result);
+    const campaignStatus = { refresh: jest.fn().mockResolvedValue(undefined) } as unknown as CampaignStatusService;
+    const service = new PublishingService(
+      prisma,
+      {
+        acquireLock: jest.fn().mockResolvedValue('token'),
+        releaseLock: jest.fn().mockResolvedValue(true),
+        consumeRateLimit: jest.fn().mockResolvedValue({ allowed: true, remaining: 9 }),
+      } as unknown as RedisService,
+      { load: jest.fn().mockResolvedValue({ account: { id: 'account-1', settings: {}, credentials: {} } }) } as unknown as ConnectorAccountsService,
+      { get: jest.fn().mockReturnValue({ validate: jest.fn(), publish }) } as unknown as ConnectorRegistryService,
+      campaignStatus,
+    );
+
+    await expect(service.process(job.id)).resolves.toBeUndefined();
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: job.id }) as unknown,
+      data: expect.objectContaining({
+        status: PublishJobStatus.NEEDS_ACTION,
+        nextAttemptAt: null,
+        lockedAt: null,
+      }) as unknown,
+    }));
+    expect(attemptUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'attempt-1' },
+      data: expect.objectContaining({
+        status: 'SUCCEEDED',
+        responseMetadata: expect.objectContaining({
+          externalPostId: result.externalId,
+          providerAccepted: true,
+          reconciliationRequired: true,
+          originalResultStatus: result.status,
+        }) as unknown,
+      }) as unknown,
+    }));
+    expect(JSON.stringify(jobUpdate.mock.calls)).not.toContain(`"status":"${PublishJobStatus.RETRY}"`);
+  });
+
+  it('does not overwrite a result that committed when the persistence response was lost', async () => {
+    const job = publishJobFixture();
+    const committed = {
+      id: job.id,
+      status: PublishJobStatus.PUBLISHED,
+      publishedPost: { id: 'published-1' },
+      attempts: [{ id: 'attempt-1', status: 'SUCCEEDED', responseMetadata: {} }],
+    };
+    const recoveryUpdate = jest.fn();
+    const transactionClient = {
+      publishJob: { update: jest.fn().mockResolvedValue({}), updateMany: recoveryUpdate },
+      publishAttempt: {
+        create: jest.fn().mockResolvedValue({ id: 'attempt-1' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      publishedPost: { create: jest.fn().mockResolvedValue({}) },
+    };
+    let transactionNumber = 0;
+    const prisma = {
+      publishJob: {
+        findUniqueOrThrow: jest.fn()
+          .mockResolvedValueOnce(job)
+          .mockResolvedValueOnce(committed),
+      },
+      $transaction: jest.fn(async (callback: (client: typeof transactionClient) => Promise<unknown>) => {
+        transactionNumber += 1;
+        if (transactionNumber === 2) throw new Error('commit response lost');
+        return callback(transactionClient);
+      }),
+    } as unknown as PrismaService;
+    const publish = jest.fn().mockResolvedValue({
+      externalId: 'topic-42',
+      url: 'https://forum.example/t/topic/42',
+      status: 'PUBLISHED',
+    });
+    const service = new PublishingService(
+      prisma,
+      {
+        acquireLock: jest.fn().mockResolvedValue('token'),
+        releaseLock: jest.fn().mockResolvedValue(true),
+        consumeRateLimit: jest.fn().mockResolvedValue({ allowed: true, remaining: 9 }),
+      } as unknown as RedisService,
+      { load: jest.fn().mockResolvedValue({ account: { id: 'account-1', settings: {}, credentials: {} } }) } as unknown as ConnectorAccountsService,
+      { get: jest.fn().mockReturnValue({ validate: jest.fn(), publish }) } as unknown as ConnectorRegistryService,
+      { refresh: jest.fn().mockResolvedValue(undefined) } as unknown as CampaignStatusService,
+    );
+
+    await service.process(job.id);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(transactionNumber).toBe(2);
+    expect(recoveryUpdate).not.toHaveBeenCalled();
+  });
+
+  it('marks the account for reconnect while keeping an uncertain accepted result in NEEDS_ACTION', async () => {
+    const job = publishJobFixture();
+    const jobUpdate = jest.fn().mockResolvedValue({});
+    const accountUpdate = jest.fn().mockResolvedValue({});
+    const transactionClient = {
+      publishJob: { update: jobUpdate },
+      publishAttempt: {
+        create: jest.fn().mockResolvedValue({ id: 'attempt-1' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      platformAccount: { update: accountUpdate },
+      publishedPost: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      publishJob: { findUniqueOrThrow: jest.fn().mockResolvedValue(job) },
+      $transaction: jest.fn((callback: (client: typeof transactionClient) => Promise<unknown>) => callback(transactionClient)),
+    } as unknown as PrismaService;
+    const publish = jest.fn().mockResolvedValue({
+      externalId: 'sp-uncertain',
+      status: 'NEEDS_ACTION',
+      metadata: {
+        reconciliationRequired: true,
+        reconciliationLookupErrorCode: ErrorCode.PLATFORM_TOKEN_EXPIRED,
+        accountReconnectRequired: true,
+      },
+    });
+    const service = new PublishingService(
+      prisma,
+      {
+        acquireLock: jest.fn().mockResolvedValue('token'),
+        releaseLock: jest.fn().mockResolvedValue(true),
+        consumeRateLimit: jest.fn().mockResolvedValue({ allowed: true, remaining: 9 }),
+      } as unknown as RedisService,
+      { load: jest.fn().mockResolvedValue({ account: { id: 'account-1', settings: {}, credentials: {} } }) } as unknown as ConnectorAccountsService,
+      { get: jest.fn().mockReturnValue({ validate: jest.fn(), publish }) } as unknown as ConnectorRegistryService,
+      { refresh: jest.fn().mockResolvedValue(undefined) } as unknown as CampaignStatusService,
+    );
+
+    await service.process(job.id);
+
+    expect(accountUpdate).toHaveBeenCalledWith({
+      where: { id: job.platformAccountId },
+      data: { status: AccountStatus.RECONNECT_REQUIRED },
+    });
+    expect(jobUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: PublishJobStatus.NEEDS_ACTION,
+        nextAttemptAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      }) as unknown,
+    }));
+  });
+
+  it('reconciles a redelivered PUBLISHING job without calling the provider again', async () => {
+    const job = {
+      ...publishJobFixture(PublishJobStatus.PUBLISHING),
+      attemptCount: 1,
+      attempts: [{ id: 'attempt-1', status: 'STARTED', responseMetadata: null }],
+    };
+    const current = {
+      id: job.id,
+      status: PublishJobStatus.PUBLISHING,
+      publishedPost: null,
+      attempts: job.attempts,
+    };
+    const jobUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const attemptUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const transactionClient = {
+      publishJob: { updateMany: jobUpdateMany },
+      publishAttempt: { updateMany: attemptUpdateMany },
+    };
+    const prisma = {
+      publishJob: {
+        findUniqueOrThrow: jest.fn()
+          .mockResolvedValueOnce(job)
+          .mockResolvedValueOnce(current),
+      },
+      $transaction: jest.fn((callback: (client: typeof transactionClient) => Promise<unknown>) => callback(transactionClient)),
+    } as unknown as PrismaService;
+    const publish = jest.fn();
+    const campaignStatus = { refresh: jest.fn().mockResolvedValue(undefined) } as unknown as CampaignStatusService;
+    const service = new PublishingService(
+      prisma,
+      {
+        acquireLock: jest.fn().mockResolvedValue('token'),
+        releaseLock: jest.fn().mockResolvedValue(true),
+      } as unknown as RedisService,
+      { load: jest.fn() } as unknown as ConnectorAccountsService,
+      { get: jest.fn().mockReturnValue({ publish }) } as unknown as ConnectorRegistryService,
+      campaignStatus,
+    );
+
+    await service.process(job.id);
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: job.id, status: PublishJobStatus.PUBLISHING },
+      data: expect.objectContaining({ status: PublishJobStatus.NEEDS_ACTION }) as unknown,
+    }));
+    expect(attemptUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        responseMetadata: expect.objectContaining({
+          reconciliationRequired: true,
+          submissionUncertain: true,
+        }) as unknown,
+      }) as unknown,
+    }));
+  });
+
+  it('recognizes a committed result on redelivery before writing reconciliation state', async () => {
+    const job = {
+      ...publishJobFixture(PublishJobStatus.PUBLISHING),
+      attempts: [{ id: 'attempt-1', status: 'STARTED', responseMetadata: null }],
+    };
+    const committed = {
+      id: job.id,
+      status: PublishJobStatus.PUBLISHED,
+      publishedPost: { id: 'published-1' },
+      attempts: [{ id: 'attempt-1', status: 'SUCCEEDED', responseMetadata: {} }],
+    };
+    const transaction = jest.fn();
+    const prisma = {
+      publishJob: {
+        findUniqueOrThrow: jest.fn()
+          .mockResolvedValueOnce(job)
+          .mockResolvedValueOnce(committed),
+      },
+      $transaction: transaction,
+    } as unknown as PrismaService;
+    const publish = jest.fn();
+    const service = new PublishingService(
+      prisma,
+      {
+        acquireLock: jest.fn().mockResolvedValue('token'),
+        releaseLock: jest.fn().mockResolvedValue(true),
+      } as unknown as RedisService,
+      { load: jest.fn() } as unknown as ConnectorAccountsService,
+      { get: jest.fn().mockReturnValue({ publish }) } as unknown as ConnectorRegistryService,
+      { refresh: jest.fn().mockResolvedValue(undefined) } as unknown as CampaignStatusService,
+    );
+
+    await service.process(job.id);
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it('blocks a new job when matching content is already waiting for reconciliation', async () => {
+    const job = publishJobFixture();
+    job.target.overrides = { allowDuplicate: false };
+    const jobUpdate = jest.fn().mockResolvedValue({});
+    const pendingDuplicate = jest.fn().mockResolvedValue({ id: 'prior-needs-action-job' });
+    const prisma = {
+      publishJob: {
+        findUniqueOrThrow: jest.fn().mockResolvedValue(job),
+        findFirst: pendingDuplicate,
+        update: jobUpdate,
+      },
+      publishedPost: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const publish = jest.fn();
+    const campaignStatus = { refresh: jest.fn().mockResolvedValue(undefined) } as unknown as CampaignStatusService;
+    const service = new PublishingService(
+      prisma,
+      {
+        acquireLock: jest.fn().mockResolvedValue('token'),
+        releaseLock: jest.fn().mockResolvedValue(true),
+      } as unknown as RedisService,
+      { load: jest.fn() } as unknown as ConnectorAccountsService,
+      { get: jest.fn().mockReturnValue({ publish }) } as unknown as ConnectorRegistryService,
+      campaignStatus,
+    );
+
+    await service.process(job.id);
+
+    expect(pendingDuplicate).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: { not: job.id },
+        platformAccountId: job.platformAccountId,
+        OR: expect.arrayContaining([
+          {
+            status: { in: expect.arrayContaining([
+              PublishJobStatus.PUBLISHING,
+              PublishJobStatus.PROCESSING,
+              PublishJobStatus.NEEDS_ACTION,
+            ]) as unknown },
+          },
+          {
+            status: PublishJobStatus.POSSIBLE_DUPLICATE,
+            lastErrorCode: 'WORKER_CRASH_UNCERTAIN_RESULT',
+          },
+        ]) as unknown,
+      }) as unknown,
+    }));
+    expect(JSON.stringify(pendingDuplicate.mock.calls)).not.toContain('PUBLISH_DUPLICATED');
+    expect(jobUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: PublishJobStatus.POSSIBLE_DUPLICATE }) as unknown,
+    }));
+    expect(publish).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -42,3 +42,12 @@ export interface SocialPublisher {
 - `MANUAL`: AI sinh nội dung; job thành `NEEDS_ACTION`; UI copy/open/mark-published.
 
 Forum dùng connector theo engine (`Discourse`, `XenForo`, `Forem`, `ActivityPub`), còn site URL/category/forum ID nằm trong account settings.
+
+## Generic Discourse connector hiện có
+
+`src/connectors/discourse/` là ví dụ của `COMPATIBLE_API`: một class phục vụ nhiều installation, kể cả installation có path prefix như MongoDB Community. Mỗi account/category cấu hình:
+
+- settings `baseUrl`, `apiUsername`, `categoryId`, optional `defaultTags`;
+- credential write-only `apiKey`.
+
+Connector chỉ tạo topic mới có title + Markdown body. Optional `defaultTags` là CSV/string array do destination owner cấu hình; adapter normalize/dedupe toàn bộ, không hard-code giới hạn tag và không dùng AI-generated hashtags. Chính forum kiểm tra số lượng/tag policy khi đăng staging. Nó dùng deterministic `external_id` để lookup/recover topic sau create lỗi hoặc response không rõ; timeout/5xx chưa đối soát được chuyển sang `NEEDS_ACTION`, không auto-retry create. Connection test yêu cầu quyền tạo topic toàn cục và category full permission; minimum/required tag groups chỉ là cảnh báo vì không đủ dữ liệu để xác minh membership hoặc admin exemption. Connector dùng admin-created API key với header `Api-Key`/`Api-Username`; Discourse core hiện hành cần granular `global:read` + `topics:write`. Đây không phải Discourse User API Key RSA/callback flow. Vì vậy forum công cộng chỉ dùng được khi admin của forum chủ động cấp key/scopes và category permission; phát hiện `/about.json` không đồng nghĩa có quyền đăng. Xem [DISCOURSE_CONFIGURATION.md](DISCOURSE_CONFIGURATION.md) trước khi onboarding instance mới.

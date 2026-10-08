@@ -3,16 +3,25 @@ import { AccountStatus, AttemptStatus, MediaType, Prisma, PublishJobStatus, Vari
 import { ConnectorAccountsService } from '../connectors/connector-accounts.service';
 import { ConnectorError } from '../connectors/core/connector-error';
 import { ConnectorRegistryService } from '../connectors/core/connector-registry.service';
-import { PostMedia, PostPayload } from '../connectors/core/connector.types';
+import { PostMedia, PostPayload, PublishResult } from '../connectors/core/connector.types';
 import { ErrorCode } from '../common/exceptions/application.exception';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
 import { PrismaService } from '../database/prisma.service';
 import { RedisService } from '../queue/redis.service';
 import { DeadLetterDeliveryError } from '../queue/queue.types';
 import { sha256 } from '../common/utils/crypto.utils';
+import { WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
 
 const RETRY_DELAYS_SECONDS = [30, 120, 600] as const;
 const FINGERPRINT_LOCK_TTL_MS = 10 * 60_000;
+const UNCERTAIN_RESULT_ERROR_CODE = 'PUBLISH_RESULT_UNCERTAIN';
+const UNCERTAIN_RESULT_MESSAGE = 'A previous delivery may have reached the platform; verify it before publishing again';
+const PERSISTENCE_RECOVERY_MESSAGE = 'The platform accepted the publish, but its result could not be saved normally; verify it before publishing again';
+const UNRESOLVED_DUPLICATE_STATUSES: PublishJobStatus[] = [
+  PublishJobStatus.PUBLISHING,
+  PublishJobStatus.PROCESSING,
+  PublishJobStatus.NEEDS_ACTION,
+];
 
 export function publishFingerprintLockKey(platformAccountId: string, contentHash: string): string {
   return `lock:publish-fingerprint:${sha256(`${platformAccountId}:${contentHash}`)}`;
@@ -94,6 +103,7 @@ export class PublishingService {
       where: { id: jobId },
       include: {
         publishedPost: true,
+        attempts: { orderBy: { attemptNumber: 'desc' }, take: 1 },
         platformAccount: { include: { platform: true } },
         target: {
           include: {
@@ -103,10 +113,19 @@ export class PublishingService {
         },
       },
     });
-    if (job.publishedPost || job.status === PublishJobStatus.PUBLISHED || job.status === PublishJobStatus.CANCELLED) {
+    if (job.publishedPost || this.isClosedDelivery(job.status)) {
       await this.campaignStatus.refresh(job.target.campaignId);
       return;
     }
+    if (job.status === PublishJobStatus.PUBLISHING) {
+      await this.reconcileInFlightDelivery(job.id);
+      await this.campaignStatus.refresh(job.target.campaignId);
+      return;
+    }
+    // Only a claimed QUEUED row is allowed to cross the provider boundary. A
+    // stale/redelivered RabbitMQ message must never turn RETRY or SCHEDULED
+    // directly into another external POST.
+    if (job.status !== PublishJobStatus.QUEUED) return;
     const overrides = this.asRecord(job.target.overrides);
     let fingerprintLock: { key: string; token: string } | undefined;
     if (overrides.allowDuplicate !== true) {
@@ -138,8 +157,23 @@ export class PublishingService {
         },
         select: { id: true },
       });
-      if (duplicate) {
-        await this.prisma.publishJob.update({ where: { id: job.id }, data: { status: PublishJobStatus.POSSIBLE_DUPLICATE, lastErrorCode: ErrorCode.PUBLISH_DUPLICATED, lastErrorMessage: 'Matching content was already published to this account' } });
+      const pendingDuplicate = duplicate ? null : await this.prisma.publishJob.findFirst({
+        where: {
+          id: { not: job.id },
+          platformAccountId: job.platformAccountId,
+          OR: [
+            { status: { in: UNRESOLVED_DUPLICATE_STATUSES } },
+            {
+              status: PublishJobStatus.POSSIBLE_DUPLICATE,
+              lastErrorCode: WORKER_CRASH_UNCERTAIN_RESULT_CODE,
+            },
+          ],
+          target: { contentVariant: { content: { contentHash: job.target.contentVariant.content.contentHash } } },
+        },
+        select: { id: true },
+      });
+      if (duplicate || pendingDuplicate) {
+        await this.prisma.publishJob.update({ where: { id: job.id }, data: { status: PublishJobStatus.POSSIBLE_DUPLICATE, lastErrorCode: ErrorCode.PUBLISH_DUPLICATED, lastErrorMessage: 'Matching content was already published or still needs reconciliation for this account' } });
         await this.campaignStatus.refresh(job.target.campaignId);
         return;
       }
@@ -156,6 +190,7 @@ export class PublishingService {
       return transaction.publishAttempt.create({ data: { publishJobId: job.id, attemptNumber, status: AttemptStatus.STARTED, requestMetadata: { platform, idempotencyKey: job.idempotencyKey } } });
     });
     let deadLetter = false;
+    let providerAccepted = false;
     try {
       assertPublishAccountReady(job.platformAccount);
       const { account } = await this.connectorAccounts.load(job.platformAccountId);
@@ -173,17 +208,34 @@ export class PublishingService {
       };
       await connector.validate(payload);
       const result = await connector.publish(account, payload);
-      await this.prisma.$transaction(async (transaction) => {
-        await transaction.publishAttempt.update({ where: { id: attempt.id }, data: { status: AttemptStatus.SUCCEEDED, finishedAt: new Date(), responseMetadata: (result.metadata ?? {}) as Prisma.InputJsonObject } });
-        if (result.status === 'NEEDS_ACTION') {
-          await transaction.publishJob.update({ where: { id: job.id }, data: { status: PublishJobStatus.NEEDS_ACTION, lockedAt: null } });
-        } else {
-          await transaction.publishedPost.create({ data: { publishJobId: job.id, platformAccountId: job.platformAccountId, externalPostId: result.externalId, url: result.url, metadata: (result.metadata ?? {}) as Prisma.InputJsonObject } });
-          await transaction.publishJob.update({ where: { id: job.id }, data: { status: result.status === 'PROCESSING' ? PublishJobStatus.PROCESSING : PublishJobStatus.PUBLISHED, lockedAt: null, lastErrorCode: null, lastErrorMessage: null } });
-        }
-      });
+      providerAccepted = true;
+      try {
+        await this.persistPublishResult(job.id, job.platformAccountId, attempt.id, result);
+      } catch (persistenceError) {
+        this.logger.error(JSON.stringify({
+          jobId,
+          attempt: attemptNumber,
+          status: 'PERSISTENCE_RECOVERY',
+          error: persistenceError instanceof Error ? persistenceError.message : 'Unknown persistence error',
+        }));
+        // The provider call returned successfully, so this path must never use
+        // generic retry handling. Re-read first in case the transaction
+        // committed but its response was lost, then persist a reconciliation
+        // state without issuing another provider request.
+        const recovered = await this.recoverAcceptedPublish(
+          job.id,
+          job.platformAccountId,
+          attempt.id,
+          result,
+        );
+        if (!recovered) throw persistenceError;
+      }
       this.logger.log(JSON.stringify({ jobId, campaignId: job.target.campaignId, platform, platformAccountId: job.platformAccountId, attempt: attemptNumber, status: result.status }));
     } catch (error) {
+      // If the provider returned and even the recovery write failed, leave the
+      // row PUBLISHING. A RabbitMQ redelivery is reconciled at method entry and
+      // cannot call the provider again.
+      if (providerAccepted) throw error;
       deadLetter = await this.handleFailure(job.id, attempt.id, attemptNumber, job.maxAttempts, job.platformAccountId, error);
     }
     await this.campaignStatus.refresh(job.target.campaignId);
@@ -193,6 +245,203 @@ export class PublishingService {
         await this.redis.releaseLock(fingerprintLock.key, fingerprintLock.token);
       }
     }
+  }
+
+  private async persistPublishResult(
+    jobId: string,
+    platformAccountId: string,
+    attemptId: string,
+    result: PublishResult,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (transaction) => {
+      await transaction.publishAttempt.update({
+        where: { id: attemptId },
+        data: {
+          status: AttemptStatus.SUCCEEDED,
+          finishedAt: new Date(),
+          responseMetadata: (result.metadata ?? {}) as Prisma.InputJsonObject,
+        },
+      });
+      if (result.metadata?.accountReconnectRequired === true) {
+        await transaction.platformAccount.update({
+          where: { id: platformAccountId },
+          data: { status: AccountStatus.RECONNECT_REQUIRED },
+        });
+      }
+      if (result.status === 'NEEDS_ACTION') {
+        await transaction.publishJob.update({
+          where: { id: jobId },
+          data: {
+            status: PublishJobStatus.NEEDS_ACTION,
+            nextAttemptAt: null,
+            lockedAt: null,
+            lastErrorCode: null,
+            lastErrorMessage: null,
+          },
+        });
+        return;
+      }
+      await transaction.publishedPost.create({
+        data: {
+          publishJobId: jobId,
+          platformAccountId,
+          externalPostId: result.externalId,
+          url: result.url,
+          metadata: (result.metadata ?? {}) as Prisma.InputJsonObject,
+        },
+      });
+      await transaction.publishJob.update({
+        where: { id: jobId },
+        data: {
+          status: result.status === 'PROCESSING' ? PublishJobStatus.PROCESSING : PublishJobStatus.PUBLISHED,
+          nextAttemptAt: null,
+          lockedAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      });
+    });
+  }
+
+  private async recoverAcceptedPublish(
+    jobId: string,
+    platformAccountId: string,
+    attemptId: string,
+    result: PublishResult,
+  ): Promise<boolean> {
+    const current = await this.readDeliveryState(jobId);
+    if (current.publishedPost || this.isSafeAfterProviderAcceptance(current.status)) return true;
+
+    const responseMetadata = {
+      ...(result.metadata ?? {}),
+      externalPostId: result.externalId,
+      ...(result.url ? { url: result.url } : {}),
+      providerAccepted: true,
+      reconciliationRequired: true,
+      persistenceRecoveryRequired: true,
+      originalResultStatus: result.status,
+    } as Prisma.InputJsonObject;
+    const recovered = await this.prisma.$transaction(async (transaction) => {
+      const claimed = await transaction.publishJob.updateMany({
+        where: {
+          id: jobId,
+          status: {
+            in: [
+              PublishJobStatus.SCHEDULED,
+              PublishJobStatus.QUEUED,
+              PublishJobStatus.PUBLISHING,
+              PublishJobStatus.RETRY,
+              PublishJobStatus.FAILED,
+            ],
+          },
+        },
+        data: {
+          status: PublishJobStatus.NEEDS_ACTION,
+          nextAttemptAt: null,
+          lockedAt: null,
+          lastErrorCode: ErrorCode.INTERNAL_ERROR,
+          lastErrorMessage: PERSISTENCE_RECOVERY_MESSAGE,
+        },
+      });
+      if (!claimed.count) return false;
+      await transaction.publishAttempt.update({
+        where: { id: attemptId },
+        data: {
+          status: AttemptStatus.SUCCEEDED,
+          finishedAt: new Date(),
+          responseMetadata,
+          errorCode: null,
+          errorMessage: null,
+        },
+      });
+      if (result.metadata?.accountReconnectRequired === true) {
+        await transaction.platformAccount.update({
+          where: { id: platformAccountId },
+          data: { status: AccountStatus.RECONNECT_REQUIRED },
+        });
+      }
+      return true;
+    });
+    if (recovered) return true;
+
+    const settled = await this.readDeliveryState(jobId);
+    return Boolean(settled.publishedPost || this.isSafeAfterProviderAcceptance(settled.status));
+  }
+
+  private async reconcileInFlightDelivery(jobId: string): Promise<void> {
+    // A second read closes the commit-response-loss race: a completed result
+    // wins, while only a row still marked PUBLISHING is moved to reconciliation.
+    const current = await this.readDeliveryState(jobId);
+    if (current.publishedPost || current.status !== PublishJobStatus.PUBLISHING) return;
+    const attempt = current.attempts[0];
+    const responseMetadata = {
+      ...this.asRecord(attempt?.responseMetadata),
+      reconciliationRequired: true,
+      submissionUncertain: true,
+      originalErrorCode: UNCERTAIN_RESULT_ERROR_CODE,
+    } as Prisma.InputJsonObject;
+    const reconciled = await this.prisma.$transaction(async (transaction) => {
+      const claimed = await transaction.publishJob.updateMany({
+        where: { id: jobId, status: PublishJobStatus.PUBLISHING },
+        data: {
+          status: PublishJobStatus.NEEDS_ACTION,
+          nextAttemptAt: null,
+          lockedAt: null,
+          lastErrorCode: UNCERTAIN_RESULT_ERROR_CODE,
+          lastErrorMessage: UNCERTAIN_RESULT_MESSAGE,
+        },
+      });
+      if (!claimed.count) return false;
+      if (attempt) {
+        await transaction.publishAttempt.updateMany({
+          where: { id: attempt.id, status: AttemptStatus.STARTED },
+          data: {
+            status: AttemptStatus.PERMANENT_FAILURE,
+            finishedAt: new Date(),
+            responseMetadata,
+            errorCode: UNCERTAIN_RESULT_ERROR_CODE,
+            errorMessage: UNCERTAIN_RESULT_MESSAGE,
+          },
+        });
+      }
+      return true;
+    });
+    if (reconciled) {
+      this.logger.warn(JSON.stringify({ jobId, status: 'NEEDS_ACTION', errorCode: UNCERTAIN_RESULT_ERROR_CODE }));
+    }
+  }
+
+  private readDeliveryState(jobId: string) {
+    return this.prisma.publishJob.findUniqueOrThrow({
+      where: { id: jobId },
+      include: {
+        publishedPost: true,
+        attempts: { orderBy: { attemptNumber: 'desc' }, take: 1 },
+      },
+    });
+  }
+
+  private isClosedDelivery(status: PublishJobStatus): boolean {
+    const closedStatuses: PublishJobStatus[] = [
+      PublishJobStatus.PROCESSING,
+      PublishJobStatus.PUBLISHED,
+      PublishJobStatus.FAILED,
+      PublishJobStatus.NEEDS_ACTION,
+      PublishJobStatus.POSSIBLE_DUPLICATE,
+      PublishJobStatus.CANCELLED,
+    ];
+    return closedStatuses.includes(status);
+  }
+
+  private isSafeAfterProviderAcceptance(status: PublishJobStatus): boolean {
+    const safeStatuses: PublishJobStatus[] = [
+      PublishJobStatus.PROCESSING,
+      PublishJobStatus.PUBLISHED,
+      PublishJobStatus.NEEDS_ACTION,
+      PublishJobStatus.POSSIBLE_DUPLICATE,
+      PublishJobStatus.CANCELLED,
+    ];
+    return safeStatuses.includes(status);
   }
 
   private async handleFailure(jobId: string, attemptId: string, attemptNumber: number, maxAttempts: number, accountId: string, error: unknown): Promise<boolean> {

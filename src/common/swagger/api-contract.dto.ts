@@ -252,6 +252,7 @@ export class ConnectionTestContractDto {
   @ApiPropertyOptional() accountName?: string;
   @ApiPropertyOptional() manual?: boolean;
   @ApiPropertyOptional() message?: string;
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true }) details?: Record<string, unknown>;
 }
 
 export class FetchResultContractDto {
@@ -321,6 +322,7 @@ export class PublishAttemptLogContractDto {
   @ApiPropertyOptional({ type: String, nullable: true }) errorMessage?: string | null;
   @ApiProperty({ format: 'date-time' }) startedAt!: string;
   @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true }) finishedAt?: string | null;
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true }) responseMetadata?: Record<string, unknown> | null;
   @ApiPropertyOptional({ type: 'object', additionalProperties: true }) job?: Record<string, unknown>;
 }
 

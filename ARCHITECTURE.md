@@ -19,7 +19,7 @@ Browser ─REST─> API ─Prisma─> PostgreSQL
 - Credential chỉ được giải mã trong backend, sát thời điểm test/publish. DTO response dùng select an toàn.
 - Scheduler không publish trực tiếp. Nó claim row atomically rồi enqueue.
 - Queue là at-least-once; uniqueness trong PostgreSQL, Redis lock và platform idempotency (khi API hỗ trợ) cùng giảm duplicate.
-- Nếu worker chết sau khi platform nhận request nhưng trước khi lưu response, job cũ `PUBLISHING` chuyển `POSSIBLE_DUPLICATE` để con người xác minh, không blind retry.
+- Nếu worker chết sau khi platform có thể đã nhận request nhưng trước khi lưu response, job cũ `PUBLISHING` chuyển `NEEDS_ACTION` với mã đối soát. Redelivery không gọi provider; người vận hành phải xác minh trước khi dùng action gửi lại chính job.
 
 ## API contract
 

@@ -18,9 +18,11 @@ export class CredentialsService {
     platformAccountId: string,
     payload: Record<string, unknown>,
     expiresAt?: Date,
+    transaction?: Prisma.TransactionClient,
   ): Promise<void> {
     const encryptedPayload = this.encryption.encrypt(payload);
-    await this.prisma.platformCredential.upsert({
+    const client = transaction ?? this.prisma;
+    await client.platformCredential.upsert({
       where: { platformAccountId },
       create: {
         platformAccountId,

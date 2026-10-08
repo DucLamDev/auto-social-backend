@@ -29,13 +29,14 @@ Không lấy session cookie, password chính, CAPTCHA token hoặc endpoint reve
 | WordPress | `CURRENT` | Form credential: site URL, username, Application Password | Chỉ WordPress self-hosted REST API; article text/HTML, chưa upload media |
 | Blogger | `CURRENT`, có điều kiện | Google OAuth từ trang **Tài khoản** | Article; Google consent/verification tùy app |
 | dev.to | `CURRENT` | Form API key; có lựa chọn draft/publish | Article Markdown, chưa có binary upload/delete |
+| Discourse-compatible forums | `CURRENT`, có điều kiện | Form `baseUrl`, `apiUsername`, `categoryId`, optional `defaultTags`, `apiKey`; một account cho mỗi forum/category | Chỉ topic mới text/Markdown + destination tags; bỏ qua hashtag AI, có external-ID reconciliation; admin forum phải cấp key, chưa có User API Key flow/media/reply/delete |
 | Discord | `CURRENT` | Form incoming webhook URL | Text tối đa theo Discord; chưa upload attachment |
 | Bluesky | `CURRENT` dạng pilot | Form `accessJwt`, DID, PDS URL | Text; chưa OAuth/refresh/media, không phù hợp production dài hạn |
 | Mastodon.social | `CURRENT` | Chọn connector Mastodon, nhập `https://mastodon.social` và access token | Text; chưa media/native schedule |
 | social.vivaldi.net | `CURRENT` có kiểm tra instance | Chọn connector Mastodon, nhập `https://social.vivaldi.net` và token của Vivaldi Social | Cần test compatibility/rate limit trên instance |
 | Reddit | `MANUAL` trong release | Hệ thống tạo payload, mở Reddit, người dùng đăng và mark-published | Điền `REDDIT_*` chưa bật API/OAuth |
 
-Các tên khác trong danh sách chưa xuất hiện như connector có thể cấu hình trong UI. Phần dưới mô tả đường API để quyết định phát triển tiếp, không phải lời khẳng định chúng đã chạy trong source.
+Ngoài các instance Discourse dùng chung connector ở trên, các tên khác trong danh sách chưa xuất hiện như connector có thể cấu hình trong UI. Phần dưới mô tả đường API để quyết định phát triển tiếp, không phải lời khẳng định chúng đã chạy trong source.
 
 ## 3. Lấy token và cấu hình các connector hiện có
 
@@ -171,6 +172,19 @@ Quy trình đúng:
 
 Nguồn: [submit endpoint](https://www.reddit.com/dev/api/#POST_api_submit), [Reddit Data API Wiki](https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki), [Developer Platform access](https://support.reddithelp.com/hc/en-us/articles/14945211791892-Developer-Platform-Accessing-Reddit-Data).
 
+### 3.9 Discourse — generic connector cho forum được cấp quyền
+
+Release hiện có một connector `discourse` dùng lại cho nhiều instance. Trong UI, tạo một account riêng cho mỗi forum/category với:
+
+- settings: `baseUrl`, `apiUsername`, `categoryId`, tùy chọn `defaultTags` dạng CSV/string array;
+- credential write-only: `apiKey`.
+
+Key phải do admin của chính forum tạo và gắn với user có quyền tạo topic trong category. Public forum không tự cấp key chỉ vì bạn có account thành viên. Connector hiện dùng header `Api-Key` + `Api-Username`; Discourse core hiện hành cần granular `global:read` + `topics:write`, current user phải có quyền tạo topic toàn cục và category có full permission. Optional `defaultTags` được normalize/dedupe toàn bộ và gửi dạng `{name}`; AI hashtag không được dùng, còn giới hạn/tag policy do forum kiểm tra. Connection test báo tag requirements để chẩn đoán nhưng không từ chối chỉ dựa trên tổng số tag vì không thể xác minh group membership hoặc admin exemption; topic staging vẫn bắt buộc. External ID ổn định + topic lookup đối soát create bị lỗi/không rõ kết quả; timeout/5xx chưa đối soát được chuyển sang human reconciliation thay vì auto-retry. Connector chưa triển khai Discourse User API Key RSA/callback flow hoặc manual fallback.
+
+`baseUrl` phải giữ path cài đặt nếu có. Ví dụ MongoDB dùng `https://www.mongodb.com/community/forums`, không phải chỉ `https://www.mongodb.com`. Danh sách instance và quy trình smoke test nằm trong [DISCOURSE_CONFIGURATION.md](DISCOURSE_CONFIGURATION.md).
+
+Nguồn: [Discourse API](https://docs.discourse.org/), [API key configuration](https://meta.discourse.org/t/create-and-configure-an-api-key/230124), [User API Key specification — chưa implement](https://meta.discourse.org/t/user-api-keys-specification/48536).
+
 ## 4. Có API chính thức nhưng phải viết connector mới
 
 | Nền tảng | Token/quyền chính thức | Việc cần làm trước khi bật | Trạng thái |
@@ -218,17 +232,17 @@ Stack Exchange là Q&A, Disqus là comment và Flipboard là feed distribution. 
 
 | Nền tảng | Engine đã xác minh | Cách có token hợp lệ | Trạng thái khuyến nghị |
 |---|---|---|---|
-| Level1Techs Forum | Discourse | Site phải bật User API Key flow, hoặc admin cấp API key + API username | `NEEDS_ACTION` — [site info](https://forum.level1techs.com/about.json) |
-| TrueNAS Community | Discourse | Xin authorization của TrueNAS/site admin | `NEEDS_ACTION` — [site info](https://forums.truenas.com/about.json) |
-| AlmaLinux Forum | Discourse | Xin site bật User API Key hoặc cấp integration key | `NEEDS_ACTION` — [site info](https://forums.almalinux.org/about.json) |
-| Linux Containers Forum | Discourse | Như trên | `NEEDS_ACTION` — [site info](https://discuss.linuxcontainers.org/about.json) |
-| NGINX Community | Discourse | Như trên | `NEEDS_ACTION` — [site info](https://community.nginx.org/about.json) |
-| Caddy Community | Discourse | Như trên | `NEEDS_ACTION` — [site info](https://caddy.community/about.json) |
-| HestiaCP Forum | Discourse | Như trên | `NEEDS_ACTION` — [site info](https://forum.hestiacp.com/about.json) |
-| MikroTik Community | Discourse | Như trên; không dùng hướng dẫn phpBB cũ | `NEEDS_ACTION` — [site info](https://forum.mikrotik.com/about.json) |
-| OpenNebula Community | Discourse | Xin site authorization | `NEEDS_ACTION` — [site info](https://forum.opennebula.io/about.json) |
-| MongoDB Community | Discourse | Xin MongoDB/site authorization | `NEEDS_ACTION` — [site info](https://www.mongodb.com/community/forums/about.json) |
-| Redis Community Forum | Discourse | Xin Redis/site authorization | `NEEDS_ACTION` — [site info](https://forum.redis.io/about) |
+| Level1Techs Forum | Discourse | Admin cấp Single User API key + API username | `CURRENT/CONDITIONAL` — [site info](https://forum.level1techs.com/about.json) |
+| TrueNAS Community | Discourse | Xin authorization và API key của TrueNAS/site admin | `CURRENT/CONDITIONAL` — [site info](https://forums.truenas.com/about.json) |
+| AlmaLinux Forum | Discourse | Xin authorization và API key của site admin | `CURRENT/CONDITIONAL` — [site info](https://forums.almalinux.org/about.json) |
+| Linux Containers Forum | Discourse | Như trên | `CURRENT/CONDITIONAL` — [site info](https://discuss.linuxcontainers.org/about.json) |
+| NGINX Community | Discourse | Như trên | `CURRENT/CONDITIONAL` — [site info](https://community.nginx.org/about.json) |
+| Caddy Community | Discourse | Như trên | `CURRENT/CONDITIONAL` — [site info](https://caddy.community/about.json) |
+| HestiaCP Forum | Discourse | Như trên | `CURRENT/CONDITIONAL` — [site info](https://forum.hestiacp.com/about.json) |
+| MikroTik Community | Discourse | Như trên; không dùng hướng dẫn phpBB cũ | `CURRENT/CONDITIONAL` — [site info](https://forum.mikrotik.com/about.json) |
+| OpenNebula Community | Discourse | Xin site authorization và API key | `CURRENT/CONDITIONAL` — [site info](https://forum.opennebula.io/about.json) |
+| MongoDB Community | Discourse dưới path `/community/forums` | Xin MongoDB/site authorization; giữ path prefix trong `baseUrl` | `CURRENT/CONDITIONAL` — [site info](https://www.mongodb.com/community/forums/about.json) |
+| Replit Community Forum | Discourse tại `replit.discourse.group` | Xin forum admin authorization và API key | `CURRENT/CONDITIONAL` — [forum](https://replit.discourse.group/) |
 | DirectAdmin Forums | XenForo | API key chỉ do admin control panel cấp; OAuth chỉ khi version/site đã cấu hình | `NEEDS_ACTION` — [forum](https://forum.directadmin.com/) |
 | Voz Forums | XenForo | Điều khoản có nhắc “VOZ API” nhưng không có public onboarding/token flow; liên hệ VOZ, đồng thời lưu ý SMS OTP khi đăng bài | `NEEDS_ACTION/MANUAL` — [terms](https://voz.vn/help/terms/) |
 | Unraid Forums | Invision Community | REST API key hoặc OAuth client phải do community admin cấu hình/cấp scope | `NEEDS_ACTION` — [forum](https://forums.unraid.net/) |
@@ -238,7 +252,7 @@ Stack Exchange là Q&A, Disqus là comment và Flipboard là feed distribution. 
 
 Các engine dùng chung:
 
-- Discourse có `POST /posts.json`; auth bằng admin-created `Api-Key` + `Api-Username`, hoặc [User API Key flow](https://meta.discourse.org/t/user-api-keys-specification/48536) nếu target bật scope write. Xem [official API docs](https://docs.discourse.org/).
+- Discourse có `POST /posts.json`; connector hiện tại chỉ auth bằng admin-created `Api-Key` + `Api-Username`. Discourse có [User API Key flow](https://meta.discourse.org/t/user-api-keys-specification/48536), nhưng release này chưa implement RSA/encrypted callback flow đó. Xem [official API docs](https://docs.discourse.org/).
 - XenForo hỗ trợ thread/post qua REST, nhưng user thường không tự mint API key. Xem [REST API](https://docs.xenforo.com/api) và [API key manual](https://docs.xenforo.com/manual/configuration/api-keys).
 - Invision Community có topic/post REST nhưng API key/OAuth client do admin community tạo. Xem [API reference](https://invisioncommunity.com/developers/api-reference/).
 - Higher Logic Vanilla dùng Bearer PAT và API v2; quyền tạo PAT do site role quyết định. Xem [API v2 cookbook](https://success.vanillaforums.com/kb/articles/1966-api-v2-integration-cookbook).
@@ -246,6 +260,8 @@ Các engine dùng chung:
 - Zendesk Guide có create-community-post API nhưng cần credential/OAuth của đúng tenant. Xem [authentication](https://developer.zendesk.com/documentation/authentication/).
 
 Ngay cả khi lấy được key, connector forum nên mặc định yêu cầu human approval trước mỗi bài, allowlist hostname cố định và tôn trọng category/tag/on-topic rules. Không dùng các forum này làm mạng syndication hàng loạt.
+
+Connector `discourse` **không** áp dụng cho Disqus (comment), Eventbrite (event), Gumroad (commerce/email), aaPanel (Flarum), cPanel (Zendesk Guide Community), Ubiquiti (platform riêng), CloudPanel (community support qua Discord), Unix & Linux (Stack Exchange) hoặc Redis Community hiện hành. Các đích này cần adapter/domain model riêng hoặc manual flow.
 
 ### 6.3 Chỉ có UI/editor, chưa có public create API phù hợp hoặc tên chưa rõ
 
@@ -262,7 +278,7 @@ Ngay cả khi lấy được key, connector forum nên mặc định yêu cầu 
 | Warrior Forum | Không có official create API được xác minh; terms cấm automated use/bots/data-mining/bypass | `MANUAL_ONLY` — [terms](https://www.warriorforum.com/tos.html) |
 | Ubiquiti Community | Không có public create-post API/client onboarding được xác minh | `MANUAL_ONLY` — [community](https://community.ui.com/), [legal](https://www.ui.com/legal/) |
 | CloudPanel Forum | CloudPanel official support hiện trỏ community sang Discord; chưa xác minh một forum domain chính thức | `UNKNOWN/MANUAL` — [Support](https://www.cloudpanel.io/docs/v2/support/) |
-| Replit Community | Community Hub không công bố forum create API; policy cấm bot interaction chưa được phép | `MANUAL_ONLY` — [Help](https://replit.com/help), [Community Standards](https://replit.com/blog/community-standards) |
+| Redis Community Forum | Không còn coi là destination Discourse có write contract hiện hành; Redis hiện hướng người dùng tới Discord/community channels | `MANUAL` cho đến khi Redis xác nhận endpoint và quyền write — [Redis community](https://redis.io/community/), [Discord](https://redis.io/tutorials/community/discord/) |
 
 “Không tìm thấy public API” không khẳng định hệ thống nội bộ không tồn tại; nó có nghĩa hiện không có contract/onboarding chính chủ đủ an toàn để xây connector production.
 
@@ -270,7 +286,7 @@ Ngay cả khi lấy được key, connector forum nên mặc định yêu cầu 
 
 Ưu tiên theo giá trị và độ rõ của contract, không theo độ dài danh sách:
 
-1. Hoàn tất integration test production cho connector đang có: Discord -> WordPress draft -> dev.to draft -> Mastodon -> LinkedIn/Blogger OAuth.
+1. Hoàn tất integration test production cho connector đang có: Discord -> WordPress draft -> dev.to draft -> Discourse staging do bạn quản trị -> Mastodon -> LinkedIn/Blogger OAuth.
 2. Nâng Bluesky từ JWT pilot lên OAuth/refresh.
 3. Thêm Tumblr và Scoop.it vì có create API rõ ràng.
 4. Thêm adapter chuyên biệt nếu có nhu cầu thật: Pixelfed media, Lemmy community post, Stack Exchange Q&A, Disqus comment, Eventbrite event, Dailymotion video, Hugging Face Discussion.

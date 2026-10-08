@@ -10,6 +10,7 @@ import { ApiCreatedEnvelope, ApiOkEnvelope, ManualPayloadContractDto, MutationRe
 import { ListPublishJobsQueryDto } from './dto/list-publish-jobs-query.dto';
 import { PublishJobMetricsQueryDto } from './dto/publish-job-metrics-query.dto';
 import { PublishJobMetricsContractDto } from '../common/swagger/api-contract.dto';
+import { ReconcileNotFoundDto } from './dto/reconcile-not-found.dto';
 
 @ApiTags('publish-jobs')
 @ApiBearerAuth()
@@ -39,6 +40,17 @@ export class PublishJobsController {
   @ApiCreatedEnvelope(MutationResultContractDto)
   @Roles(RoleName.ADMIN, RoleName.EDITOR)
   retry(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) { return this.jobs.retry(user.id, id); }
+
+  @Post(':id/reconcile-not-found')
+  @ApiCreatedEnvelope(MutationResultContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  reconcileNotFound(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReconcileNotFoundDto,
+  ) {
+    return this.jobs.reconcileNotFound(user.id, id, dto.confirmedNotFound);
+  }
 
   @Post(':id/mark-published')
   @ApiCreatedEnvelope(MutationResultContractDto)

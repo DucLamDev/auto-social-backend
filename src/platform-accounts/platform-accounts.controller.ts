@@ -43,7 +43,7 @@ export class PlatformAccountsController {
   @ApiOkEnvelope(PlatformAccountContractDto)
   @Roles(RoleName.ADMIN)
   updateCredential(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCredentialDto) {
-    return this.accounts.updateCredential(user.id, id, dto.credential);
+    return this.accounts.updateCredential(user.id, id, dto.credential, dto.settings);
   }
 
   @Patch(':id')
