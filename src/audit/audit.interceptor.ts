@@ -17,14 +17,17 @@ export class AuditInterceptor implements NestInterceptor {
     if (!AuditInterceptor.mutationMethods.has(request.method.toUpperCase())) return next.handle();
     const segments = request.path.split('/').filter(Boolean);
     const apiIndex = segments.findIndex((segment) => segment === 'v1');
-    const entityType = segments[apiIndex >= 0 ? apiIndex + 1 : 0] ?? 'unknown';
+    const entityIndex = apiIndex >= 0 ? apiIndex + 1 : 0;
+    const entityType = segments[entityIndex] ?? 'unknown';
     const rawEntityId = request.params.id ?? request.params.slug;
     const entityId = Array.isArray(rawEntityId) ? rawEntityId[0] : rawEntityId;
+    const operation = entityId ? segments[entityIndex + 2] : undefined;
+    const operationSuffix = operation ? `_${operation.toUpperCase()}` : '';
     return next.handle().pipe(
       mergeMap(async (value: unknown) => {
         await this.audit.recordBestEffort({
           actorId: request.user?.id,
-          action: `HTTP_${request.method.toUpperCase()}_${entityType.toUpperCase()}`,
+          action: `HTTP_${request.method.toUpperCase()}_${entityType.toUpperCase()}${operationSuffix}`,
           entityType,
           entityId,
           requestId: request.requestId,

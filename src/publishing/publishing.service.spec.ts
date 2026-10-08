@@ -248,13 +248,36 @@ describe('PublishingService idempotency', () => {
   });
 
   it.each([
-    ['a published topic', { externalId: 'topic-42', url: 'https://forum.example/t/topic/42', status: 'PUBLISHED' as const }],
+    ['a published topic', {
+      externalId: 'topic-42',
+      url: 'https://forum.example/t/topic/42',
+      status: 'PUBLISHED' as const,
+      metadata: undefined,
+    }, true],
     ['a moderation submission', {
       externalId: 'pending-77',
       status: 'NEEDS_ACTION' as const,
       metadata: { moderationQueue: true, pendingPostId: 77 },
-    }],
-  ])('moves %s to reconciliation when result persistence fails after provider acceptance', async (_label, result) => {
+    }, false],
+    ['an uncertain Discourse submission', {
+      externalId: 'pending:sp-external-id',
+      status: 'NEEDS_ACTION' as const,
+      metadata: {
+        reconciliationRequired: true,
+        submissionUncertain: true,
+        providerExternalId: 'sp-external-id',
+      },
+    }, false],
+    ['a manual publishing action', {
+      externalId: 'manual:action-1',
+      status: 'NEEDS_ACTION' as const,
+      metadata: { reason: 'Manual publishing is required' },
+    }, false],
+  ] as const)('recovers %s without replaying the connector after result persistence fails', async (
+    _label,
+    result,
+    providerAcceptedRecovery,
+  ) => {
     const job = publishJobFixture();
     const stateAfterFailedPersistence = {
       id: job.id,
@@ -311,18 +334,48 @@ describe('PublishingService idempotency', () => {
         lockedAt: null,
       }) as unknown,
     }));
-    expect(attemptUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
-      where: { id: 'attempt-1' },
-      data: expect.objectContaining({
-        status: 'SUCCEEDED',
-        responseMetadata: expect.objectContaining({
-          externalPostId: result.externalId,
-          providerAccepted: true,
-          reconciliationRequired: true,
-          originalResultStatus: result.status,
+    if (providerAcceptedRecovery) {
+      expect(attemptUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
+        where: { id: 'attempt-1' },
+        data: expect.objectContaining({
+          status: 'SUCCEEDED',
+          responseMetadata: expect.objectContaining({
+            ...(result.metadata ?? {}),
+            externalPostId: result.externalId,
+            providerAccepted: true,
+            reconciliationRequired: true,
+            persistenceRecoveryRequired: true,
+            originalResultStatus: result.status,
+          }) as unknown,
         }) as unknown,
-      }) as unknown,
-    }));
+      }));
+    } else {
+      expect(attemptUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
+        where: { id: 'attempt-1' },
+        data: expect.objectContaining({
+          status: 'SUCCEEDED',
+          responseMetadata: expect.objectContaining({
+            ...(result.metadata ?? {}),
+            resultPersistenceRecovered: true,
+            originalResultStatus: result.status,
+          }) as unknown,
+        }) as unknown,
+      }));
+      expect(attemptUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          responseMetadata: expect.not.objectContaining({
+            providerAccepted: true,
+          }) as unknown,
+        }) as unknown,
+      }));
+      expect(attemptUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          responseMetadata: expect.not.objectContaining({
+            persistenceRecoveryRequired: true,
+          }) as unknown,
+        }) as unknown,
+      }));
+    }
     expect(JSON.stringify(jobUpdate.mock.calls)).not.toContain(`"status":"${PublishJobStatus.RETRY}"`);
   });
 

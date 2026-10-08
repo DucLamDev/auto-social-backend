@@ -190,7 +190,7 @@ export class PublishingService {
       return transaction.publishAttempt.create({ data: { publishJobId: job.id, attemptNumber, status: AttemptStatus.STARTED, requestMetadata: { platform, idempotencyKey: job.idempotencyKey } } });
     });
     let deadLetter = false;
-    let providerAccepted = false;
+    let connectorReturnedResult = false;
     try {
       assertPublishAccountReady(job.platformAccount);
       const { account } = await this.connectorAccounts.load(job.platformAccountId);
@@ -208,7 +208,7 @@ export class PublishingService {
       };
       await connector.validate(payload);
       const result = await connector.publish(account, payload);
-      providerAccepted = true;
+      connectorReturnedResult = true;
       try {
         await this.persistPublishResult(job.id, job.platformAccountId, attempt.id, result);
       } catch (persistenceError) {
@@ -222,7 +222,7 @@ export class PublishingService {
         // generic retry handling. Re-read first in case the transaction
         // committed but its response was lost, then persist a reconciliation
         // state without issuing another provider request.
-        const recovered = await this.recoverAcceptedPublish(
+        const recovered = await this.recoverReturnedPublish(
           job.id,
           job.platformAccountId,
           attempt.id,
@@ -235,7 +235,7 @@ export class PublishingService {
       // If the provider returned and even the recovery write failed, leave the
       // row PUBLISHING. A RabbitMQ redelivery is reconciled at method entry and
       // cannot call the provider again.
-      if (providerAccepted) throw error;
+      if (connectorReturnedResult) throw error;
       deadLetter = await this.handleFailure(job.id, attempt.id, attemptNumber, job.maxAttempts, job.platformAccountId, error);
     }
     await this.campaignStatus.refresh(job.target.campaignId);
@@ -303,7 +303,7 @@ export class PublishingService {
     });
   }
 
-  private async recoverAcceptedPublish(
+  private async recoverReturnedPublish(
     jobId: string,
     platformAccountId: string,
     attemptId: string,
@@ -312,15 +312,29 @@ export class PublishingService {
     const current = await this.readDeliveryState(jobId);
     if (current.publishedPost || this.isSafeAfterProviderAcceptance(current.status)) return true;
 
-    const responseMetadata = {
-      ...(result.metadata ?? {}),
-      externalPostId: result.externalId,
-      ...(result.url ? { url: result.url } : {}),
-      providerAccepted: true,
-      reconciliationRequired: true,
-      persistenceRecoveryRequired: true,
-      originalResultStatus: result.status,
-    } as Prisma.InputJsonObject;
+    // NEEDS_ACTION is already a deliberate connector outcome. Recreate that
+    // outcome without changing its meaning: manual actions must stay manual,
+    // moderation must stay moderation, and an uncertain Discourse submission
+    // must remain eligible for operator-confirmed not-found reconciliation.
+    // Only PUBLISHED/PROCESSING results need the conservative
+    // provider-accepted recovery state because replaying them could duplicate a
+    // post when the first database transaction actually committed.
+    const resultNeedsAction = result.status === 'NEEDS_ACTION';
+    const responseMetadata = resultNeedsAction
+      ? {
+          ...(result.metadata ?? {}),
+          resultPersistenceRecovered: true,
+          originalResultStatus: result.status,
+        } as Prisma.InputJsonObject
+      : {
+          ...(result.metadata ?? {}),
+          externalPostId: result.externalId,
+          ...(result.url ? { url: result.url } : {}),
+          providerAccepted: true,
+          reconciliationRequired: true,
+          persistenceRecoveryRequired: true,
+          originalResultStatus: result.status,
+        } as Prisma.InputJsonObject;
     const recovered = await this.prisma.$transaction(async (transaction) => {
       const claimed = await transaction.publishJob.updateMany({
         where: {
@@ -339,8 +353,8 @@ export class PublishingService {
           status: PublishJobStatus.NEEDS_ACTION,
           nextAttemptAt: null,
           lockedAt: null,
-          lastErrorCode: ErrorCode.INTERNAL_ERROR,
-          lastErrorMessage: PERSISTENCE_RECOVERY_MESSAGE,
+          lastErrorCode: resultNeedsAction ? null : ErrorCode.INTERNAL_ERROR,
+          lastErrorMessage: resultNeedsAction ? null : PERSISTENCE_RECOVERY_MESSAGE,
         },
       });
       if (!claimed.count) return false;
