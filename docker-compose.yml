@@ -22,7 +22,7 @@ services:
   api:
     <<: *app
     command: ["sh", "-c", "pnpm prisma:deploy && node dist/main.js"]
-    ports: ["${PORT:-3001}:3001"]
+    ports: ["127.0.0.1:${PORT:-3001}:3001"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
@@ -47,7 +47,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-social_publisher}
       POSTGRES_USER: ${POSTGRES_USER:-social_publisher}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"]
     volumes: ["postgres_data:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -59,7 +59,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"]
     volumes: ["redis_data:/data"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -73,7 +73,9 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-social_publisher}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-change_me}
-    ports: ["5672:5672", "15672:15672"]
+    ports:
+      - "127.0.0.1:${RABBITMQ_AMQP_HOST_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672"
     volumes: ["rabbitmq_data:/var/lib/rabbitmq"]
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
@@ -88,7 +90,9 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change_me}
-    ports: ["9000:9000", "9001:9001"]
+    ports:
+      - "127.0.0.1:${MINIO_API_HOST_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
     volumes: ["minio_data:/data"]
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]

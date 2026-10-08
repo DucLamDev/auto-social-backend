@@ -2,6 +2,8 @@
 
 > Cập nhật và đối chiếu tài liệu chính thức: **2026-10-08**. Chính sách, phiên bản API, quota và giá có thể thay đổi mà không cần thay đổi source của dự án; luôn kiểm tra lại liên kết chính thức trước khi đưa một connector mới vào production.
 
+Danh sách mở rộng gồm Medium, Substack, Tumblr, Fediverse, community/forum, Stack Exchange, Eventbrite, Dailymotion và các nền tảng khác nằm trong [EXTENDED_PLATFORM_CATALOG.md](EXTENDED_PLATFORM_CATALOG.md). Tài liệu này tập trung vào các connector Phase 1 đã được seed trong release.
+
 Tài liệu này mô tả khả năng mà API chính thức cho phép và cách chuẩn bị tài khoản/app. Nó **không khẳng định connector trong source đã được kiểm thử với tài khoản thật**. Trạng thái thực tế phải lấy từ backend (`connector status`, `capabilities`, `test connection`) và chỉ chuyển sang production sau smoke test bằng credential thật.
 
 ## 1. Cách đọc trạng thái

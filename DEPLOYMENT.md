@@ -2,7 +2,7 @@
 
 > Runbook cho Ubuntu LTS + Docker Compose, cập nhật 2026-10-08. Backend production dùng `docker-compose.prod.yml` với các service `api`, `worker`, `postgres`, `redis`, `rabbitmq`, `minio`, `minio-init`. Luôn deploy đúng release/tag đã kiểm thử vì file Compose và schema có thể thay đổi ở release sau.
 
-Các file Compose đã được kiểm tra cấu hình tĩnh trong môi trường bàn giao, nhưng Docker daemon tại máy bàn giao không chạy nên image build/full-stack smoke test chưa có bằng chứng thực thi tại đó. Các bước build, migrate, `/ready`, login và campaign smoke test bên dưới là quality gate bắt buộc trên CI hoặc VPS staging trước khi nhận traffic production.
+Các file Compose đã được kiểm tra cấu hình tĩnh; image backend và frontend cũng đã build/chạy kiểm tra cục bộ. Backend đã được xác nhận có Prisma target `debian-openssl-3.0.x`, TSX và FFmpeg ngay cả khi container không có mạng; frontend trả `/api/health` ở trạng thái Docker `healthy`. Production Compose với PostgreSQL, Redis, RabbitMQ, MinIO, API và hai worker đã qua smoke test cô lập: migrate, seed, readiness, login và luồng campaign thủ công `NEEDS_ACTION → PUBLISHED → COMPLETED` đều đạt. Credential thật và sandbox của từng nhà cung cấp vẫn là quality gate bắt buộc trên VPS staging trước khi nhận traffic production.
 
 ## 1. Kiến trúc production
 

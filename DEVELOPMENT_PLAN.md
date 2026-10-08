@@ -34,8 +34,8 @@ Ký hiệu: `[ ] TODO`, `[-] IN PROGRESS`, `[x] DONE`, `[!] BLOCKED`.
 - [ ] Playwright/browser-assisted workflow. Dependencies: an approved use case that cannot use official API. Notes: intentionally not installed; never bypass CAPTCHA/2FA/anti-bot.
 - [x] Docker dev/prod Compose, health checks, persistent volumes, CI. Files: Dockerfiles, Compose, `.github/workflows/ci.yml`.
 - [x] HTTP smoke E2E cho liveness/readiness và response envelope với dependency mock. Test: `pnpm test:e2e` (1 suite / 2 tests).
-- [!] Local Docker image build execution. Dependencies: running Docker daemon. Test: `docker build -t social-publisher-backend:validation .`. Notes: Compose YAML validated; Docker Desktop engine was unavailable in the handoff environment, so CI/VPS must execute the image build.
-- [!] Full Compose integration/smoke test. Dependencies: Docker daemon and real local `.env`. Test: `docker compose up`, migrate/seed, login→campaign→manual publish. Notes: validate before production cutover.
+- [x] Local Docker image build execution. Dependencies: Docker Desktop/Linux engine. Test: `docker build --pull -t social-publisher-backend:validation .`, then run Prisma, TSX and FFmpeg checks with `--network none`. Notes: image built successfully; Prisma selected `debian-openssl-3.0.x`, and the runtime contains an offline Corepack cache so migration/seed tooling does not download pnpm at startup.
+- [x] Full Compose integration/smoke test with isolated validation data. Dependencies: Docker daemon and validation-only `.env`. Test: production Compose up/wait, migrate, seed, health/readiness, login, create content/manual Reddit account, approved fixture variant, publish campaign, inspect `NEEDS_ACTION`, mark published. Notes: all infrastructure/API/two workers became healthy; the campaign reconciled to `COMPLETED` and its job to `PUBLISHED`. Real provider credentials remain a separate pre-production gate.
 
 ## Quality gate
 
