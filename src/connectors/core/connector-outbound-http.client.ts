@@ -1,5 +1,5 @@
 import { lookup as systemLookup } from 'node:dns/promises';
-import { BlockList, isIP } from 'node:net';
+import { BlockList, isIP, type LookupFunction } from 'node:net';
 import { Agent, Response, fetch as undiciFetch } from 'undici';
 import { ErrorCode } from '../../common/exceptions/application.exception';
 import { ConnectorError } from './connector-error';
@@ -96,6 +96,63 @@ interface ConnectorOutboundHttpOptions {
 
 const defaultResolver: ConnectorHostResolver = (hostname) =>
   systemLookup(hostname, { all: true, verbatim: true });
+
+const normalizeHostname = (value: string): string =>
+  value.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+
+/**
+ * Return only the DNS results that were validated before opening the socket.
+ *
+ * Node may request all addresses so it can race IPv4/IPv6 connections. Its
+ * lookup callback contract changes in that mode: it expects LookupAddress[]
+ * instead of a single address string. Returning the scalar form for an
+ * `all: true` lookup makes Node reject the connection with
+ * ERR_INVALID_IP_ADDRESS before any HTTP request reaches the platform.
+ */
+export function createPinnedLookup(
+  expectedHostname: string,
+  addresses: readonly ConnectorResolvedAddress[],
+): LookupFunction {
+  const normalizedExpected = normalizeHostname(expectedHostname);
+
+  return (hostname, options, callback) => {
+    const fail = (message: string): void => {
+      const error = new Error(message);
+      if (options.all) callback(error, []);
+      else callback(error, '');
+    };
+
+    if (normalizeHostname(hostname) !== normalizedExpected) {
+      fail('Unexpected connector DNS hostname');
+      return;
+    }
+
+    const requestedFamily = options.family === 4 || options.family === 'IPv4'
+      ? 4
+      : options.family === 6 || options.family === 'IPv6'
+        ? 6
+        : undefined;
+    const candidates = addresses.filter(
+      (candidate) => requestedFamily === undefined || candidate.family === requestedFamily,
+    );
+
+    if (!candidates.length) {
+      fail('No validated connector address for requested family');
+      return;
+    }
+
+    if (options.all) {
+      callback(
+        null,
+        candidates.map(({ address, family }) => ({ address, family })),
+      );
+      return;
+    }
+
+    const address = candidates[0]!;
+    callback(null, address.address, address.family);
+  };
+}
 
 /**
  * HTTP transport for connector endpoints supplied by an administrator.
@@ -217,26 +274,9 @@ export class ConnectorOutboundHttpClient {
     expectedHostname: string,
     addresses: readonly ConnectorResolvedAddress[],
   ): Agent {
-    const normalizedExpected = this.normalizedHostname(expectedHostname);
     return new Agent({
       connect: {
-        lookup: (hostname, options, callback) => {
-          if (this.normalizedHostname(hostname) !== normalizedExpected) {
-            callback(new Error('Unexpected connector DNS hostname'), '', 4);
-            return;
-          }
-          const requestedFamily = typeof options === 'number' ? options : options.family;
-          const address = addresses.find(
-            (candidate) => requestedFamily !== 4 && requestedFamily !== 6
-              ? true
-              : candidate.family === requestedFamily,
-          );
-          if (!address) {
-            callback(new Error('No validated connector address for requested family'), '', 4);
-            return;
-          }
-          callback(null, address.address, address.family);
-        },
+        lookup: createPinnedLookup(expectedHostname, addresses),
       },
     });
   }
@@ -263,7 +303,7 @@ export class ConnectorOutboundHttpClient {
   }
 
   private normalizedHostname(value: string): string {
-    return value.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+    return normalizeHostname(value);
   }
 
   private isBlockedAddress(raw: string): boolean {

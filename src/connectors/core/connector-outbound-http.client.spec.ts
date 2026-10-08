@@ -3,6 +3,7 @@ import {
   ConnectorFetch,
   ConnectorHostResolver,
   ConnectorOutboundHttpClient,
+  createPinnedLookup,
 } from './connector-outbound-http.client';
 
 function resolver(...addresses: string[]): jest.MockedFunction<ConnectorHostResolver> {
@@ -20,6 +21,27 @@ function fetcher(...responses: Response[]): jest.MockedFunction<ConnectorFetch> 
 }
 
 describe('ConnectorOutboundHttpClient', () => {
+  it('returns an address array when Node requests all pinned DNS results', (done) => {
+    const lookup = createPinnedLookup('social.example.org', [
+      { address: '2001:4860:4860::8888', family: 6 },
+      { address: '93.184.216.34', family: 4 },
+    ]);
+
+    lookup('social.example.org', { all: true }, (error, addresses, family) => {
+      try {
+        expect(error).toBeNull();
+        expect(addresses).toEqual([
+          { address: '2001:4860:4860::8888', family: 6 },
+          { address: '93.184.216.34', family: 4 },
+        ]);
+        expect(family).toBeUndefined();
+        done();
+      } catch (assertionError) {
+        done(assertionError);
+      }
+    });
+  });
+
   it.each([
     'https://127.0.0.1/admin',
     'https://10.0.0.1/',
