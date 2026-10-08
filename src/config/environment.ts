@@ -10,10 +10,12 @@ export interface Environment {
   DATABASE_URL: string;
   REDIS_URL: string;
   RABBITMQ_URL: string;
+  RABBITMQ_PREFETCH: number;
   JWT_ACCESS_SECRET: string;
   JWT_REFRESH_SECRET: string;
   CREDENTIAL_ENCRYPTION_KEY: string;
   OPENAI_API_KEY?: string;
+  OPENAI_TIMEOUT_MS: number;
   S3_ENDPOINT: string;
   S3_PUBLIC_URL: string;
   S3_REGION: string;
@@ -55,6 +57,14 @@ function parseHttpUrl(value: unknown, key: string): URL {
   return parsed;
 }
 
+function parsePositiveInteger(value: unknown, key: string, fallback: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${key} must be a positive integer`);
+  }
+  return parsed;
+}
+
 function isPrivateOrLocalHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
@@ -91,6 +101,8 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   }
   const port = Number(raw.PORT ?? 3001);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT is invalid');
+  const rabbitmqPrefetch = parsePositiveInteger(raw.RABBITMQ_PREFETCH, 'RABBITMQ_PREFETCH', 10);
+  const openaiTimeoutMs = parsePositiveInteger(raw.OPENAI_TIMEOUT_MS, 'OPENAI_TIMEOUT_MS', 60_000);
   const logLevel = typeof raw.LOG_LEVEL === 'string' ? raw.LOG_LEVEL : 'info';
   if (!['error', 'warn', 'info', 'debug', 'verbose'].includes(logLevel)) {
     throw new Error('LOG_LEVEL must be error, warn, info, debug, or verbose');
@@ -123,5 +135,12 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   if (typeof raw.LINKEDIN_API_VERSION === 'string' && raw.LINKEDIN_API_VERSION && !/^\d{6}$/.test(raw.LINKEDIN_API_VERSION)) {
     throw new Error('LINKEDIN_API_VERSION must use YYYYMM');
   }
-  return { ...raw, NODE_ENV: env, PORT: port, LOG_LEVEL: logLevel };
+  return {
+    ...raw,
+    NODE_ENV: env,
+    PORT: port,
+    LOG_LEVEL: logLevel,
+    RABBITMQ_PREFETCH: rabbitmqPrefetch,
+    OPENAI_TIMEOUT_MS: openaiTimeoutMs,
+  };
 }

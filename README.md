@@ -21,15 +21,21 @@ Các connector chưa được coi là “đã kiểm chứng production” cho �
 
 Yêu cầu Node.js 22+, Corepack và Docker.
 
-```bash
+```powershell
 corepack pnpm install
-cp .env.example .env
-# tạo khóa đúng 32 bytes base64
-openssl rand -base64 32
-# điền CREDENTIAL_ENCRYPTION_KEY và đổi toàn bộ change_me
-docker compose up -d --build
-docker compose exec api pnpm prisma:seed
+Copy-Item .env.example .env
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+# Dán kết quả vào CREDENTIAL_ENCRYPTION_KEY, đổi các giá trị change_me
+# và đặt SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD trước lần seed đầu.
+docker compose config --quiet
+docker compose up -d --build --wait
+docker compose exec api corepack pnpm prisma:seed
+Invoke-RestMethod http://localhost:3001/ready
 ```
+
+Không dùng `npm start` như lệnh khởi động toàn bộ project: lệnh đó chỉ chạy API trên host, không khởi động PostgreSQL, Redis, RabbitMQ, MinIO hoặc worker và cũng không chạy migration/seed. Lỗi Prisma `P1012 Environment variable not found: DATABASE_URL` nghĩa là chưa có `.env`; lỗi `P1001` sau đó nghĩa là PostgreSQL chưa chạy. Với lần chạy đầu, dùng Compose như trên.
+
+Giữ cố định và backup `CREDENTIAL_ENCRYPTION_KEY` trước khi lưu social credential. Đổi key sau khi đã lưu API key sẽ làm credential cũ không giải mã được.
 
 API: `http://localhost:3001/api/v1`  
 Swagger: `http://localhost:3001/api/docs`  

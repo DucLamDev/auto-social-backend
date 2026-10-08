@@ -9,9 +9,11 @@ function productionEnvironment(): Record<string, unknown> {
     DATABASE_URL: 'postgresql://publisher:strong-password@postgres:5432/publisher',
     REDIS_URL: 'redis://:strong-password@redis:6379',
     RABBITMQ_URL: 'amqp://publisher:strong-password@rabbitmq:5672',
+    RABBITMQ_PREFETCH: '10',
     JWT_ACCESS_SECRET: 'a'.repeat(32),
     JWT_REFRESH_SECRET: 'b'.repeat(32),
     CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
+    OPENAI_TIMEOUT_MS: '60000',
     S3_ENDPOINT: 'http://minio:9000',
     S3_PUBLIC_URL: 'https://media.example.com/publisher',
     S3_REGION: 'us-east-1',
@@ -26,8 +28,22 @@ function productionEnvironment(): Record<string, unknown> {
 describe('validateEnvironment', () => {
   it('accepts explicit public production origins and internal S3 transport', () => {
     expect(validateEnvironment(productionEnvironment())).toMatchObject({
-      NODE_ENV: 'production', PORT: 3001, LOG_LEVEL: 'info',
+      NODE_ENV: 'production',
+      PORT: 3001,
+      LOG_LEVEL: 'info',
+      RABBITMQ_PREFETCH: 10,
+      OPENAI_TIMEOUT_MS: 60_000,
     });
+  });
+
+  it.each([
+    ['RABBITMQ_PREFETCH', '0'],
+    ['RABBITMQ_PREFETCH', '1.5'],
+    ['RABBITMQ_PREFETCH', 'not-a-number'],
+    ['OPENAI_TIMEOUT_MS', '-1'],
+    ['OPENAI_TIMEOUT_MS', 'Infinity'],
+  ])('rejects an invalid positive integer %s', (key, value) => {
+    expect(() => validateEnvironment({ ...productionEnvironment(), [key]: value })).toThrow(key);
   });
 
   it.each([
