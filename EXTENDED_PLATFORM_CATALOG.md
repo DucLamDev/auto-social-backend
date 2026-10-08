@@ -38,6 +38,22 @@ Không lấy session cookie, password chính, CAPTCHA token hoặc endpoint reve
 
 Ngoài các instance Discourse dùng chung connector ở trên, các tên khác trong danh sách chưa xuất hiện như connector có thể cấu hình trong UI. Phần dưới mô tả đường API để quyết định phát triển tiếp, không phải lời khẳng định chúng đã chạy trong source.
 
+### 2.1 Community VPSTTT có thể hỗ trợ phân phối tới đâu?
+
+`https://vpsttt.discourse.diy` có thể làm content hub và canonical source, nhưng API key của site này **chỉ** cho phép thao tác trên chính site đó. Nó không cấp token, quyền đăng hoặc quyền bỏ qua moderation của bất kỳ mạng xã hội/forum bên thứ ba nào.
+
+| Đường phân phối | Dùng được hiện tại? | Ý nghĩa chính xác |
+|---|---|---|
+| Social Publisher -> VPSTTT Community + LinkedIn/WordPress/Blogger/dev.to/Discord/Bluesky/Mastodon | Có, khi từng destination đã kết nối credential riêng | Một campaign có thể chọn nhiều destination; backend gọi từng connector độc lập. Discourse không tự chuyển tiếp bài. |
+| VPSTTT Community -> Discord | Có thể cấu hình trực tiếp trong Discourse | Bundled [Chat Integration](https://meta.discourse.org/t/set-up-discord-notifications-with-the-discourse-chat-integration-plugin/66600) gửi notification/link; không thay thế connector xuất bản nội dung đầy đủ. |
+| VPSTTT Community -> Flipboard | Có điều kiện | Dùng RSS public, ví dụ `https://vpsttt.discourse.diy/c/chung/4.rss`, rồi đăng ký/review theo [Flipboard RSS guidelines](https://about.flipboard.com/rss-guidelines/). Không có publish token tùy ý. |
+| VPSTTT Community -> daily.dev | Có điều kiện/manual onboarding | Có thể đề xuất RSS/source theo quy trình của daily.dev; không có create-post API public để Community tự đẩy bài. |
+| VPSTTT Community -> Mastodon/Fediverse | Thử nghiệm, chưa nằm trong project | [Discourse ActivityPub plugin](https://github.com/discourse/discourse-activity-pub) có thể federate category/tag actor. Đây không phải đăng vào tài khoản Mastodon/Pixelfed sẵn có và cần staging trước khi dùng production. |
+| VPSTTT Community -> các connector khác khi có topic mới | Chưa có trong release | Discourse có [webhook topic/post](https://meta.discourse.org/t/configure-webhooks-that-trigger-on-discourse-events-to-integrate-with-external-services/49045), nhưng backend hiện chưa có inbound endpoint. Cần xây receiver xác minh HMAC, chống trùng/lặp vòng và luôn tạo draft chờ duyệt trước khi relay. |
+| Nút share của Discourse -> social | Chỉ thủ công | Nút share mở composer/link chia sẻ; không phải API auto-publish và không quản lý token social. |
+
+RSS công khai hiện dùng được cho toàn site tại `https://vpsttt.discourse.diy/latest.rss?order=created`; cấu trúc feed category chính thức là `/c/{slug}/{id}.rss`. Không cấu hình cùng một category vừa làm source vừa làm destination relay vì dễ tạo vòng lặp. Xem [Discourse RSS reference](https://meta.discourse.org/t/finding-discourse-rss-feeds/264134).
+
 ## 3. Lấy token và cấu hình các connector hiện có
 
 ### 3.1 LinkedIn — OAuth member text post
@@ -242,7 +258,6 @@ Stack Exchange là Q&A, Disqus là comment và Flipboard là feed distribution. 
 | MikroTik Community | Discourse | Như trên; không dùng hướng dẫn phpBB cũ | `CURRENT/CONDITIONAL` — [site info](https://forum.mikrotik.com/about.json) |
 | OpenNebula Community | Discourse | Xin site authorization và API key | `CURRENT/CONDITIONAL` — [site info](https://forum.opennebula.io/about.json) |
 | MongoDB Community | Discourse dưới path `/community/forums` | Xin MongoDB/site authorization; giữ path prefix trong `baseUrl` | `CURRENT/CONDITIONAL` — [site info](https://www.mongodb.com/community/forums/about.json) |
-| Replit Community Forum | Discourse tại `replit.discourse.group` | Xin forum admin authorization và API key | `CURRENT/CONDITIONAL` — [forum](https://replit.discourse.group/) |
 | DirectAdmin Forums | XenForo | API key chỉ do admin control panel cấp; OAuth chỉ khi version/site đã cấu hình | `NEEDS_ACTION` — [forum](https://forum.directadmin.com/) |
 | Voz Forums | XenForo | Điều khoản có nhắc “VOZ API” nhưng không có public onboarding/token flow; liên hệ VOZ, đồng thời lưu ý SMS OTP khi đăng bài | `NEEDS_ACTION/MANUAL` — [terms](https://voz.vn/help/terms/) |
 | Unraid Forums | Invision Community | REST API key hoặc OAuth client phải do community admin cấu hình/cấp scope | `NEEDS_ACTION` — [forum](https://forums.unraid.net/) |
@@ -269,7 +284,7 @@ Connector `discourse` **không** áp dụng cho Disqus (comment), Eventbrite (ev
 |---|---|---|
 | AWS Community | Hiện tương ứng AWS Builder Center: đăng nhập Builder ID, soạn và gửi moderation qua UI | `MANUAL_EDITORIAL` — [Builder Center](https://builder.aws.com/start), [FAQ](https://builder.aws.com/faq) |
 | Tinhte.vn | Đăng bài bằng UI chính thức; không suy diễn API từ dấu hiệu XenForo | `MANUAL` — [hướng dẫn viết bài](https://tinhte.vn/thread/huong-dan-viet-bai-tren-tinhte-vn.3702060/), [điều khoản](https://tinhte.vn/thread/thoa-thuan-cung-cap-su-dung-dich-vu.2864413/) |
-| KubeBy | Không nhận diện chắc chắn dịch vụ/pháp nhân từ tên này | `UNKNOWN`; cần canonical URL trước khi thiết kế |
+| KubeBy / Kube by Example | Red Hat Learning Community/Khoros; không phải Discourse | `MANUAL/PARTNERSHIP`; cần Red Hat/Khoros cấp sanctioned integration — [community](https://learn.redhat.com/t5/Kube-by-Example-KBE/gh-p/KubebyExampleKBE) |
 | DZone | Gửi qua editor rồi moderation | `MANUAL_EDITORIAL` — [Contribute](https://dzone.com/pages/contribute), [guidelines](https://dzone.com/articles/dzones-article-submission-guidelines) |
 | daily.dev | Có PAT/OAuth API nhưng OpenAPI public hiện không có operation tạo post; Direct Posting là luồng UI | `MANUAL` — [API](https://docs.daily.dev/welcome-to-the-daily-dev-api/), [Direct Posting](https://docs.daily.dev/how-to-get-featured/) |
 | Differ | Dùng editor/self-publish hoặc gửi publication | `MANUAL` — [FAQ](https://differ.blog/faq), [Getting Started](https://differ.blog/getting-started) |
@@ -278,6 +293,7 @@ Connector `discourse` **không** áp dụng cho Disqus (comment), Eventbrite (ev
 | Warrior Forum | Không có official create API được xác minh; terms cấm automated use/bots/data-mining/bypass | `MANUAL_ONLY` — [terms](https://www.warriorforum.com/tos.html) |
 | Ubiquiti Community | Không có public create-post API/client onboarding được xác minh | `MANUAL_ONLY` — [community](https://community.ui.com/), [legal](https://www.ui.com/legal/) |
 | CloudPanel Forum | CloudPanel official support hiện trỏ community sang Discord; chưa xác minh một forum domain chính thức | `UNKNOWN/MANUAL` — [Support](https://www.cloudpanel.io/docs/v2/support/) |
+| Replit Community | Community hiện tại không có public create-post API được xác minh; endpoint Discourse cũ không còn là destination được hỗ trợ | `MANUAL_ONLY`; community standards cấm automated engagement khi chưa được phép — [Help](https://replit.com/help), [Community Standards](https://replit.com/blog/community-standards) |
 | Redis Community Forum | Không còn coi là destination Discourse có write contract hiện hành; Redis hiện hướng người dùng tới Discord/community channels | `MANUAL` cho đến khi Redis xác nhận endpoint và quyền write — [Redis community](https://redis.io/community/), [Discord](https://redis.io/tutorials/community/discord/) |
 
 “Không tìm thấy public API” không khẳng định hệ thống nội bộ không tồn tại; nó có nghĩa hiện không có contract/onboarding chính chủ đủ an toàn để xây connector production.

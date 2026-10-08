@@ -2,6 +2,43 @@
 
 > Đối chiếu Discourse API chính thức: 2026-10-08. Connector này dùng API của **Discourse engine**, không dùng browser automation, cookie đăng nhập, CAPTCHA token hay password của thành viên.
 
+## 0. Readiness gate cho `vpsttt.discourse.diy`
+
+Forum đích của deployment này là `https://vpsttt.discourse.diy`. Probe công khai gần nhất ngày 2026-10-08 xác nhận:
+
+- HTTP redirect sang HTTPS;
+- HTTPS hoạt động với HSTS;
+- `/about.json` trả JSON Discourse `200`;
+- `/categories.json` trả JSON `200`.
+
+Hai category public hiện thấy được là `Chung` (ID `4`) và `Phản hồi` (ID `2`). Đây chỉ là dữ liệu public để đối chiếu, không thay thế kiểm tra quyền bằng API key. Có thể dùng category `4` cho smoke test nếu bạn chấp nhận bài test xuất hiện công khai; an toàn hơn là tạo category staging/private riêng.
+
+Có thể chạy lại readiness gate bất kỳ lúc nào:
+
+```powershell
+curl.exe -fsS -o NUL https://vpsttt.discourse.diy/
+curl.exe -fsS https://vpsttt.discourse.diy/about.json
+curl.exe -fsS https://vpsttt.discourse.diy/categories.json
+```
+
+`about.json` phải là JSON của Discourse, không phải HTML Nginx. Nếu TLS hoặc JSON check thất bại, không đổi connector sang HTTP để đi vòng lỗi: header `Api-Key` sẽ đi trên mạng ở dạng đọc được. Khi readiness gate đạt:
+
+1. tạo category private/staging và ghi lại ID trên URL category;
+2. tạo `publisher-bot`, cho phép user này tạo topic trong category đó;
+3. tạo **Single User API key** gắn với `publisher-bot`, dùng granular scopes `global:read` + `topics:write` nếu UI phiên bản đang chạy cung cấp đúng các scope đó;
+4. trong Social Publisher dùng Forum URL `https://vpsttt.discourse.diy`, đúng API Username, API Key và Category ID;
+5. chạy **Lưu & kiểm tra**, rồi mới publish một topic `[TEST]`.
+
+Frontend hỗ trợ các biến build-time sau để tự điền metadata public cho smoke test, nhưng không bao giờ nhận API key qua biến `NEXT_PUBLIC_*`:
+
+```dotenv
+NEXT_PUBLIC_DEFAULT_DISCOURSE_URL=https://vpsttt.discourse.diy
+NEXT_PUBLIC_DEFAULT_DISCOURSE_USERNAME=Lam_Ho
+NEXT_PUBLIC_DEFAULT_DISCOURSE_CATEGORY_ID=4
+```
+
+`Lam_Ho` và category `4` là các giá trị public hiện tại, giúp form test đầu tiên chỉ còn thiếu API key. Đây không phải cấu hình production được khuyến nghị: sau smoke test, revoke key thử nghiệm và thay bằng `publisher-bot` quyền tối thiểu cùng category staging/category đích đã duyệt. Sau khi thay các biến public phải build lại frontend; restart container cũ không thay đổi bundle đã build.
+
 ## 1. Phạm vi release
 
 Một connector `discourse` dùng được cho nhiều instance. Mỗi `PlatformAccount` đại diện cho một destination cụ thể, thường là một forum + một category:
@@ -41,7 +78,7 @@ Release chưa hỗ trợ:
 | MikroTik Community | Discourse | Có, nếu site cấp quyền |
 | OpenNebula Community | Discourse | Có, nếu site cấp quyền |
 | MongoDB Community | Discourse cài dưới path `/community/forums` | Có, dùng base URL `https://www.mongodb.com/community/forums` nếu site cấp quyền |
-| Replit Community Forum | Discourse tại `replit.discourse.group` | Có, nếu forum admin cấp quyền |
+| Replit Community | Community hiện tại không còn được xác minh là destination Discourse có write contract | Không; giữ manual cho tới khi Replit công bố API/quyền automation phù hợp |
 | Level1Techs Forum | Discourse | Có, nếu site cấp quyền |
 | TrueNAS Community | Discourse | Có, nếu site cấp quyền |
 | AlmaLinux Forum | Discourse | Có, nếu site cấp quyền |
