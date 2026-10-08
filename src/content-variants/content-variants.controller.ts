@@ -1,12 +1,13 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { RoleName, VariantStatus } from '@prisma/client';
 import { IsArray, IsBoolean, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
-import { ApiOkEnvelope, ContentVariantContractDto } from '../common/swagger/api-contract.dto';
+import { ApiCreatedEnvelope, ApiOkEnvelope, ContentVariantContractDto } from '../common/swagger/api-contract.dto';
 import { ContentVariantsService } from './content-variants.service';
+import { CreateContentVariantDto } from './dto/create-content-variant.dto';
 
 class UpdateVariantStatusDto {
   @ApiProperty({ enum: VariantStatus })
@@ -29,6 +30,13 @@ class UpdateVariantDto {
 @Controller('content-variants')
 export class ContentVariantsController {
   constructor(private readonly variants: ContentVariantsService) {}
+
+  @Post()
+  @ApiCreatedEnvelope(ContentVariantContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateContentVariantDto) {
+    return this.variants.createManual(user.id, dto);
+  }
 
   @Get()
   @ApiOkEnvelope(ContentVariantContractDto, true)
