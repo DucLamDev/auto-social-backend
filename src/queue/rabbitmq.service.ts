@@ -20,7 +20,7 @@ export class RabbitMqService implements OnModuleDestroy {
   }
 
   async publish(routingKey: string, message: QueueMessage): Promise<void> {
-    if (process.env.SKIP_INFRA_CONNECT === 'true') return;
+    if (this.skipConnection()) return;
     const channel = await this.ensureChannel();
     channel.publish(this.exchange, routingKey, Buffer.from(JSON.stringify(message)), {
       persistent: true,
@@ -32,13 +32,13 @@ export class RabbitMqService implements OnModuleDestroy {
   }
 
   async ping(): Promise<boolean> {
-    if (process.env.SKIP_INFRA_CONNECT === 'true') return true;
+    if (this.skipConnection()) return true;
     const channel = await this.ensureChannel();
     return Boolean(channel);
   }
 
   async consume(handler: (message: QueueMessage) => Promise<void>): Promise<void> {
-    if (process.env.SKIP_INFRA_CONNECT === 'true') return;
+    if (this.skipConnection()) return;
     this.consumerHandler = handler;
     await this.startConsumer();
   }
@@ -89,6 +89,11 @@ export class RabbitMqService implements OnModuleDestroy {
     if (this.channel) return Promise.resolve(this.channel);
     if (!this.connecting) this.connecting = this.connect();
     return this.connecting;
+  }
+
+  private skipConnection(): boolean {
+    return process.env.SKIP_INFRA_CONNECT === 'true'
+      || process.env.SKIP_RABBITMQ_CONNECT === 'true';
   }
 
   private async connect(): Promise<ConfirmChannel> {

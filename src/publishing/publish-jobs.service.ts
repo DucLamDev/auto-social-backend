@@ -1,5 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { AttemptStatus, CampaignStatus, Prisma, PublishJobStatus } from '@prisma/client';
+import {
+  AccountStatus,
+  AttemptStatus,
+  CampaignStatus,
+  Prisma,
+  PublishJobStatus,
+} from '@prisma/client';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
 import { PrismaService } from '../database/prisma.service';
 import { PublishQueueService } from '../queue/publish-queue.service';
@@ -8,6 +14,25 @@ import { ListPublishJobsQueryDto } from './dto/list-publish-jobs-query.dto';
 import { paginatedData } from '../common/interceptors/api-response.interceptor';
 import { PublishJobMetricsQueryDto } from './dto/publish-job-metrics-query.dto';
 import { WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
+import { collectPublishMedia } from './publishing.service';
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+const SAFE_BROWSER_RESUME_REASONS = new Set([
+  'AUTOMATION_BUSY',
+  'AUTOMATION_DISABLED',
+  'AUTOMATION_FAILED',
+  'CAPTCHA_REQUIRED',
+  'EDITOR_NOT_FOUND',
+  'LOGIN_REQUIRED',
+  'SECURITY_CHECK_REQUIRED',
+  'SUBMISSION_CONFIRMATION_REQUIRED',
+  'TWO_FACTOR_REQUIRED',
+]);
 
 @Injectable()
 export class PublishJobsService {
@@ -41,7 +66,15 @@ export class PublishJobsService {
       this.prisma.publishJob.findMany({
       where,
       include: {
-        platformAccount: { select: { id: true, name: true, platform: { select: { slug: true, name: true } } } },
+        platformAccount: {
+          select: {
+            id: true,
+            name: true,
+            enabled: true,
+            status: true,
+            platform: { select: { slug: true, name: true } },
+          },
+        },
         target: { select: { campaign: { select: { id: true, name: true } }, contentVariant: { select: { id: true, title: true } } } },
         publishedPost: true,
         attempts: { orderBy: { attemptNumber: 'desc' }, take: 3 },
@@ -202,12 +235,105 @@ export class PublishJobsService {
     return { queued: true };
   }
 
+  /**
+   * Requeues only browser attempts which explicitly stopped before the final
+   * provider boundary. An uncertain/accepted submission can only use the
+   * reconciliation flow, so this endpoint can never become a blind retry.
+   */
+  async resumeBrowser(ownerId: string, id: string) {
+    const job = await this.prisma.publishJob.findFirstOrThrow({
+      where: { id, target: { campaign: { ownerId } } },
+      include: {
+        platformAccount: { include: { platform: true } },
+        target: { select: { campaignId: true } },
+        attempts: { orderBy: { attemptNumber: 'desc' }, take: 1 },
+      },
+    });
+    const attempt = job.attempts[0];
+    const responseMetadata = asRecord(attempt?.responseMetadata);
+    const reason = responseMetadata.reason;
+    const knownPreSubmitPause = responseMetadata.browserAssisted === true
+      && typeof reason === 'string'
+      && SAFE_BROWSER_RESUME_REASONS.has(reason)
+      && responseMetadata.submissionUncertain !== true
+      && responseMetadata.reconciliationRequired !== true
+      && responseMetadata.providerAccepted !== true
+      && responseMetadata.persistenceRecoveryRequired !== true
+      && responseMetadata.moderationQueue !== true;
+    if (job.status !== PublishJobStatus.NEEDS_ACTION || !knownPreSubmitPause) {
+      throw new BadRequestException(
+        'Only a browser task known to have paused before submission can be resumed',
+      );
+    }
+    if (
+      !job.platformAccount.enabled
+      || job.platformAccount.status !== AccountStatus.CONNECTED
+      || job.platformAccount.platform.connectorKey !== 'browser-assisted'
+    ) {
+      throw new BadRequestException(
+        'Reconnect and test the browser-assisted account before resuming this job',
+      );
+    }
+
+    await this.prisma.$transaction(async (transaction) => {
+      const claimed = await transaction.publishJob.updateMany({
+        where: { id, status: PublishJobStatus.NEEDS_ACTION },
+        data: {
+          status: PublishJobStatus.QUEUED,
+          nextAttemptAt: null,
+          lockedAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+        },
+      });
+      if (!claimed.count) {
+        throw new BadRequestException('The browser publish job is no longer awaiting action');
+      }
+      if (attempt) {
+        await transaction.publishAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            responseMetadata: {
+              ...responseMetadata,
+              operatorResumed: true,
+              operatorResumedAt: new Date().toISOString(),
+            },
+          },
+        });
+      }
+      await transaction.campaign.updateMany({
+        where: { id: job.target.campaignId, status: CampaignStatus.PARTIAL },
+        data: { status: CampaignStatus.RUNNING },
+      });
+    });
+    try {
+      await this.queue.enqueue(job.id, job.platformAccount.platform.slug);
+    } catch (error) {
+      // Returning to NEEDS_ACTION is conservative. A confirm response may have
+      // been lost; if a worker already claimed the row this conditional update
+      // changes nothing, and otherwise there is still no automatic replay.
+      await this.prisma.publishJob.updateMany({
+        where: { id, status: PublishJobStatus.QUEUED },
+        data: { status: PublishJobStatus.NEEDS_ACTION },
+      });
+      await this.campaignStatus.refresh(job.target.campaignId);
+      throw error;
+    }
+    return { queued: true };
+  }
+
   async manualPayload(ownerId: string, id: string) {
     const job = await this.prisma.publishJob.findFirstOrThrow({
       where: { id, target: { campaign: { ownerId } } },
       include: {
         platformAccount: { include: { platform: true } },
-        target: { include: { contentVariant: true } },
+        target: {
+          include: {
+            contentVariant: {
+              include: { content: { include: { media: true } }, media: true },
+            },
+          },
+        },
         attempts: { orderBy: { attemptNumber: 'desc' }, take: 1 },
       },
     });
@@ -215,13 +341,11 @@ export class PublishJobsService {
       reddit: 'https://www.reddit.com/submit',
       tiktok: 'https://www.tiktok.com/upload',
     };
-    const settings = job.platformAccount.settings;
-    const manualUrl = settings && typeof settings === 'object' && !Array.isArray(settings)
-      ? (settings as Record<string, unknown>).manualUrl
-      : undefined;
-    const blogUrl = settings && typeof settings === 'object' && !Array.isArray(settings)
-      ? (settings as Record<string, unknown>).blogUrl
-      : undefined;
+    const settings = asRecord(job.platformAccount.settings);
+    const platformDefaults = asRecord(job.platformAccount.platform.defaultSettings);
+    const manualUrl = settings.manualUrl;
+    const defaultManualUrl = platformDefaults.manualUrl;
+    const blogUrl = settings.blogUrl;
     const responseMetadata = job.attempts[0]?.responseMetadata;
     const result = responseMetadata && typeof responseMetadata === 'object' && !Array.isArray(responseMetadata)
       ? responseMetadata as Record<string, unknown>
@@ -233,7 +357,14 @@ export class PublishJobsService {
       accountName: job.platformAccount.name,
       title: job.target.contentVariant.title,
       body: job.target.contentVariant.body,
+      summary: job.target.contentVariant.summary,
       hashtags: job.target.contentVariant.hashtags,
+      cta: job.target.contentVariant.cta,
+      canonicalUrl: job.target.contentVariant.content.canonicalUrl,
+      media: collectPublishMedia(
+        job.target.contentVariant.content.media,
+        job.target.contentVariant.media,
+      ),
       suggestedExternalPostId: typeof result.externalPostId === 'string' ? result.externalPostId : undefined,
       openUrl: typeof manualUrl === 'string'
         ? manualUrl
@@ -241,7 +372,9 @@ export class PublishJobsService {
           ? result.url
           : typeof blogUrl === 'string'
             ? blogUrl
-            : defaults[job.platformAccount.platform.slug],
+            : typeof defaultManualUrl === 'string'
+              ? defaultManualUrl
+              : defaults[job.platformAccount.platform.slug],
     };
   }
 

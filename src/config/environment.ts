@@ -14,8 +14,16 @@ export interface Environment {
   JWT_ACCESS_SECRET: string;
   JWT_REFRESH_SECRET: string;
   CREDENTIAL_ENCRYPTION_KEY: string;
+  AI_DEFAULT_PROVIDER: 'openai' | 'deepseek' | 'gemini';
+  AI_TIMEOUT_MS: number;
   OPENAI_API_KEY?: string;
+  OPENAI_MODEL?: string;
   OPENAI_TIMEOUT_MS: number;
+  DEEPSEEK_API_KEY?: string;
+  DEEPSEEK_MODEL?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_MODEL?: string;
+  GEMINI_FALLBACK_MODEL?: string;
   S3_ENDPOINT: string;
   S3_PUBLIC_URL: string;
   S3_REGION: string;
@@ -23,6 +31,10 @@ export interface Environment {
   S3_SECRET_KEY: string;
   S3_BUCKET: string;
   OAUTH_REDIRECT_BASE_URL: string;
+  BROWSER_AUTOMATION_ENABLED: boolean;
+  BROWSER_AUTOMATION_HEADLESS: boolean;
+  BROWSER_AUTOMATION_TIMEOUT_MS: number;
+  PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?: string;
 }
 
 const REQUIRED_IN_PRODUCTION = [
@@ -65,6 +77,17 @@ function parsePositiveInteger(value: unknown, key: string, fallback: number): nu
   return parsed;
 }
 
+function parseBoolean(value: unknown, key: string, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  throw new Error(`${key} must be true or false`);
+}
+
 function isPrivateOrLocalHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
@@ -102,7 +125,26 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   const port = Number(raw.PORT ?? 3001);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT is invalid');
   const rabbitmqPrefetch = parsePositiveInteger(raw.RABBITMQ_PREFETCH, 'RABBITMQ_PREFETCH', 10);
-  const openaiTimeoutMs = parsePositiveInteger(raw.OPENAI_TIMEOUT_MS, 'OPENAI_TIMEOUT_MS', 60_000);
+  const browserAutomationEnabled = parseBoolean(raw.BROWSER_AUTOMATION_ENABLED, 'BROWSER_AUTOMATION_ENABLED', false);
+  const browserAutomationHeadless = parseBoolean(raw.BROWSER_AUTOMATION_HEADLESS, 'BROWSER_AUTOMATION_HEADLESS', true);
+  const browserAutomationTimeoutMs = parsePositiveInteger(
+    raw.BROWSER_AUTOMATION_TIMEOUT_MS,
+    'BROWSER_AUTOMATION_TIMEOUT_MS',
+    90_000,
+  );
+  if (browserAutomationTimeoutMs > 300_000) {
+    throw new Error('BROWSER_AUTOMATION_TIMEOUT_MS must not exceed 300000');
+  }
+  const legacyOpenAiTimeoutMs = parsePositiveInteger(raw.OPENAI_TIMEOUT_MS, 'OPENAI_TIMEOUT_MS', 60_000);
+  const aiTimeoutMs = raw.AI_TIMEOUT_MS === undefined
+    ? legacyOpenAiTimeoutMs
+    : parsePositiveInteger(raw.AI_TIMEOUT_MS, 'AI_TIMEOUT_MS', 60_000);
+  const aiDefaultProvider = typeof raw.AI_DEFAULT_PROVIDER === 'string'
+    ? raw.AI_DEFAULT_PROVIDER.trim().toLowerCase()
+    : 'openai';
+  if (!['openai', 'deepseek', 'gemini'].includes(aiDefaultProvider)) {
+    throw new Error('AI_DEFAULT_PROVIDER must be openai, deepseek, or gemini');
+  }
   const logLevel = typeof raw.LOG_LEVEL === 'string' ? raw.LOG_LEVEL : 'info';
   if (!['error', 'warn', 'info', 'debug', 'verbose'].includes(logLevel)) {
     throw new Error('LOG_LEVEL must be error, warn, info, debug, or verbose');
@@ -141,6 +183,11 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
     PORT: port,
     LOG_LEVEL: logLevel,
     RABBITMQ_PREFETCH: rabbitmqPrefetch,
-    OPENAI_TIMEOUT_MS: openaiTimeoutMs,
+    BROWSER_AUTOMATION_ENABLED: browserAutomationEnabled,
+    BROWSER_AUTOMATION_HEADLESS: browserAutomationHeadless,
+    BROWSER_AUTOMATION_TIMEOUT_MS: browserAutomationTimeoutMs,
+    AI_DEFAULT_PROVIDER: aiDefaultProvider,
+    AI_TIMEOUT_MS: aiTimeoutMs,
+    OPENAI_TIMEOUT_MS: legacyOpenAiTimeoutMs,
   };
 }

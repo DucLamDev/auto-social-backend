@@ -1,4 +1,4 @@
-import { CampaignStatus, PublishJobStatus } from '@prisma/client';
+import { AccountStatus, CampaignStatus, MediaType, PublishJobStatus } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { PublishQueueService } from '../queue/publish-queue.service';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
@@ -6,6 +6,72 @@ import { PublishJobsService } from './publish-jobs.service';
 import { WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
 
 describe('PublishJobsService', () => {
+  it('returns a complete manual handoff using the platform default URL and source media', async () => {
+    const prisma = {
+      publishJob: {
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'job-manual',
+          status: PublishJobStatus.NEEDS_ACTION,
+          platformAccount: {
+            name: 'My Medium publication',
+            settings: {},
+            platform: {
+              slug: 'medium',
+              defaultSettings: { manualUrl: 'https://medium.com/new-story' },
+            },
+          },
+          target: {
+            contentVariant: {
+              title: 'Launch title',
+              body: 'Launch body',
+              summary: 'Short summary',
+              hashtags: ['launch'],
+              cta: 'Try it today',
+              media: [],
+              content: {
+                canonicalUrl: 'https://example.com/launch',
+                media: [{
+                  id: 'image-1',
+                  type: MediaType.IMAGE,
+                  publicUrl: 'https://cdn.example.com/launch.png',
+                  mimeType: 'image/png',
+                  metadata: { altText: 'Launch illustration' },
+                }],
+              },
+            },
+          },
+          attempts: [{ responseMetadata: {} }],
+        }),
+      },
+    } as unknown as PrismaService;
+    const service = new PublishJobsService(
+      prisma,
+      {} as PublishQueueService,
+      {} as CampaignStatusService,
+    );
+
+    await expect(service.manualPayload('owner-1', 'job-manual')).resolves.toEqual({
+      jobId: 'job-manual',
+      status: PublishJobStatus.NEEDS_ACTION,
+      platform: 'medium',
+      accountName: 'My Medium publication',
+      title: 'Launch title',
+      body: 'Launch body',
+      summary: 'Short summary',
+      hashtags: ['launch'],
+      cta: 'Try it today',
+      canonicalUrl: 'https://example.com/launch',
+      media: [{
+        type: 'image',
+        url: 'https://cdn.example.com/launch.png',
+        mimeType: 'image/png',
+        altText: 'Launch illustration',
+      }],
+      suggestedExternalPostId: undefined,
+      openUrl: 'https://medium.com/new-story',
+    });
+  });
+
   it('calculates exact dashboard counters without truncating the job list', async () => {
     const count = jest.fn()
       .mockResolvedValueOnce(4)
@@ -53,6 +119,14 @@ describe('PublishJobsService', () => {
       skip: 5,
       take: 5,
       where: expect.objectContaining({ status: PublishJobStatus.FAILED }) as unknown,
+      include: expect.objectContaining({
+        platformAccount: {
+          select: expect.objectContaining({
+            enabled: true,
+            status: true,
+          }) as unknown,
+        },
+      }) as unknown,
     }));
   });
 
@@ -240,6 +314,170 @@ describe('PublishJobsService', () => {
         nextAttemptAt: expect.any(Date) as Date,
       },
     });
+  });
+
+  it('resumes a browser job only after a known pre-submit pause and a successful reconnect', async () => {
+    const jobUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const attemptUpdate = jest.fn().mockResolvedValue({});
+    const campaignUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const transaction = {
+      publishJob: { updateMany: jobUpdateMany },
+      publishAttempt: { update: attemptUpdate },
+      campaign: { updateMany: campaignUpdateMany },
+    };
+    const prisma = {
+      publishJob: {
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'job-browser',
+          status: PublishJobStatus.NEEDS_ACTION,
+          platformAccount: {
+            enabled: true,
+            status: AccountStatus.CONNECTED,
+            platform: { slug: 'voz', connectorKey: 'browser-assisted' },
+          },
+          target: { campaignId: 'campaign-1' },
+          attempts: [{
+            id: 'attempt-1',
+            responseMetadata: {
+              browserAssisted: true,
+              browserRecipe: 'voz-xenforo',
+              reason: 'LOGIN_REQUIRED',
+              accountReconnectRequired: true,
+            },
+          }],
+        }),
+      },
+      $transaction: jest.fn(
+        (callback: (client: typeof transaction) => Promise<void>) => callback(transaction),
+      ),
+    } as unknown as PrismaService;
+    const enqueue = jest.fn().mockResolvedValue(undefined);
+    const service = new PublishJobsService(
+      prisma,
+      { enqueue } as unknown as PublishQueueService,
+      {} as CampaignStatusService,
+    );
+
+    await expect(service.resumeBrowser('owner-1', 'job-browser'))
+      .resolves.toEqual({ queued: true });
+
+    expect(jobUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'job-browser', status: PublishJobStatus.NEEDS_ACTION },
+      data: {
+        status: PublishJobStatus.QUEUED,
+        nextAttemptAt: null,
+        lockedAt: null,
+        lastErrorCode: null,
+        lastErrorMessage: null,
+      },
+    });
+    expect(attemptUpdate).toHaveBeenCalledWith({
+      where: { id: 'attempt-1' },
+      data: {
+        responseMetadata: expect.objectContaining({
+          reason: 'LOGIN_REQUIRED',
+          operatorResumed: true,
+          operatorResumedAt: expect.any(String) as string,
+        }) as unknown,
+      },
+    });
+    expect(enqueue).toHaveBeenCalledWith('job-browser', 'voz');
+  });
+
+  it.each([
+    ['uncertain submit', {
+      browserAssisted: true,
+      reason: 'SUBMISSION_UNCERTAIN',
+      submissionUncertain: true,
+      reconciliationRequired: true,
+    }],
+    ['provider accepted', {
+      browserAssisted: true,
+      reason: 'AUTOMATION_FAILED',
+      providerAccepted: true,
+    }],
+    ['unclassified browser pause', {
+      browserAssisted: true,
+      reason: 'UNKNOWN_REASON',
+    }],
+    ['non-browser result', {
+      reason: 'LOGIN_REQUIRED',
+    }],
+  ] as const)('refuses browser resume for %s', async (_label, responseMetadata) => {
+    const transaction = jest.fn();
+    const enqueue = jest.fn();
+    const prisma = {
+      publishJob: {
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'job-browser',
+          status: PublishJobStatus.NEEDS_ACTION,
+          platformAccount: {
+            enabled: true,
+            status: AccountStatus.CONNECTED,
+            platform: { slug: 'voz', connectorKey: 'browser-assisted' },
+          },
+          target: { campaignId: 'campaign-1' },
+          attempts: [{ id: 'attempt-1', responseMetadata }],
+        }),
+      },
+      $transaction: transaction,
+    } as unknown as PrismaService;
+    const service = new PublishJobsService(
+      prisma,
+      { enqueue } as unknown as PublishQueueService,
+      {} as CampaignStatusService,
+    );
+
+    await expect(service.resumeBrowser('owner-1', 'job-browser')).rejects.toThrow(
+      'known to have paused before submission',
+    );
+    expect(transaction).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('returns an ambiguously enqueued browser resume to NEEDS_ACTION, never RETRY', async () => {
+    const transactionClient = {
+      publishJob: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      publishAttempt: { update: jest.fn().mockResolvedValue({}) },
+      campaign: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    };
+    const rollback = jest.fn().mockResolvedValue({ count: 1 });
+    const refresh = jest.fn().mockResolvedValue(undefined);
+    const prisma = {
+      publishJob: {
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'job-browser',
+          status: PublishJobStatus.NEEDS_ACTION,
+          platformAccount: {
+            enabled: true,
+            status: AccountStatus.CONNECTED,
+            platform: { slug: 'voz', connectorKey: 'browser-assisted' },
+          },
+          target: { campaignId: 'campaign-1' },
+          attempts: [{
+            id: 'attempt-1',
+            responseMetadata: { browserAssisted: true, reason: 'EDITOR_NOT_FOUND' },
+          }],
+        }),
+        updateMany: rollback,
+      },
+      $transaction: jest.fn(
+        (callback: (client: typeof transactionClient) => Promise<void>) => callback(transactionClient),
+      ),
+    } as unknown as PrismaService;
+    const enqueueError = new Error('confirm response lost');
+    const service = new PublishJobsService(
+      prisma,
+      { enqueue: jest.fn().mockRejectedValue(enqueueError) } as unknown as PublishQueueService,
+      { refresh } as unknown as CampaignStatusService,
+    );
+
+    await expect(service.resumeBrowser('owner-1', 'job-browser')).rejects.toBe(enqueueError);
+    expect(rollback).toHaveBeenCalledWith({
+      where: { id: 'job-browser', status: PublishJobStatus.QUEUED },
+      data: { status: PublishJobStatus.NEEDS_ACTION },
+    });
+    expect(refresh).toHaveBeenCalledWith('campaign-1');
   });
 
   it('allows explicit reconciliation of a stale worker delivery migrated to NEEDS_ACTION', async () => {

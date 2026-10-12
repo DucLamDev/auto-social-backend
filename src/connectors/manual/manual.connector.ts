@@ -2,7 +2,7 @@ import { PlatformMode } from '@prisma/client';
 import { ErrorCode } from '../../common/exceptions/application.exception';
 import { ConnectorCapability } from '../core/connector-capability';
 import { ConnectorError } from '../core/connector-error';
-import { ConnectorAccount, PostPayload, PublishResult } from '../core/connector.types';
+import { ConnectionTestResult, ConnectorAccount, PostPayload, PublishResult } from '../core/connector.types';
 import { SocialPublisher } from '../core/social-publisher.interface';
 
 export class ManualConnector implements SocialPublisher {
@@ -31,6 +31,21 @@ export class ManualConnector implements SocialPublisher {
       externalId: `manual:${crypto.randomUUID()}`,
       status: 'NEEDS_ACTION',
       metadata: { reason: 'This platform requires a user-confirmed/manual publishing action.' },
+    });
+  }
+
+  testConnection(account: ConnectorAccount): Promise<ConnectionTestResult> {
+    void account;
+    return Promise.resolve({
+      ok: true,
+      manual: true,
+      ready: true,
+      message: 'Content preparation is ready; final submission must be confirmed on the platform.',
+      details: {
+        manual: true,
+        ready: true,
+        message: 'Content can be prepared automatically and must be confirmed on the platform manually.',
+      },
     });
   }
 }

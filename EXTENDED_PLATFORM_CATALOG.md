@@ -21,14 +21,40 @@ Có token **không đồng nghĩa** dán token vào `.env` là hệ thống sẽ
 
 Không lấy session cookie, password chính, CAPTCHA token hoặc endpoint reverse-engineered để thay thế API. Với forum do bên thứ ba quản trị, việc phần mềm forum *có* REST API không có nghĩa tài khoản thành viên được cấp API key.
 
-## 2. Những nền tảng trong danh sách đã dùng được với source hiện tại
+### 1.1 Catalog hiển thị trong ứng dụng
+
+Seed hiện có **65 destination duy nhất** sau khi gộp các tên trùng `Differ` và `MeWe`. Chúng được gom vào 8 nhóm để không biến trang **Nền tảng** thành một danh sách quá dài:
+
+| Nhóm | Số lượng | Destination |
+|---|---:|---|
+| `SOCIAL` — Mạng xã hội | 10 | Instagram, Threads, X (Twitter), LinkedIn, Bluesky, Mastodon, Mastodon.social, social.vivaldi.net, Minds, MeWe |
+| `BLOGGING` — Blog & xuất bản | 7 | WordPress, Medium, Blogger, Substack, Tumblr, Differ, Hub |
+| `COMMUNITY` — Cộng đồng | 3 | Quora, Discord, Disqus |
+| `FORUM` — Diễn đàn | 26 | Reddit, Tinhte.vn, Voz Forums, lemmy.world, discuit.org, Level1Techs Forum, TrueNAS Community, Unraid Forums, DirectAdmin Forums, AlmaLinux Forum, Linux Containers Forum, Linux Foundation Forum, Warrior Forum, NGINX Community, Caddy Community, HestiaCP Forum, aaPanel Forum, cPanel Community, MikroTik Community, Ubiquiti Community, CloudPanel Forum, OpenNebula Community, Replit Community, MongoDB Community, Redis Community Forum, Discourse |
+| `DEVELOPER` — Cộng đồng lập trình | 10 | dev.to, AWS Community, KubeBy, DZone, daily.dev, In Plain English, Stack Overflow, Server Fault, Hugging Face, Unix & Linux Stack Exchange |
+| `MEDIA` — Media & nội dung | 6 | SlideShare, pixelfed.social, Dailymotion, Flipboard, Scoop.it, TikTok |
+| `COMMERCE` — Thương mại | 2 | Product Hunt, Gumroad |
+| `EVENT` — Sự kiện | 1 | Eventbrite |
+
+Frontend tải 12 thẻ mỗi trang; backend `GET /api/v1/platforms` trả metadata phân trang và nhận `page`, `limit`, `search`, `group`, `mode`, `availability`, `enabled`. Bộ lọc chạy server-side và mỗi thay đổi đưa UI về trang 1. Catalog có mặt trong UI **không đồng nghĩa** destination đã có API tự đăng: xem badge mode/availability trên từng thẻ.
+
+## 2. Mức tự động hóa trong source hiện tại
+
+Luồng **Tạo tự động** nhận một brief, ảnh/alt text tùy chọn, AI provider và nhiều account. AI sinh nội dung SEO/theo quy tắc riêng của từng destination rồi hệ thống tạo job. Một lần chạy giới hạn 12 platform khác nhau; catalog 65 destination không đồng nghĩa gửi đồng loạt đến 65 nơi trong một request. Bước cuối chia thành hai loại rõ ràng:
+
+- `OFFICIAL_API`/`COMPATIBLE_API`: connector gọi API thật; kết quả có thể là `PUBLISHED`, hoặc `NEEDS_ACTION` khi provider tạo draft/đưa bài vào moderation.
+- `MANUAL`: AI và orchestration vẫn tự động đến hết bước chuẩn bị, nhưng connector trả `NEEDS_ACTION`. **Publishing → Copy & mở** lấy title/body/hashtags/canonical URL/media và mở editor chính thức; người dùng tự submit rồi xác nhận external ID/URL. Đây là automation có điểm kiểm soát của con người, không phải browser bot.
 
 | Nền tảng | Mức trong release | Cách cấu hình trong Social Publisher | Giới hạn hiện tại |
 |---|---|---|---|
+| Instagram | `CURRENT`, có điều kiện | Form access token + Instagram User ID | MVP một ảnh; media phải có URL Internet public |
+| Threads | `CURRENT`, có điều kiện | Form access token + Threads User ID | Text hoặc một ảnh; phụ thuộc entitlement/app của Meta |
+| X (Twitter) | `CURRENT`, có điều kiện | Form user access token | Text tối đa 280 ký tự; chưa có media flow |
 | LinkedIn | `CURRENT`, có điều kiện | OAuth từ trang **Tài khoản**; app credential nằm ở backend env | Chỉ member text post; chưa có Organization/media flow |
 | WordPress | `CURRENT` | Form credential: site URL, username, Application Password | Chỉ WordPress self-hosted REST API; article text/HTML, chưa upload media |
+| Medium | `MANUAL` | Tạo destination bàn giao; không nhập API key; mở editor chính thức | AI chuẩn bị bài và media, user tự review/submit, job `NEEDS_ACTION` đến khi xác nhận |
 | Blogger | `CURRENT`, có điều kiện | Google OAuth từ trang **Tài khoản** | Article; Google consent/verification tùy app |
-| dev.to | `CURRENT` | Form API key; có lựa chọn draft/publish | Article Markdown, chưa có binary upload/delete |
+| dev.to | `CURRENT` | Form API key; có lựa chọn draft/publish | Article Markdown + một `main_image` bằng URL public; chưa có binary upload/delete |
 | Discourse-compatible forums | `CURRENT`, có điều kiện | Form `baseUrl`, `apiUsername`, `categoryId`, optional `defaultTags`, `apiKey`; một account cho mỗi forum/category | Chỉ topic mới text/Markdown + destination tags; bỏ qua hashtag AI, có external-ID reconciliation; admin forum phải cấp key, chưa có User API Key flow/media/reply/delete |
 | Discord | `CURRENT` | Form incoming webhook URL | Text tối đa theo Discord; chưa upload attachment |
 | Bluesky | `CURRENT` dạng pilot | Form `accessJwt`, DID, PDS URL | Text; chưa OAuth/refresh/media, không phù hợp production dài hạn |
@@ -36,7 +62,12 @@ Không lấy session cookie, password chính, CAPTCHA token hoặc endpoint reve
 | social.vivaldi.net | `CURRENT` có kiểm tra instance | Chọn connector Mastodon, nhập `https://social.vivaldi.net` và token của Vivaldi Social | Cần test compatibility/rate limit trên instance |
 | Reddit | `MANUAL` trong release | Hệ thống tạo payload, mở Reddit, người dùng đăng và mark-published | Điền `REDDIT_*` chưa bật API/OAuth |
 
-Ngoài các instance Discourse dùng chung connector ở trên, các tên khác trong danh sách chưa xuất hiện như connector có thể cấu hình trong UI. Phần dưới mô tả đường API để quyết định phát triển tiếp, không phải lời khẳng định chúng đã chạy trong source.
+Toàn bộ 65 tên đều xuất hiện trong catalog UI. Chỉ các hàng/instance có mode API và credential hợp lệ mới tự submit. Các tên còn lại dùng manual handoff hoặc chỉ là backlog nghiên cứu/review; phần dưới mô tả đường API để quyết định phát triển tiếp, không phải lời khẳng định mọi destination đã được kiểm chứng bằng account thật.
+
+Connector dùng lại theo engine, không nhân bản code theo thương hiệu:
+
+- `discourse`: có thể chọn trực tiếp alias như Level1Techs, TrueNAS, AlmaLinux, Linux Containers, NGINX, Caddy, HestiaCP, MikroTik, OpenNebula hoặc MongoDB trong **Tài khoản**. UI dùng `connectorKey=discourse`, mở lại cùng form và prefill `baseUrl` từ catalog; người dùng vẫn phải nhập API username, category và key riêng do admin từng site cấp.
+- `mastodon`: chọn trực tiếp `Mastodon.social` hoặc `social.vivaldi.net`; UI dùng `connectorKey=mastodon` và prefill instance URL/visibility từ catalog. Mỗi instance vẫn cần access token riêng và phải kiểm tra compatibility/rate limit.
 
 ### 2.1 Community VPSTTT có thể hỗ trợ phân phối tới đâu?
 
@@ -201,6 +232,19 @@ Key phải do admin của chính forum tạo và gắn với user có quyền t�
 
 Nguồn: [Discourse API](https://docs.discourse.org/), [API key configuration](https://meta.discourse.org/t/create-and-configure-an-api-key/230124), [User API Key specification — chưa implement](https://meta.discourse.org/t/user-api-keys-specification/48536).
 
+### 3.10 Medium — bàn giao editor an toàn
+
+Không nhập RapidAPI key, cookie Medium, username/password hay integration token cũ vào Social Publisher. Tại **Tài khoản → Kết nối / cấu hình → Kênh bàn giao thủ công**, chọn Medium và đặt tên destination; hệ thống dùng `https://medium.com/new-story` làm `manualUrl`, không tạo credential giả.
+
+Sau khi chạy một chiến dịch có Medium:
+
+1. AI tạo headline, article body, topic tags và giữ ảnh đã chọn trong manual payload.
+2. Worker đặt job ở `NEEDS_ACTION`; đây là kết quả dự kiến.
+3. Trong **Publishing**, bấm **Copy & mở**, đăng nhập Medium trong tab chính thức, dán/chỉnh bài và chèn ảnh từ link/tệp handoff.
+4. Lưu draft hoặc publish sau khi review. Khi thực sự đã submit, trở lại Social Publisher, bấm **Đã đăng**, nhập external ID ổn định và URL nếu có.
+
+Ảnh RapidAPI được cung cấp chỉ hiển thị một endpoint **GET/read-only** của bên thứ ba; nó không chứng minh API publish, không phải API Medium chính thức được project chấp nhận và không được gọi trong connector. Vì ảnh chụp làm lộ một credential, phải revoke/rotate credential đó. Tương tự, rotate mọi AI/social key đã từng được dán vào chat hoặc xuất hiện trong ảnh; không lặp lại chúng trong issue, tài liệu hay log.
+
 ## 4. Có API chính thức nhưng phải viết connector mới
 
 | Nền tảng | Token/quyền chính thức | Việc cần làm trước khi bật | Trạng thái |
@@ -219,7 +263,7 @@ Nguồn: [Discourse API](https://docs.discourse.org/), [API key configuration](h
 
 | Nền tảng | Kết luận vận hành | Nguồn chính thức |
 |---|---|---|
-| Medium | Không cấp integration token mới; token cũ chỉ tiếp tục cho integration grandfathered. API terms cũng giới hạn auto-post không do user khởi tạo. Dùng manual/import UI cho deployment mới. | [API/Importing notice](https://help.medium.com/hc/en-us/articles/213480228-API-Importing), [API terms](https://help.medium.com/hc/en-us/articles/214151487-Medium-API-Terms-of-Use) |
+| Medium | Không cấp integration token mới; token cũ chỉ tiếp tục cho integration grandfathered. API terms cũng giới hạn auto-post không do user khởi tạo. RapidAPI GET trong ảnh là read-only/unofficial và không được project dùng. Dùng manual/editor handoff cho deployment mới. | [API/Importing notice](https://help.medium.com/hc/en-us/articles/213480228-API-Importing), [API terms](https://help.medium.com/hc/en-us/articles/214151487-Medium-API-Terms-of-Use) |
 | Substack | Không có contract publish API/token chính thức được xác minh. Developer API Terms nói về dữ liệu public, không chứng minh create-post. Dùng editor chính thức. | [API Terms](https://substack.com/api-tos), [publish a post](https://support.substack.com/hc/en-us/articles/360037831771-How-do-I-publish-a-new-post-on-Substack) |
 | Quora | Official developer material tìm được thuộc Ads/Conversion API, không phải organic question/answer/post. | [Conversion API](https://quoraadsupport.zendesk.com/hc/en-us/articles/23065751885069-Conversion-API-Overview) |
 | SlideShare | Không có current official upload/publish API contract được xác minh; dùng upload UI. | [official upload](https://www.slideshare.net/upload) |

@@ -12,6 +12,7 @@ import { MastodonConnector } from './mastodon/mastodon.connector';
 import { ThreadsConnector } from './threads/threads.connector';
 import { WordPressConnector } from './wordpress/wordpress.connector';
 import { XConnector } from './x/x.connector';
+import { BrowserAssistedConnector } from './browser/browser-assisted.connector';
 
 @Injectable()
 export class ConnectorsBootstrapService implements OnModuleInit {
@@ -28,6 +29,7 @@ export class ConnectorsBootstrapService implements OnModuleInit {
     private readonly discord: DiscordConnector,
     private readonly bluesky: BlueskyConnector,
     private readonly mastodon: MastodonConnector,
+    private readonly browserAssisted: BrowserAssistedConnector,
   ) {}
 
   onModuleInit(): void {
@@ -43,8 +45,8 @@ export class ConnectorsBootstrapService implements OnModuleInit {
       this.discord,
       this.bluesky,
       this.mastodon,
-      new ManualConnector('reddit'),
-      new ManualConnector('tiktok'),
+      this.browserAssisted,
+      new ManualConnector('manual'),
     ].forEach((connector) => this.registry.register(connector));
   }
 }

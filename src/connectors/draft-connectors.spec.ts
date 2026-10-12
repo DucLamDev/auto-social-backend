@@ -40,16 +40,50 @@ describe('Draft connector semantics', () => {
   });
 
   it('returns NEEDS_ACTION for a dev.to unpublished article', async () => {
-    guardedResponse({ id: 20, url: 'https://dev.to/dashboard' });
+    const request = guardedResponse({ id: 20, url: 'https://dev.to/dashboard' });
     const account: ConnectorAccount = {
       id: 'account-1',
       settings: { publishImmediately: false },
       credentials: { apiKey: 'secret' },
     };
-    await expect(new DevToConnector().publish(account, article)).resolves.toMatchObject({
+    const articleWithImage: PostPayload = {
+      ...article,
+      summary: '  A concise SEO preview for the article.  ',
+      media: [{ type: 'image', url: 'https://cdn.example.com/main.png', altText: 'Main diagram' }],
+    };
+    await expect(new DevToConnector().publish(account, articleWithImage)).resolves.toMatchObject({
       status: 'NEEDS_ACTION',
       metadata: { externalPostId: '20', draft: true },
     });
+
+    const [, init] = request.mock.calls[0]!;
+    if (typeof init.body !== 'string') throw new Error('Expected a JSON string request body');
+    expect(JSON.parse(init.body) as unknown).toMatchObject({
+      article: {
+        published: false,
+        description: 'A concise SEO preview for the article.',
+        main_image: 'https://cdn.example.com/main.png',
+      },
+    });
+  });
+
+  it('rejects more than one DEV article image', () => {
+    const connector = new DevToConnector();
+    expect(connector.capability).toMatchObject({ image: true, maxImages: 1 });
+    expect(() => connector.validate({
+      ...article,
+      media: [
+        { type: 'image', url: 'https://cdn.example.com/first.png' },
+        { type: 'image', url: 'https://cdn.example.com/second.png' },
+      ],
+    })).toThrow('DEV articles accept at most one main image');
+  });
+
+  it('rejects DEV YAML front matter so it cannot override the draft setting', () => {
+    expect(() => new DevToConnector().validate({
+      ...article,
+      body: '---\npublished: true\n---\n# Unsafe override',
+    })).toThrow('DEV Markdown body must not contain YAML front matter');
   });
 
   it('returns NEEDS_ACTION for a Blogger draft', async () => {

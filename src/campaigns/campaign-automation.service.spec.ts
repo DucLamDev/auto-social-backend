@@ -7,6 +7,7 @@ import { PrismaService } from '../database/prisma.service';
 import { CampaignAutomationService } from './campaign-automation.service';
 import { CampaignsService } from './campaigns.service';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
+import { CredentialsService } from '../credentials/credentials.service';
 
 describe('CampaignAutomationService', () => {
   const ownerId = '11111111-1111-4111-8111-111111111111';
@@ -18,6 +19,7 @@ describe('CampaignAutomationService', () => {
     name: 'Launch',
     brief: 'A grounded product brief',
     platformAccountIds: [accountId],
+    aiProvider: 'openai',
     timezone: 'UTC',
     publishImmediately: true,
   };
@@ -26,6 +28,10 @@ describe('CampaignAutomationService', () => {
     platformId: 'platform-devto',
     platform: { id: 'platform-devto', slug: 'devto', mode: PlatformMode.OFFICIAL_API },
   };
+
+  function providerResolver() {
+    return jest.fn((provider?: AutomateCampaignDto['aiProvider']) => provider ?? 'openai');
+  }
 
   function resultCampaign(status: CampaignStatus = CampaignStatus.RUNNING) {
     return {
@@ -84,6 +90,7 @@ describe('CampaignAutomationService', () => {
       $transaction: jest.fn((callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma)),
     });
     const ai = {
+      resolveProvider: providerResolver(),
       assertReady: jest.fn().mockResolvedValue(undefined),
       generate: jest.fn().mockResolvedValue([{
         id: variantId,
@@ -105,8 +112,9 @@ describe('CampaignAutomationService', () => {
 
     const result = await service.automate(ownerId, dto, 'request-key-123', 'request-id');
 
-    expect(ai.assertReady).toHaveBeenCalledWith(['devto']);
-    expect(ai.generate).toHaveBeenCalledWith(ownerId, contentId, ['devto']);
+    expect(ai.resolveProvider).toHaveBeenCalledWith('openai');
+    expect(ai.assertReady).toHaveBeenCalledWith(['devto'], 'openai');
+    expect(ai.generate).toHaveBeenCalledWith(ownerId, contentId, ['devto'], 'openai');
     expect(variantUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: { in: [variantId] }, status: VariantStatus.GENERATED }) as unknown,
       data: { status: VariantStatus.APPROVED },
@@ -125,7 +133,11 @@ describe('CampaignAutomationService', () => {
       $transaction: transaction,
     };
     const unavailable = new Error('OPENAI_API_KEY is not configured');
-    const ai = { assertReady: jest.fn().mockRejectedValue(unavailable), generate: jest.fn() };
+    const ai = {
+      resolveProvider: providerResolver(),
+      assertReady: jest.fn().mockRejectedValue(unavailable),
+      generate: jest.fn(),
+    };
     const service = new CampaignAutomationService(
       prisma as unknown as PrismaService,
       ai as unknown as AiContentService,
@@ -139,10 +151,15 @@ describe('CampaignAutomationService', () => {
   });
 
   it('returns an exact completed replay without requiring the account or AI to still be online', async () => {
+    const firstMediaId = '66666666-6666-4666-8666-666666666666';
+    const secondMediaId = '77777777-7777-4777-8777-777777777777';
+    const replayDto = { ...dto, mediaAssetIds: [secondMediaId, firstMediaId] };
     const requestHash = sha256(JSON.stringify({
-      name: dto.name,
-      brief: dto.brief,
+      name: replayDto.name,
+      brief: replayDto.brief,
       platformAccountIds: [accountId],
+      mediaAssetIds: [firstMediaId, secondMediaId],
+      aiProvider: 'openai',
       scheduledAt: null,
       timezone: 'UTC',
       publishImmediately: true,
@@ -160,7 +177,7 @@ describe('CampaignAutomationService', () => {
       platformAccount: { findMany: platformFindMany },
       content: { findFirstOrThrow: jest.fn().mockResolvedValue({ id: contentId }) },
     };
-    const ai = { assertReady: jest.fn(), generate: jest.fn() };
+    const ai = { resolveProvider: providerResolver(), assertReady: jest.fn(), generate: jest.fn() };
     const campaigns = { publish: jest.fn(), get: jest.fn().mockResolvedValue(resultCampaign()) };
     const service = new CampaignAutomationService(
       prisma as unknown as PrismaService,
@@ -169,7 +186,7 @@ describe('CampaignAutomationService', () => {
       { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
     );
 
-    await expect(service.automate(ownerId, dto, 'request-key-123')).resolves.toMatchObject({
+    await expect(service.automate(ownerId, replayDto, 'request-key-123')).resolves.toMatchObject({
       generatedVariants: 1,
       jobsCreated: 1,
       activated: true,
@@ -186,6 +203,8 @@ describe('CampaignAutomationService', () => {
       name: scheduledDto.name,
       brief: scheduledDto.brief,
       platformAccountIds: [accountId],
+      mediaAssetIds: [],
+      aiProvider: 'openai',
       scheduledAt: scheduledDto.scheduledAt,
       timezone: 'UTC',
       publishImmediately: true,
@@ -207,7 +226,9 @@ describe('CampaignAutomationService', () => {
     };
     const service = new CampaignAutomationService(
       prisma as unknown as PrismaService,
-      { assertReady: jest.fn(), generate: jest.fn() } as unknown as AiContentService,
+      {
+        resolveProvider: providerResolver(), assertReady: jest.fn(), generate: jest.fn(),
+      } as unknown as AiContentService,
       campaigns as unknown as CampaignsService,
       { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
     );
@@ -223,6 +244,8 @@ describe('CampaignAutomationService', () => {
       name: draftDto.name,
       brief: draftDto.brief,
       platformAccountIds: [accountId],
+      mediaAssetIds: [],
+      aiProvider: 'openai',
       scheduledAt: null,
       timezone: 'UTC',
       publishImmediately: false,
@@ -241,7 +264,9 @@ describe('CampaignAutomationService', () => {
     const campaigns = { publish: jest.fn(), get: jest.fn().mockResolvedValue(resultCampaign(CampaignStatus.DRAFT)) };
     const service = new CampaignAutomationService(
       prisma as unknown as PrismaService,
-      { assertReady: jest.fn(), generate: jest.fn() } as unknown as AiContentService,
+      {
+        resolveProvider: providerResolver(), assertReady: jest.fn(), generate: jest.fn(),
+      } as unknown as AiContentService,
       campaigns as unknown as CampaignsService,
       { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
     );
@@ -258,6 +283,8 @@ describe('CampaignAutomationService', () => {
       name: retryDto.name,
       brief: retryDto.brief,
       platformAccountIds: [accountId],
+      mediaAssetIds: [],
+      aiProvider: 'openai',
       scheduledAt: null,
       timezone: 'UTC',
       publishImmediately: false,
@@ -294,7 +321,11 @@ describe('CampaignAutomationService', () => {
     Object.assign(prisma, {
       $transaction: jest.fn((callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma)),
     });
-    const ai = { assertReady: jest.fn().mockResolvedValue(undefined), generate: jest.fn() };
+    const ai = {
+      resolveProvider: providerResolver(),
+      assertReady: jest.fn().mockResolvedValue(undefined),
+      generate: jest.fn(),
+    };
     const campaigns = {
       publish: jest.fn(),
       get: jest.fn().mockResolvedValue(resultCampaign(CampaignStatus.DRAFT)),
@@ -326,7 +357,7 @@ describe('CampaignAutomationService', () => {
     };
     const service = new CampaignAutomationService(
       prisma as unknown as PrismaService,
-      { assertReady: jest.fn() } as unknown as AiContentService,
+      { resolveProvider: providerResolver(), assertReady: jest.fn() } as unknown as AiContentService,
       {} as CampaignsService,
       { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
     );
@@ -334,8 +365,7 @@ describe('CampaignAutomationService', () => {
     await expect(service.automate(ownerId, dto, 'request-key-123')).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('rejects manual-only destinations before AI or persistent writes', async () => {
-    const transaction = jest.fn();
+  it('rejects manual destinations from one-click campaign automation', async () => {
     const manualAccount = {
       ...account,
       platform: { ...account.platform, slug: 'reddit', mode: PlatformMode.MANUAL },
@@ -343,20 +373,127 @@ describe('CampaignAutomationService', () => {
     const prisma = {
       campaign: { findFirst: jest.fn().mockResolvedValue(null) },
       platformAccount: { findMany: jest.fn().mockResolvedValue([manualAccount]) },
-      $transaction: transaction,
     };
-    const ai = { assertReady: jest.fn(), generate: jest.fn() };
     const service = new CampaignAutomationService(
       prisma as unknown as PrismaService,
-      ai as unknown as AiContentService,
+      {} as AiContentService,
       {} as CampaignsService,
-      { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+      {} as AuditService,
     );
+    const target = service as unknown as {
+      loadConnectedAccounts(owner: string, accountIds: string[]): Promise<typeof manualAccount[]>;
+    };
 
-    await expect(service.automate(ownerId, dto, 'request-key-123'))
+    await expect(target.loadConnectedAccounts(ownerId, [accountId]))
       .rejects.toThrow('Automatic publishing is unavailable for: reddit');
-    expect(ai.assertReady).not.toHaveBeenCalled();
-    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it('requires a real session and explicit browser auto-submit consent during preflight', async () => {
+    const browserAccount = {
+      id: accountId,
+      platformId: 'platform-voz',
+      settings: {
+        browserRecipe: 'voz-xenforo',
+        automationPermissionAttested: true,
+        browserAutoSubmit: true,
+      },
+      credential: { status: 'ACTIVE', expiresAt: null },
+      platform: {
+        id: 'platform-voz',
+        slug: 'voz-forums',
+        mode: PlatformMode.BROWSER_ASSISTED,
+        connectorKey: 'browser-assisted',
+      },
+    };
+    const findMany = jest.fn().mockResolvedValue([browserAccount]);
+    const resolve = jest.fn().mockResolvedValue({
+      storageState: {
+        cookies: [{ name: 'session', value: 'secret', domain: 'voz.vn', path: '/' }],
+        origins: [],
+      },
+    });
+    const service = new CampaignAutomationService(
+      { platformAccount: { findMany } } as unknown as PrismaService,
+      {} as AiContentService,
+      {} as CampaignsService,
+      {} as AuditService,
+      { resolve } as unknown as CredentialsService,
+    );
+    const target = service as unknown as {
+      loadConnectedAccounts(owner: string, accountIds: string[]): Promise<unknown[]>;
+    };
+
+    await expect(target.loadConnectedAccounts(ownerId, [accountId])).resolves.toHaveLength(1);
+    resolve.mockResolvedValueOnce({ storageState: { cookies: [], origins: [] } });
+    await expect(target.loadConnectedAccounts(ownerId, [accountId]))
+      .rejects.toThrow('requires a captured login session');
+    browserAccount.settings.browserAutoSubmit = false;
+    await expect(target.loadConnectedAccounts(ownerId, [accountId]))
+      .rejects.toThrow('requires a captured login session');
+  });
+
+  it('validates and atomically attaches media, while accepting the same attachment on retry', async () => {
+    const imageId = '66666666-6666-4666-8666-666666666666';
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const transaction = { mediaAsset: { updateMany } };
+    const prisma = {
+      mediaAsset: {
+        findMany: jest.fn().mockResolvedValue([{
+          id: imageId,
+          contentId,
+          variantId: null,
+        }]),
+      },
+      $transaction: jest.fn(
+        (callback: (client: typeof transaction) => Promise<void>) => callback(transaction),
+      ),
+    };
+    const service = new CampaignAutomationService(
+      prisma as unknown as PrismaService,
+      {} as AiContentService,
+      {} as CampaignsService,
+      {} as AuditService,
+    );
+    const target = service as unknown as {
+      validateMediaAssets(owner: string, ids: string[], reservationId?: string): Promise<void>;
+      attachMediaAssets(owner: string, targetContentId: string, ids: string[]): Promise<void>;
+    };
+
+    await expect(target.validateMediaAssets(ownerId, [imageId], contentId)).resolves.toBeUndefined();
+    await expect(target.attachMediaAssets(ownerId, contentId, [imageId])).resolves.toBeUndefined();
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: [imageId] },
+        ownerId,
+        variantId: null,
+        OR: [{ contentId: null }, { contentId }],
+      },
+      data: { contentId },
+    });
+  });
+
+  it('rejects media already attached to another content item', async () => {
+    const imageId = '66666666-6666-4666-8666-666666666666';
+    const service = new CampaignAutomationService(
+      {
+        mediaAsset: {
+          findMany: jest.fn().mockResolvedValue([{
+            id: imageId,
+            contentId: '77777777-7777-4777-8777-777777777777',
+            variantId: null,
+          }]),
+        },
+      } as unknown as PrismaService,
+      {} as AiContentService,
+      {} as CampaignsService,
+      {} as AuditService,
+    );
+    const target = service as unknown as {
+      validateMediaAssets(owner: string, ids: string[], reservationId?: string): Promise<void>;
+    };
+
+    await expect(target.validateMediaAssets(ownerId, [imageId], contentId))
+      .rejects.toThrow('must be unattached');
   });
 
   it('recovers a stale crashed automation content claim before retrying', async () => {

@@ -6,12 +6,14 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
 } from 'class-validator';
+import { AI_PROVIDER_IDS, AiProvider } from '../../ai/ai-provider';
 
 export class AutomateCampaignDto {
   @ApiProperty({ example: 'Ra mắt sản phẩm VPS mới' })
@@ -36,6 +38,24 @@ export class AutomateCampaignDto {
   @ArrayUnique()
   @IsUUID('4', { each: true })
   platformAccountIds!: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    format: 'uuid',
+    description: 'Previously uploaded, unattached media assets to attach to the generated source content.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  mediaAssetIds?: string[];
+
+  @ApiPropertyOptional({ enum: AI_PROVIDER_IDS, description: 'AI provider for this automation run. Uses the backend default when omitted.' })
+  @IsOptional()
+  @IsIn(AI_PROVIDER_IDS)
+  aiProvider?: AiProvider;
 
   @ApiPropertyOptional({ description: 'ISO-8601 timestamp with Z or an explicit UTC offset.' })
   @IsOptional()

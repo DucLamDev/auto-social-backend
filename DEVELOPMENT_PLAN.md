@@ -14,8 +14,8 @@ Ký hiệu: `[ ] TODO`, `[-] IN PROGRESS`, `[x] DONE`, `[!] BLOCKED`.
 
 - [x] URL/RSS/Sitemap/WordPress ingest, sanitize, duplicate hash and SSRF protection. Dependencies: public source. Files: crawler/content-sources/source-articles. Test: crawler/SSRF specs.
 - [x] Canonical Content, server-side pagination/search/status filter, prompt versioning và variant review/edit. Files: contents/prompts/content-variants. Test: content service pagination + typecheck/API DTO. Notes: variant đã được campaign target tham chiếu là immutable.
-- [x] OpenAI Responses Structured Outputs integration. Dependencies: `OPENAI_API_KEY`. Files: `src/ai`. Test: structured parser unit tests.
-- [!] Live OpenAI integration test. Dependencies: billable API key/network. Files: `src/ai`. Test: generate endpoint against test content. Notes: `CREDENTIAL_REQUIRED`.
+- [x] AI provider runtime cho OpenAI, DeepSeek và Gemini; chọn provider theo từng lần sinh nội dung, fallback qua `AI_DEFAULT_PROVIDER`, model/key do backend quản lý và structured output được kiểm tra bằng schema. Dependencies: API key tương ứng (`OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`). Files: `src/ai`, DTO campaign/content. Test: provider catalog, parser và provider client unit tests.
+- [!] Live AI provider integration test. Dependencies: billable API key/network/quota của từng provider. Files: `src/ai`. Test: generate endpoint against test content cho OpenAI, DeepSeek và Gemini. Notes: provider chưa có key trả `INFRASTRUCTURE_UNAVAILABLE`; Gemini bị vô hiệu hóa trên UI cho đến khi cấu hình `GEMINI_API_KEY`.
 
 ## Publishing platform
 
@@ -42,7 +42,7 @@ Ký hiệu: `[ ] TODO`, `[-] IN PROGRESS`, `[x] DONE`, `[!] BLOCKED`.
 
 - [x] Lint. Test: `pnpm lint`.
 - [x] Typecheck. Test: `pnpm typecheck`.
-- [x] Unit tests. Test: `pnpm test` (31 suites / 102 tests at handoff), gồm duplicate delivery/concurrency fingerprint lock, retry/DLQ, stale `QUEUED`/`PUBLISHING` recovery, campaign state reconciliation, OAuth query log redaction, 429/timeout/token hết hạn, auth rotation race/rate limit, encryption, media magic bytes/inheritance/upload concurrency, audit, OpenAI structured output/privacy/status rollback, Meta mock API, draft semantics, content/source article/media/publish-job pagination, exact dashboard metrics, crawler SSRF streaming cap và connector SSRF/DNS-rebinding/redirect/response-size guard.
+- [x] Unit tests. Test: `pnpm test` (36 suites / 218 tests), gồm duplicate delivery/concurrency fingerprint lock, retry/DLQ, stale `QUEUED`/`PUBLISHING` recovery, campaign state reconciliation, OAuth query log redaction, 429/timeout/token hết hạn, auth rotation race/rate limit, encryption, media magic bytes/inheritance/upload concurrency, audit, AI multi-provider/structured output/privacy/status rollback, Meta mock API, draft semantics, content/source article/media/publish-job pagination, exact dashboard metrics, crawler SSRF streaming cap và connector SSRF/DNS-rebinding/redirect/response-size guard.
 - [x] Build. Test: `pnpm build`.
 - [x] OpenAPI export. Test: `pnpm openapi:export`.
 - [x] Production dependency audit. Test: `pnpm audit --prod`. Notes: không có advisory production tại thời điểm bàn giao.

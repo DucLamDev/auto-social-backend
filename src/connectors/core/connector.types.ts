@@ -8,11 +8,25 @@ export interface ConnectorAccount {
   credentials: Record<string, unknown>;
 }
 
+/**
+ * Internal provenance attached by the publishing service after loading a
+ * MediaAsset owned by the campaign content. Symbol keys are omitted from API
+ * JSON and cannot be supplied through ordinary JSON request payloads.
+ */
+export const POST_MEDIA_MANAGED_STORAGE = Symbol('POST_MEDIA_MANAGED_STORAGE');
+
+export interface PostMediaManagedStorage {
+  storageKey: string;
+  checksum: string;
+  sizeBytes: number;
+}
+
 export interface PostMedia {
   type: 'image' | 'video' | 'document';
   url: string;
   altText?: string;
   mimeType?: string;
+  [POST_MEDIA_MANAGED_STORAGE]?: PostMediaManagedStorage;
 }
 
 export interface PostPayload {
@@ -40,6 +54,9 @@ export interface PublishStatus {
 export interface ConnectionTestResult {
   ok: boolean;
   accountName?: string;
+  manual?: boolean;
+  ready?: boolean;
+  message?: string;
   details?: Record<string, unknown>;
 }
 

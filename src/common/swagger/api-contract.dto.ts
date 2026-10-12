@@ -50,6 +50,9 @@ export class PlatformCapabilityContractDto {
 export class PlatformSummaryContractDto {
   @ApiProperty() slug!: string;
   @ApiProperty() name!: string;
+  @ApiProperty() connectorKey!: string;
+  @ApiProperty() groupKey!: string;
+  @ApiProperty({ type: 'object', additionalProperties: true }) defaultSettings!: Record<string, unknown>;
   @ApiProperty({ enum: PlatformMode }) mode!: PlatformMode;
   @ApiProperty({ enum: PlatformAvailability }) availability!: PlatformAvailability;
   @ApiPropertyOptional({ type: PlatformCapabilityContractDto }) capability?: PlatformCapabilityContractDto;
@@ -64,6 +67,9 @@ export class PlatformContractDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty() slug!: string;
   @ApiProperty() name!: string;
+  @ApiProperty() connectorKey!: string;
+  @ApiProperty() groupKey!: string;
+  @ApiProperty({ type: 'object', additionalProperties: true }) defaultSettings!: Record<string, unknown>;
   @ApiProperty({ enum: PlatformMode }) mode!: PlatformMode;
   @ApiProperty({ enum: PlatformAvailability }) availability!: PlatformAvailability;
   @ApiPropertyOptional({ type: String, format: 'uri', nullable: true }) docsUrl?: string | null;
@@ -99,6 +105,10 @@ export class PlatformAccountContractDto {
   @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true }) lastTestedAt?: string | null;
   @ApiPropertyOptional({ type: CredentialSummaryContractDto, nullable: true }) credential?: CredentialSummaryContractDto | null;
   @ApiPropertyOptional({ type: OAuthTokenSummaryContractDto, nullable: true }) oauthToken?: OAuthTokenSummaryContractDto | null;
+  @ApiPropertyOptional({
+    description: 'True only when an encrypted Playwright storage state is configured; the state itself is never returned.',
+  })
+  browserSessionConfigured?: boolean;
   @ApiPropertyOptional({ format: 'date-time' }) createdAt?: string;
   @ApiPropertyOptional({ format: 'date-time' }) updatedAt?: string;
 }
@@ -212,6 +222,14 @@ export class AutomatedCampaignContractDto {
   @ApiProperty({ description: 'Whether the campaign was activated for immediate or scheduled delivery.' }) activated!: boolean;
 }
 
+export class AiProviderContractDto {
+  @ApiProperty({ enum: ['openai', 'deepseek', 'gemini'] }) id!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty() model!: string;
+  @ApiProperty() configured!: boolean;
+  @ApiProperty() isDefault!: boolean;
+}
+
 export class PublishJobContractDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ enum: PublishJobStatus }) status!: PublishJobStatus;
@@ -244,7 +262,24 @@ export class ManualPayloadContractDto {
   @ApiProperty() accountName!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) title?: string | null;
   @ApiProperty() body!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) summary?: string | null;
   @ApiProperty({ type: [String] }) hashtags!: string[];
+  @ApiPropertyOptional({ type: String, nullable: true }) cta?: string | null;
+  @ApiPropertyOptional({ type: String, format: 'uri', nullable: true }) canonicalUrl?: string | null;
+  @ApiProperty({
+    type: 'array',
+    items: {
+      type: 'object',
+      required: ['type', 'url'],
+      properties: {
+        type: { type: 'string', enum: ['image', 'video', 'document'] },
+        url: { type: 'string', format: 'uri' },
+        altText: { type: 'string' },
+        mimeType: { type: 'string' },
+      },
+    },
+  })
+  media!: Array<{ type: string; url: string; altText?: string; mimeType?: string }>;
   @ApiPropertyOptional() suggestedExternalPostId?: string;
   @ApiPropertyOptional({ format: 'uri' }) openUrl?: string;
 }
@@ -259,6 +294,7 @@ export class ConnectionTestContractDto {
   @ApiProperty() ok!: boolean;
   @ApiPropertyOptional() accountName?: string;
   @ApiPropertyOptional() manual?: boolean;
+  @ApiPropertyOptional() ready?: boolean;
   @ApiPropertyOptional() message?: string;
   @ApiPropertyOptional({ type: 'object', additionalProperties: true }) details?: Record<string, unknown>;
 }
@@ -319,6 +355,13 @@ export class MediaAssetContractDto {
   @ApiProperty() mimeType!: string;
   @ApiProperty({ description: 'Decimal byte count serialized as a string' }) sizeBytes!: string;
   @ApiProperty() checksum!: string;
+  @ApiProperty({
+    type: 'object',
+    additionalProperties: true,
+    description: 'Media metadata. Uploaded accessible descriptions are returned as altText.',
+    example: { altText: 'A dashboard showing campaign performance.' },
+  })
+  metadata!: Record<string, unknown>;
   @ApiProperty({ format: 'date-time' }) createdAt!: string;
 }
 

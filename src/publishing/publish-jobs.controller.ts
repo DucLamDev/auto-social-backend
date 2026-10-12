@@ -41,6 +41,16 @@ export class PublishJobsController {
   @Roles(RoleName.ADMIN, RoleName.EDITOR)
   retry(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) { return this.jobs.retry(user.id, id); }
 
+  @Post(':id/resume-browser')
+  @ApiCreatedEnvelope(MutationResultContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  resumeBrowser(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.jobs.resumeBrowser(user.id, id);
+  }
+
   @Post(':id/reconcile-not-found')
   @ApiCreatedEnvelope(MutationResultContractDto)
   @Roles(RoleName.ADMIN, RoleName.EDITOR)

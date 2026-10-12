@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AccountStatus } from '@prisma/client';
+import { AccountStatus, CredentialStatus, PlatformMode } from '@prisma/client';
 import { CredentialsService } from '../credentials/credentials.service';
 import { PrismaService } from '../database/prisma.service';
 import { ConnectorAccount } from './core/connector.types';
@@ -13,6 +13,23 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+const BROWSER_RECONNECT_REASONS = new Set([
+  'CAPTCHA_REQUIRED',
+  'LOGIN_REQUIRED',
+  'SECURITY_CHECK_REQUIRED',
+  'TWO_FACTOR_REQUIRED',
+]);
+
+function browserTestFailureStatus(connectorKey: string, error: unknown): AccountStatus {
+  if (connectorKey !== 'browser-assisted' || !(error instanceof ConnectorError)) {
+    return AccountStatus.ERROR;
+  }
+  const reason = error.safeDetails?.reason;
+  return typeof reason === 'string' && BROWSER_RECONNECT_REASONS.has(reason)
+    ? AccountStatus.RECONNECT_REQUIRED
+    : AccountStatus.ERROR;
+}
+
 @Injectable()
 export class ConnectorAccountsService {
   constructor(
@@ -21,18 +38,68 @@ export class ConnectorAccountsService {
     private readonly registry: ConnectorRegistryService,
   ) {}
 
-  async load(id: string): Promise<{ platform: string; account: ConnectorAccount }> {
+  async load(id: string): Promise<{
+    platform: string;
+    connectorKey: string;
+    platformEnabled: boolean;
+    platformMode: PlatformMode;
+    enabled: boolean;
+    status: AccountStatus;
+    account: ConnectorAccount;
+  }> {
+    return this.loadInternal(id, false);
+  }
+
+  /**
+   * Login capture must be able to replace a browser session after an explicit
+   * revocation or credential expiry. In that narrow case the inactive secret
+   * is deliberately ignored and Chromium starts with an empty storage state.
+   * Active credentials still go through normal decryption and validation, so
+   * corrupt active state cannot be silently discarded.
+   */
+  async loadForBrowserLoginCapture(id: string): Promise<{
+    platform: string;
+    connectorKey: string;
+    platformEnabled: boolean;
+    platformMode: PlatformMode;
+    enabled: boolean;
+    status: AccountStatus;
+    account: ConnectorAccount;
+  }> {
+    return this.loadInternal(id, true);
+  }
+
+  private async loadInternal(id: string, allowInactiveBrowserCredential: boolean): Promise<{
+    platform: string;
+    connectorKey: string;
+    platformEnabled: boolean;
+    platformMode: PlatformMode;
+    enabled: boolean;
+    status: AccountStatus;
+    account: ConnectorAccount;
+  }> {
     const source = await this.prisma.platformAccount.findUniqueOrThrow({
       where: { id },
-      include: { platform: { select: { slug: true } }, credential: { select: { id: true } }, oauthToken: { select: { id: true } } },
+      include: {
+        platform: { select: { slug: true, connectorKey: true, enabled: true, mode: true } },
+        credential: { select: { id: true, status: true, expiresAt: true } },
+        oauthToken: { select: { id: true } },
+      },
     });
     let credentialValues: Record<string, unknown> = {};
     if (source.credential) {
-      credentialValues = await this.credentials.resolve(id);
+      const inactiveBrowserCredential = source.platform.connectorKey === 'browser-assisted'
+        && (
+          source.credential.status !== CredentialStatus.ACTIVE
+          || (source.credential.expiresAt?.getTime() ?? Number.POSITIVE_INFINITY) <= Date.now()
+        );
+      if (!allowInactiveBrowserCredential || !inactiveBrowserCredential) {
+        credentialValues = await this.credentials.resolve(id);
+      }
     } else if (source.oauthToken) {
       let token = await this.credentials.resolveOAuth(id);
       if (token.expiresAt && token.expiresAt.getTime() <= Date.now() + 60_000) {
-        if (source.platform.slug === 'blogger' && token.refreshToken) {
+        if (source.platform.connectorKey === 'blogger' && token.refreshToken) {
           try {
             await this.credentials.refreshGoogleOAuth(id, token.refreshToken);
             token = await this.credentials.resolveOAuth(id);
@@ -49,6 +116,11 @@ export class ConnectorAccountsService {
     }
     return {
       platform: source.platform.slug,
+      connectorKey: source.platform.connectorKey,
+      platformEnabled: source.platform.enabled,
+      platformMode: source.platform.mode,
+      enabled: source.enabled,
+      status: source.status,
       account: {
         id: source.id,
         externalId: source.externalId ?? undefined,
@@ -60,8 +132,15 @@ export class ConnectorAccountsService {
   }
 
   async test(id: string) {
-    const { platform, account } = await this.load(id);
-    const connector = this.registry.get(platform);
+    const { connectorKey, enabled, account } = await this.load(id);
+    if (enabled === false) {
+      throw new ConnectorError(
+        ErrorCode.CONNECTOR_NEEDS_ACTION,
+        'Enable the platform account before testing its connection',
+        false,
+      );
+    }
+    const connector = this.registry.get(connectorKey);
     if (!connector.testConnection) {
       return { ok: false, manual: true, message: 'This connector has no automatic connection test' };
     }
@@ -75,7 +154,7 @@ export class ConnectorAccountsService {
     } catch (error) {
       await this.prisma.platformAccount.update({
         where: { id },
-        data: { status: AccountStatus.ERROR, lastTestedAt: new Date() },
+        data: { status: browserTestFailureStatus(connectorKey, error), lastTestedAt: new Date() },
       });
       throw error;
     }

@@ -13,10 +13,23 @@ interface DevToUser { name?: string; username?: string }
 export class DevToConnector extends HttpConnectorBase implements SocialPublisher {
   readonly platform = 'devto';
   readonly mode = PlatformMode.OFFICIAL_API;
-  readonly capability = { text: true, image: false, video: false, article: true, delete: false, schedule: false, analytics: false };
+  readonly capability = { text: true, image: true, video: false, article: true, delete: false, schedule: false, analytics: false, maxImages: 1 };
 
   validate(post: PostPayload): Promise<void> {
     if (!post.title?.trim() || !post.body.trim()) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, 'DEV title and Markdown body are required', false);
+    if (/^\s*---(?:\r?\n|$)/.test(post.body)) {
+      throw new ConnectorError(
+        ErrorCode.PLATFORM_CONTENT_REJECTED,
+        'DEV Markdown body must not contain YAML front matter; article metadata is sent separately',
+        false,
+      );
+    }
+    if (post.media?.some((media) => media.type !== 'image')) {
+      throw new ConnectorError(ErrorCode.PLATFORM_MEDIA_INVALID, 'DEV article media supports images only', false);
+    }
+    if ((post.media?.length ?? 0) > 1) {
+      throw new ConnectorError(ErrorCode.PLATFORM_MEDIA_INVALID, 'DEV articles accept at most one main image', false);
+    }
     return Promise.resolve();
   }
 
@@ -33,8 +46,10 @@ export class DevToConnector extends HttpConnectorBase implements SocialPublisher
           title: post.title,
           body_markdown: post.body,
           published: publishImmediately,
+          ...(post.summary?.trim() ? { description: post.summary.trim() } : {}),
           tags: post.hashtags?.slice(0, 4).map((tag) => tag.replace(/^#/, '').trim()).filter(Boolean).join(','),
           canonical_url: post.canonicalUrl,
+          ...(post.media?.[0]?.url ? { main_image: post.media[0].url } : {}),
         },
       }),
     });

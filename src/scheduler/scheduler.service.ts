@@ -7,9 +7,8 @@ import { CampaignStatusService } from '../campaigns/campaign-status.service';
 import {
   WORKER_CRASH_UNCERTAIN_RESULT_CODE,
   WORKER_CRASH_UNCERTAIN_RESULT_MESSAGE,
+  STALE_DELIVERY_AFTER_MS,
 } from '../publishing/publishing.constants';
-
-const STALE_DELIVERY_AFTER_MS = 15 * 60_000;
 
 @Injectable()
 export class SchedulerService {

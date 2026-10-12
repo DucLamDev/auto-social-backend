@@ -1,11 +1,93 @@
+import { HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
+import { AiProvider } from './ai-provider';
 import { AiContentService } from './ai-content.service';
 
-describe('AiContentService structured parsing', () => {
-  const service = new AiContentService({} as PrismaService, new ConfigService({}));
+type ConfigValue = string | number | undefined;
+
+const BASE_TEST_CONFIG: Record<string, ConfigValue> = {
+  AI_DEFAULT_PROVIDER: 'openai',
+  AI_TIMEOUT_MS: 60_000,
+  OPENAI_TIMEOUT_MS: 60_000,
+  OPENAI_API_KEY: '',
+  DEEPSEEK_API_KEY: '',
+  GEMINI_API_KEY: '',
+  OPENAI_MODEL: 'openai-test-model',
+  DEEPSEEK_MODEL: 'deepseek-test-model',
+  GEMINI_MODEL: 'gemini-test-model',
+  GEMINI_FALLBACK_MODEL: 'gemini-fallback-test-model',
+};
+
+/**
+ * A deliberately minimal ConfigService double. Unlike the real ConfigService,
+ * it cannot fall through to process.env or values loaded from a local .env.
+ */
+function isolatedConfig(overrides: Record<string, ConfigValue> = {}): ConfigService {
+  const values = { ...BASE_TEST_CONFIG, ...overrides };
+  return {
+    get: jest.fn((key: string, defaultValue?: unknown) => (
+      Object.prototype.hasOwnProperty.call(values, key) ? values[key] : defaultValue
+    )),
+  } as unknown as ConfigService;
+}
+
+function installClient(service: AiContentService, provider: AiProvider, client: unknown): void {
+  const target = service as unknown as { clients: Partial<Record<AiProvider, unknown>> };
+  target.clients[provider] = client;
+}
+
+function skipGeminiRetryDelay(service: AiContentService): jest.Mock<Promise<void>, [number]> {
+  const delay = jest.fn<Promise<void>, [number]>().mockResolvedValue(undefined);
+  const target = service as unknown as { delay: (milliseconds: number) => Promise<void> };
+  target.delay = delay;
+  return delay;
+}
+
+function callModel(
+  service: AiContentService,
+  provider: AiProvider,
+  platform: string,
+  systemPrompt: string,
+  userTemplate: string,
+  content: { title: string; body: string; summary: string | null; canonicalUrl: string | null },
+): Promise<unknown> {
+  const target = service as unknown as {
+    callModel(
+      selectedProvider: AiProvider,
+      selectedPlatform: string,
+      system: string,
+      template: string,
+      source: { title: string; body: string; summary: string | null; canonicalUrl: string | null },
+    ): Promise<unknown>;
+  };
+  return target.callModel(provider, platform, systemPrompt, userTemplate, content);
+}
+
+async function captureApplicationError(promise: Promise<unknown>): Promise<ApplicationException> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof ApplicationException) return error;
+    throw error;
+  }
+  throw new Error('Expected an ApplicationException');
+}
+
+describe('AiContentService structured parsing and provider routing', () => {
+  let fetchSpy: jest.SpiedFunction<typeof globalThis.fetch>;
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network is disabled in AI unit tests'));
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
 
   it('accepts schema-compliant model output', () => {
+    const service = new AiContentService({} as PrismaService, isolatedConfig());
     const result = service.parseOutput(JSON.stringify({
       platform: 'linkedin',
       title: 'A title',
@@ -22,18 +104,53 @@ describe('AiContentService structured parsing', () => {
   });
 
   it('rejects invalid JSON and invalid schema output', () => {
+    const service = new AiContentService({} as PrismaService, isolatedConfig());
     expect(() => service.parseOutput('{bad')).toThrow('AI returned invalid JSON');
     expect(() => service.parseOutput(JSON.stringify({ platform: 'x' }))).toThrow('required schema');
   });
 
-  it('fails readiness before querying platforms when OPENAI_API_KEY is missing', async () => {
+  it('reports only safe provider metadata and honors the configured default', () => {
+    const service = new AiContentService(
+      {} as PrismaService,
+      isolatedConfig({ AI_DEFAULT_PROVIDER: 'deepseek' }),
+    );
+    installClient(service, 'deepseek', { chat: { completions: {} } });
+
+    expect(service.providers()).toEqual([
+      {
+        id: 'openai', label: 'OpenAI', model: 'openai-test-model', configured: false, isDefault: false,
+      },
+      {
+        id: 'deepseek', label: 'DeepSeek', model: 'deepseek-test-model', configured: true, isDefault: true,
+      },
+      {
+        id: 'gemini', label: 'Google Gemini', model: 'gemini-test-model', configured: false, isDefault: false,
+      },
+    ]);
+    expect(service.resolveProvider()).toBe('deepseek');
+    expect(Object.keys(service.providers()[0] ?? {})).not.toContain('apiKey');
+  });
+
+  it('uses the stable Gemini default model when no model override is configured', () => {
+    const service = new AiContentService(
+      {} as PrismaService,
+      isolatedConfig({ GEMINI_MODEL: '' }),
+    );
+
+    expect(service.providers()).toContainEqual(expect.objectContaining({
+      id: 'gemini',
+      model: 'gemini-3.5-flash',
+    }));
+  });
+
+  it('fails readiness before querying platforms when the selected provider is missing', async () => {
     const findMany = jest.fn();
     const unconfigured = new AiContentService(
       { platform: { findMany } } as unknown as PrismaService,
-      new ConfigService({}),
+      isolatedConfig(),
     );
 
-    await expect(unconfigured.assertReady(['devto'])).rejects.toThrow('OPENAI_API_KEY is not configured');
+    await expect(unconfigured.assertReady(['devto'], 'gemini')).rejects.toThrow('GEMINI_API_KEY is not configured');
     expect(findMany).not.toHaveBeenCalled();
   });
 
@@ -44,39 +161,250 @@ describe('AiContentService structured parsing', () => {
           findMany: jest.fn().mockResolvedValue([{ slug: 'devto', prompts: [] }]),
         },
       } as unknown as PrismaService,
-      new ConfigService({ OPENAI_API_KEY: 'test-key' }),
+      isolatedConfig(),
     );
+    installClient(configured, 'openai', {});
 
-    await expect(configured.assertReady(['devto'])).rejects.toThrow('No active AI prompt for: devto');
+    await expect(configured.assertReady(['devto'], 'openai')).rejects.toThrow('No active AI prompt for: devto');
   });
 
-  it('uses strict Responses Structured Outputs without server-side response storage', async () => {
-    type Request = { store?: boolean; text?: { format?: { type?: string; strict?: boolean } } };
+  it('uses strict OpenAI Responses Structured Outputs without server-side response storage', async () => {
+    type Request = { model?: string; store?: boolean; text?: { format?: { type?: string; strict?: boolean } } };
     const output = JSON.stringify({
       platform: 'x', title: null, body: 'Hello', summary: null, hashtags: [], cta: null,
       recommended: true, reason: 'Concise', media: { type: 'none', altText: '' },
     });
     const create = jest.fn<Promise<{ output_text: string }>, [Request]>().mockResolvedValue({ output_text: output });
-    const configured = new AiContentService(
-      {} as PrismaService,
-      new ConfigService({ OPENAI_API_KEY: 'test-key', OPENAI_MODEL: 'gpt-5-mini' }),
-    );
-    const target = configured as unknown as {
-      client: { responses: { create: (request: Request) => Promise<{ output_text: string }> } };
-      callModel(platform: string, system: string, template: string, content: {
-        title: string; body: string; summary: string | null; canonicalUrl: string | null;
-      }): Promise<unknown>;
-    };
-    target.client = { responses: { create } };
+    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    installClient(configured, 'openai', { responses: { create } });
 
-    await target.callModel('x', 'Ground all claims.', '{{body}}', {
+    await callModel(configured, 'openai', 'x', 'Ground all claims.', '{{body}}', {
       title: 'Title', body: 'Source', summary: null, canonicalUrl: null,
     });
 
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'openai-test-model',
       store: false,
       text: { format: expect.objectContaining({ type: 'json_schema', strict: true }) as unknown },
     }));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('uses DeepSeek chat JSON mode and validates its JSON response locally', async () => {
+    const output = JSON.stringify({
+      platform: 'devto', title: 'DeepSeek title', body: 'DeepSeek body', summary: null,
+      hashtags: ['ai'], cta: null, recommended: true, reason: 'Relevant',
+      media: { type: 'none', altText: '' },
+    });
+    const create = jest.fn().mockResolvedValue({ choices: [{ message: { content: output } }] });
+    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    installClient(configured, 'deepseek', { chat: { completions: { create } } });
+
+    const result = await callModel(configured, 'deepseek', 'devto', 'Stay grounded.', '{{body}}', {
+      title: 'Title', body: 'Source', summary: null, canonicalUrl: null,
+    });
+
+    expect(result).toMatchObject({ platform: 'devto', body: 'DeepSeek body' });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'deepseek-test-model',
+      response_format: { type: 'json_object' },
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          role: 'system',
+          content: expect.stringContaining('JSON Schema') as unknown,
+        }),
+      ]) as unknown,
+    }));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('uses Gemini chat parsing and validates the parsed structured response', async () => {
+    const parsed = {
+      platform: 'linkedin', title: 'Gemini title', body: 'Gemini body', summary: null,
+      hashtags: [], cta: 'Read more', recommended: true, reason: 'Relevant',
+      media: { type: 'image', altText: 'Diagram' },
+    };
+    const parse = jest.fn().mockResolvedValue({ choices: [{ message: { parsed, content: null } }] });
+    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    installClient(configured, 'gemini', { chat: { completions: { parse } } });
+
+    const result = await callModel(configured, 'gemini', 'linkedin', 'Stay grounded.', '{{body}}', {
+      title: 'Title', body: 'Source', summary: null, canonicalUrl: null,
+    });
+
+    expect(result).toMatchObject({ platform: 'linkedin', body: 'Gemini body' });
+    expect(parse).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gemini-test-model',
+      response_format: expect.objectContaining({ type: 'json_schema' }) as unknown,
+    }));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('retries a transient Gemini primary-model failure before falling back', async () => {
+    const parsed = {
+      platform: 'devto', title: 'Recovered', body: 'Gemini body', summary: null,
+      hashtags: [], cta: null, recommended: true, reason: 'Relevant',
+      media: { type: 'none', altText: '' },
+    };
+    const parse = jest.fn()
+      .mockRejectedValueOnce({ status: 503, message: 'raw-upstream-body' })
+      .mockResolvedValueOnce({ choices: [{ message: { parsed, content: null } }] });
+    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    const delay = skipGeminiRetryDelay(configured);
+    installClient(configured, 'gemini', { chat: { completions: { parse } } });
+
+    const result = await callModel(configured, 'gemini', 'devto', 'Stay grounded.', '{{body}}', {
+      title: 'Title', body: 'Source', summary: null, canonicalUrl: null,
+    });
+
+    expect(result).toMatchObject({ platform: 'devto', title: 'Recovered' });
+    expect(parse).toHaveBeenNthCalledWith(1, expect.objectContaining({ model: 'gemini-test-model' }));
+    expect(parse).toHaveBeenNthCalledWith(2, expect.objectContaining({ model: 'gemini-test-model' }));
+    expect(delay).toHaveBeenCalledWith(750);
+  });
+
+  it('uses the configured Gemini fallback after retryable primary-model failures', async () => {
+    const parsed = {
+      platform: 'devto', title: 'Fallback', body: 'Fallback body', summary: null,
+      hashtags: [], cta: null, recommended: true, reason: 'Relevant',
+      media: { type: 'none', altText: '' },
+    };
+    const parse = jest.fn()
+      .mockRejectedValueOnce({ status: 429, message: 'raw-primary-limit' })
+      .mockRejectedValueOnce({ status: 503, message: 'raw-primary-outage' })
+      .mockResolvedValueOnce({ choices: [{ message: { parsed, content: null } }] });
+    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    const delay = skipGeminiRetryDelay(configured);
+    installClient(configured, 'gemini', { chat: { completions: { parse } } });
+
+    const result = await callModel(configured, 'gemini', 'devto', 'Stay grounded.', '{{body}}', {
+      title: 'Title', body: 'Source', summary: null, canonicalUrl: null,
+    });
+
+    expect(result).toMatchObject({ platform: 'devto', title: 'Fallback' });
+    expect(parse).toHaveBeenNthCalledWith(1, expect.objectContaining({ model: 'gemini-test-model' }));
+    expect(parse).toHaveBeenNthCalledWith(2, expect.objectContaining({ model: 'gemini-test-model' }));
+    expect(parse).toHaveBeenNthCalledWith(3, expect.objectContaining({ model: 'gemini-fallback-test-model' }));
+    expect(delay).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps DeepSeek insufficient balance errors without exposing the upstream response', async () => {
+    const rawUpstreamDetail = 'raw-upstream-secret-and-account-id';
+    const create = jest.fn().mockRejectedValue({
+      status: 402,
+      message: rawUpstreamDetail,
+      error: { message: rawUpstreamDetail, account: rawUpstreamDetail },
+    });
+    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    installClient(configured, 'deepseek', { chat: { completions: { create } } });
+
+    const error = await captureApplicationError(callModel(
+      configured,
+      'deepseek',
+      'devto',
+      'Stay grounded.',
+      '{{body}}',
+      { title: 'Title', body: 'Source', summary: null, canonicalUrl: null },
+    ));
+
+    expect(error.code).toBe(ErrorCode.INFRASTRUCTURE_UNAVAILABLE);
+    expect(error.getStatus()).toBe(HttpStatus.SERVICE_UNAVAILABLE);
+    expect(error.getResponse()).toMatchObject({
+      message: 'DeepSeek account has insufficient balance or quota',
+    });
+    expect(JSON.stringify(error.getResponse())).not.toContain(rawUpstreamDetail);
+    expect(error.details).toBeUndefined();
+  });
+
+  it('maps Gemini rate limits without exposing the upstream response', async () => {
+    const rawUpstreamDetail = 'raw-provider-limit-body';
+    const parse = jest.fn().mockRejectedValue({
+      status: 429,
+      message: rawUpstreamDetail,
+      error: { message: rawUpstreamDetail },
+    });
+    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    skipGeminiRetryDelay(configured);
+    installClient(configured, 'gemini', { chat: { completions: { parse } } });
+
+    const error = await captureApplicationError(callModel(
+      configured,
+      'gemini',
+      'linkedin',
+      'Stay grounded.',
+      '{{body}}',
+      { title: 'Title', body: 'Source', summary: null, canonicalUrl: null },
+    ));
+
+    expect(error.code).toBe(ErrorCode.PLATFORM_RATE_LIMITED);
+    expect(error.getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    expect(error.getResponse()).toMatchObject({
+      message: 'Google Gemini rate limit was reached. Try again later',
+    });
+    expect(JSON.stringify(error.getResponse())).not.toContain(rawUpstreamDetail);
+    expect(error.details).toBeUndefined();
+  });
+
+  it.each([401, 403])(
+    'maps upstream credential status %i to a non-401 safe API error',
+    async (status) => {
+      const rawUpstreamDetail = 'raw-credential-and-key-detail';
+      const create = jest.fn().mockRejectedValue({
+        status,
+        message: rawUpstreamDetail,
+        error: { message: rawUpstreamDetail },
+      });
+      const configured = new AiContentService({} as PrismaService, isolatedConfig());
+      installClient(configured, 'openai', { responses: { create } });
+
+      const error = await captureApplicationError(callModel(
+        configured,
+        'openai',
+        'x',
+        'Stay grounded.',
+        '{{body}}',
+        { title: 'Title', body: 'Source', summary: null, canonicalUrl: null },
+      ));
+
+      expect(error.code).toBe(ErrorCode.PLATFORM_AUTH_FAILED);
+      expect(error.getStatus()).toBe(HttpStatus.BAD_GATEWAY);
+      expect(error.getStatus()).not.toBe(HttpStatus.UNAUTHORIZED);
+      expect(error.getResponse()).toMatchObject({
+        message: 'OpenAI rejected the configured API credentials',
+      });
+      expect(JSON.stringify(error.getResponse())).not.toContain(rawUpstreamDetail);
+    },
+  );
+
+  it.each([
+    {
+      providerError: { name: 'APIConnectionTimeoutError', message: 'raw-timeout-body' },
+      expectedStatus: HttpStatus.GATEWAY_TIMEOUT,
+      expectedMessage: 'OpenAI request timed out. Try again later',
+    },
+    {
+      providerError: { status: 503, message: 'raw-service-body' },
+      expectedStatus: HttpStatus.SERVICE_UNAVAILABLE,
+      expectedMessage: 'OpenAI is temporarily unavailable',
+    },
+  ])('maps timeout and 5xx failures safely', async ({ providerError, expectedStatus, expectedMessage }) => {
+    const create = jest.fn().mockRejectedValue(providerError);
+    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    installClient(configured, 'openai', { responses: { create } });
+
+    const error = await captureApplicationError(callModel(
+      configured,
+      'openai',
+      'x',
+      'Stay grounded.',
+      '{{body}}',
+      { title: 'Title', body: 'Source', summary: null, canonicalUrl: null },
+    ));
+
+    expect(error.code).toBe(ErrorCode.INFRASTRUCTURE_UNAVAILABLE);
+    expect(error.getStatus()).toBe(expectedStatus);
+    expect(error.getResponse()).toMatchObject({ message: expectedMessage });
+    expect(JSON.stringify(error.getResponse())).not.toContain(providerError.message);
   });
 
   it('restores the previous content status when generation fails', async () => {
@@ -98,16 +426,12 @@ describe('AiContentService structured parsing', () => {
         create: jest.fn(),
       },
     };
-    const configured = new AiContentService(
-      prisma as unknown as PrismaService,
-      new ConfigService({ OPENAI_API_KEY: 'test-key' }),
-    );
-    const target = configured as unknown as {
-      client: { responses: { create: () => Promise<{ output_text: string }> } };
-    };
-    target.client = { responses: { create: jest.fn().mockRejectedValue(new Error('provider down')) } };
+    const configured = new AiContentService(prisma as unknown as PrismaService, isolatedConfig());
+    const create = jest.fn().mockRejectedValue(new Error('provider down'));
+    installClient(configured, 'openai', { responses: { create } });
 
-    await expect(configured.generate('owner-1', 'content-1', ['x'])).rejects.toThrow('provider down');
+    await expect(configured.generate('owner-1', 'content-1', ['x'], 'openai'))
+      .rejects.toThrow('OpenAI request failed');
     expect(updateMany).toHaveBeenNthCalledWith(1, {
       where: { id: 'content-1', ownerId: 'owner-1', status: 'APPROVED' },
       data: { status: 'AI_GENERATING' },
@@ -116,6 +440,7 @@ describe('AiContentService structured parsing', () => {
       where: { id: 'content-1', ownerId: 'owner-1', status: 'AI_GENERATING' },
       data: { status: 'APPROVED' },
     });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('does not persist partial variants when one platform generation fails', async () => {
@@ -136,32 +461,24 @@ describe('AiContentService structured parsing', () => {
       },
       $transaction: transaction,
     };
-    const configured = new AiContentService(
-      prisma as unknown as PrismaService,
-      new ConfigService({ OPENAI_API_KEY: 'test-key' }),
-    );
+    const configured = new AiContentService(prisma as unknown as PrismaService, isolatedConfig());
     const valid = JSON.stringify({
       platform: 'x', title: null, body: 'Hello', summary: null, hashtags: [], cta: null,
       recommended: true, reason: 'Concise', media: { type: 'none', altText: '' },
     });
-    const target = configured as unknown as {
-      client: { responses: { create: jest.Mock } };
-    };
-    target.client = {
-      responses: {
-        create: jest.fn()
-          .mockResolvedValueOnce({ output_text: valid })
-          .mockRejectedValueOnce(new Error('second platform failed')),
-      },
-    };
+    const create = jest.fn()
+      .mockResolvedValueOnce({ output_text: valid })
+      .mockRejectedValueOnce(new Error('second platform failed'));
+    installClient(configured, 'openai', { responses: { create } });
 
-    await expect(configured.generate('owner-1', 'content-1', ['x', 'devto']))
-      .rejects.toThrow('second platform failed');
+    await expect(configured.generate('owner-1', 'content-1', ['x', 'devto'], 'openai'))
+      .rejects.toThrow('OpenAI request failed');
     expect(transaction).not.toHaveBeenCalled();
     expect(updateMany).toHaveBeenLastCalledWith({
       where: { id: 'content-1', ownerId: 'owner-1', status: 'AI_GENERATING' },
       data: { status: 'DRAFT' },
     });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('does not call the model when another request wins the atomic generation claim', async () => {
@@ -180,17 +497,14 @@ describe('AiContentService structured parsing', () => {
       },
       $transaction: transaction,
     };
-    const configured = new AiContentService(
-      prisma as unknown as PrismaService,
-      new ConfigService({ OPENAI_API_KEY: 'test-key' }),
-    );
+    const configured = new AiContentService(prisma as unknown as PrismaService, isolatedConfig());
     const create = jest.fn();
-    const target = configured as unknown as { client: { responses: { create: jest.Mock } } };
-    target.client = { responses: { create } };
+    installClient(configured, 'openai', { responses: { create } });
 
-    await expect(configured.generate('owner-1', 'content-1', ['devto']))
+    await expect(configured.generate('owner-1', 'content-1', ['devto'], 'openai'))
       .rejects.toThrow('Content changed while generation was starting');
     expect(create).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

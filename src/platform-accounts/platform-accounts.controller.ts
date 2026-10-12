@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '@prisma/client';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CreatePlatformAccountDto } from './dto/create-platform-account.dto';
 import { UpdateCredentialDto } from './dto/update-credential.dto';
 import { UpdatePlatformAccountDto } from './dto/update-platform-account.dto';
+import { UpdatePlatformAccountSettingsDto } from './dto/update-platform-account-settings.dto';
 import { PlatformAccountsService } from './platform-accounts.service';
 import { ConnectorAccountsService } from '../connectors/connector-accounts.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -46,11 +47,32 @@ export class PlatformAccountsController {
     return this.accounts.updateCredential(user.id, id, dto.credential, dto.settings);
   }
 
+  @Put(':id/settings')
+  @ApiOkEnvelope(PlatformAccountContractDto)
+  @Roles(RoleName.ADMIN)
+  updateSettings(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdatePlatformAccountSettingsDto,
+  ) {
+    return this.accounts.updateSettings(user.id, id, dto.settings);
+  }
+
   @Patch(':id')
   @ApiOkEnvelope(PlatformAccountContractDto)
   @Roles(RoleName.ADMIN)
   setEnabled(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePlatformAccountDto) {
     return this.accounts.setEnabled(user.id, id, dto.enabled);
+  }
+
+  @Delete(':id/browser-session')
+  @ApiOkEnvelope(PlatformAccountContractDto)
+  @Roles(RoleName.ADMIN)
+  revokeBrowserSession(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.accounts.revokeBrowserSession(user.id, id);
   }
 
   @Post(':id/test')

@@ -3,6 +3,7 @@ import {
   AccountStatus,
   CampaignStatus,
   ContentStatus,
+  CredentialStatus,
   PlatformMode,
   Prisma,
   PublishJobStatus,
@@ -13,20 +14,39 @@ import { AuditService } from '../audit/audit.service';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { sha256, stableIdempotencyKey } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
+import { CredentialsService } from '../credentials/credentials.service';
+import { hasUsableBrowserStorageState } from '../connectors/browser/browser-session-readiness';
 import { CampaignsService } from './campaigns.service';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
 
 const AUTOMATION_STALE_AFTER_MS = 20 * 60 * 1000;
 const MAX_PLATFORMS_PER_AUTOMATION = 12;
-const AUTOMATIC_PLATFORM_MODES = new Set<PlatformMode>([
+const AUTOMATION_PLATFORM_MODES = new Set<PlatformMode>([
   PlatformMode.OFFICIAL_API,
   PlatformMode.COMPATIBLE_API,
+  PlatformMode.BROWSER_ASSISTED,
 ]);
 
 type ConnectedAccount = {
   id: string;
   platformId: string;
-  platform: { id: string; slug: string; mode: PlatformMode };
+  settings: Prisma.JsonValue;
+  credential?: {
+    status: CredentialStatus;
+    expiresAt: Date | null;
+  } | null;
+  platform: {
+    id: string;
+    slug: string;
+    mode: PlatformMode;
+    connectorKey?: string;
+  };
+};
+
+type SelectedMediaAsset = {
+  id: string;
+  contentId: string | null;
+  variantId: string | null;
 };
 
 @Injectable()
@@ -36,6 +56,7 @@ export class CampaignAutomationService {
     private readonly ai: AiContentService,
     private readonly campaigns: CampaignsService,
     private readonly audit: AuditService,
+    private readonly credentials?: CredentialsService,
   ) {}
 
   async automate(
@@ -58,11 +79,15 @@ export class CampaignAutomationService {
     const scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : new Date();
     if (Number.isNaN(scheduledAt.getTime())) throw new BadRequestException('scheduledAt must be a valid date');
     const publishImmediately = dto.publishImmediately ?? true;
+    const aiProvider = this.ai.resolveProvider(dto.aiProvider);
+    const mediaAssetIds = [...(dto.mediaAssetIds ?? [])].sort();
     const automationKey = stableIdempotencyKey('campaign-automation', ownerId, idempotencyKey);
     const requestHash = sha256(JSON.stringify({
       name,
       brief,
       platformAccountIds: [...dto.platformAccountIds].sort(),
+      mediaAssetIds,
+      aiProvider,
       scheduledAt: dto.scheduledAt ?? null,
       timezone,
       publishImmediately,
@@ -90,12 +115,13 @@ export class CampaignAutomationService {
     let accounts: ConnectedAccount[];
     let platformSlugs: string[];
     try {
+      await this.validateMediaAssets(ownerId, mediaAssetIds, alreadyReserved?.contentId);
       accounts = await this.loadConnectedAccounts(ownerId, dto.platformAccountIds);
       platformSlugs = [...new Set(accounts.map((account) => account.platform.slug))];
       if (platformSlugs.length > MAX_PLATFORMS_PER_AUTOMATION) {
         throw new BadRequestException(`A campaign automation supports at most ${MAX_PLATFORMS_PER_AUTOMATION} platforms`);
       }
-      await this.ai.assertReady(platformSlugs);
+      await this.ai.assertReady(platformSlugs, aiProvider);
     } catch (error) {
       await this.audit.recordBestEffort({
         actorId: ownerId,
@@ -136,11 +162,18 @@ export class CampaignAutomationService {
       entityType: 'campaigns',
       entityId: reservation.campaign.id,
       requestId,
-      after: { accountCount: accounts.length, platformCount: platformSlugs.length, resumed: !reservation.created },
+      after: {
+        accountCount: accounts.length,
+        platformCount: platformSlugs.length,
+        mediaAssetCount: mediaAssetIds.length,
+        aiProvider,
+        resumed: !reservation.created,
+      },
     });
 
     let targetsCreated = false;
     try {
+      await this.attachMediaAssets(ownerId, reservation.campaign.contentId, mediaAssetIds);
       const reusable = reservation.created
         ? []
         : await this.prisma.contentVariant.findMany({
@@ -165,7 +198,7 @@ export class CampaignAutomationService {
       }
       const variants = reusableByPlatform.size === platformSlugs.length
         ? [...reusableByPlatform.values()]
-        : await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs);
+        : await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider);
       const variantByPlatform = new Map(variants.map((variant) => [variant.platformId, variant]));
       if (variantByPlatform.size !== platformSlugs.length) {
         throw new ConflictException('AI did not generate exactly one variant for every selected platform');
@@ -231,6 +264,8 @@ export class CampaignAutomationService {
         after: {
           accountCount: accounts.length,
           generatedVariants: variants.length,
+          mediaAssetCount: mediaAssetIds.length,
+          aiProvider,
           activated: publishImmediately,
         },
       });
@@ -267,19 +302,98 @@ export class CampaignAutomationService {
         status: AccountStatus.CONNECTED,
         platform: { enabled: true },
       },
-      select: { id: true, platformId: true, platform: { select: { id: true, slug: true, mode: true } } },
+      select: {
+        id: true,
+        platformId: true,
+        settings: true,
+        credential: { select: { status: true, expiresAt: true } },
+        platform: true,
+      },
     });
     if (found.length !== accountIds.length) {
       throw new BadRequestException('Every selected account must belong to you and be enabled, connected, and ready');
     }
-    const manual = found.filter((account) => !AUTOMATIC_PLATFORM_MODES.has(account.platform.mode));
-    if (manual.length) {
+    const unsupported = found.filter((account) => !AUTOMATION_PLATFORM_MODES.has(account.platform.mode));
+    if (unsupported.length) {
       throw new BadRequestException(
-        `Automatic publishing is unavailable for: ${manual.map((account) => account.platform.slug).join(', ')}`,
+        `Automatic publishing is unavailable for: ${unsupported.map((account) => account.platform.slug).join(', ')}`,
+      );
+    }
+    const browserNotReady: string[] = [];
+    for (const account of found) {
+      if (account.platform.mode !== PlatformMode.BROWSER_ASSISTED) continue;
+      const settings = account.settings !== null
+        && typeof account.settings === 'object'
+        && !Array.isArray(account.settings)
+        ? account.settings as Record<string, unknown>
+        : {};
+      const policyReady = settings.automationPermissionAttested === true
+        && settings.browserAutoSubmit === true;
+      const credentialActive = account.credential?.status === CredentialStatus.ACTIVE
+        && (!account.credential.expiresAt || account.credential.expiresAt.getTime() > Date.now());
+      let sessionReady = false;
+      if (policyReady && credentialActive && this.credentials) {
+        try {
+          sessionReady = hasUsableBrowserStorageState(await this.credentials.resolve(account.id));
+        } catch {
+          sessionReady = false;
+        }
+      }
+      if (!policyReady || !credentialActive || !sessionReady) {
+        browserNotReady.push(account.platform.slug);
+      }
+    }
+    if (browserNotReady.length) {
+      throw new BadRequestException(
+        `Browser automation requires a captured login session, permission attestation, and auto-submit for: ${browserNotReady.join(', ')}`,
       );
     }
     const byId = new Map(found.map((account) => [account.id, account]));
     return accountIds.map((id) => byId.get(id)!);
+  }
+
+  private async validateMediaAssets(
+    ownerId: string,
+    mediaAssetIds: string[],
+    reservationContentId?: string,
+  ): Promise<void> {
+    if (!mediaAssetIds.length) return;
+    const assets = await this.prisma.mediaAsset.findMany({
+      where: { id: { in: mediaAssetIds }, ownerId },
+      select: { id: true, contentId: true, variantId: true },
+    });
+    if (assets.length !== mediaAssetIds.length) {
+      throw new BadRequestException('Every selected media asset must belong to you');
+    }
+    const unavailable = assets.some((asset: SelectedMediaAsset) => (
+      asset.variantId !== null
+      || (asset.contentId !== null && asset.contentId !== reservationContentId)
+    ));
+    if (unavailable) {
+      throw new ConflictException('Every selected media asset must be unattached');
+    }
+  }
+
+  private async attachMediaAssets(
+    ownerId: string,
+    contentId: string,
+    mediaAssetIds: string[],
+  ): Promise<void> {
+    if (!mediaAssetIds.length) return;
+    await this.prisma.$transaction(async (transaction) => {
+      const attached = await transaction.mediaAsset.updateMany({
+        where: {
+          id: { in: mediaAssetIds },
+          ownerId,
+          variantId: null,
+          OR: [{ contentId: null }, { contentId }],
+        },
+        data: { contentId },
+      });
+      if (attached.count !== mediaAssetIds.length) {
+        throw new ConflictException('One or more selected media assets are no longer available');
+      }
+    });
   }
 
   private async findOrCreateReservation(input: {

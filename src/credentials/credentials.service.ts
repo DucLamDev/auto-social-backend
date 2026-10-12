@@ -43,9 +43,83 @@ export class CredentialsService {
   async resolve(platformAccountId: string): Promise<Record<string, unknown>> {
     const credential = await this.prisma.platformCredential.findUniqueOrThrow({
       where: { platformAccountId },
-      select: { encryptedPayload: true },
+      select: { encryptedPayload: true, status: true, expiresAt: true },
     });
+    if (
+      credential.status !== CredentialStatus.ACTIVE
+      || (credential.expiresAt && credential.expiresAt.getTime() <= Date.now())
+    ) {
+      throw new ApplicationException(
+        ErrorCode.PLATFORM_TOKEN_EXPIRED,
+        'Stored platform credential is revoked or expired; reconnect the account',
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
     return this.encryption.decrypt(credential.encryptedPayload);
+  }
+
+  /**
+   * Atomically merges refreshed secret material without replacing unrelated
+   * credential fields. The optimistic compare prevents a browser worker from
+   * overwriting a credential update performed by another API/worker replica.
+   */
+  async merge(platformAccountId: string, patch: Record<string, unknown>): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const current = await this.prisma.platformCredential.findUnique({
+        where: { platformAccountId },
+        select: { encryptedPayload: true, updatedAt: true },
+      });
+      if (!current) {
+        try {
+          await this.prisma.platformCredential.create({
+            data: {
+              platformAccountId,
+              encryptedPayload: this.encryption.encrypt(patch),
+              keyVersion: this.encryption.keyVersion,
+              status: CredentialStatus.ACTIVE,
+            },
+          });
+          return;
+        } catch (error) {
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') continue;
+          throw error;
+        }
+      }
+      const payload = { ...this.encryption.decrypt(current.encryptedPayload), ...patch };
+      const encryptedPayload = this.encryption.encrypt(payload);
+      const updated = await this.prisma.platformCredential.updateMany({
+        where: { platformAccountId, updatedAt: current.updatedAt },
+        data: {
+          encryptedPayload,
+          keyVersion: this.encryption.keyVersion,
+          status: CredentialStatus.ACTIVE,
+          expiresAt: null,
+        },
+      });
+      if (updated.count === 1) return;
+    }
+    throw new Error('Credential changed concurrently; browser state was not saved');
+  }
+
+  /**
+   * Cryptographically replaces the stored secret payload and marks it revoked.
+   * Keeping the row lets a later browser login capture reactivate it through
+   * merge(), without retaining the old storageState or accepting passwords.
+   */
+  async revoke(
+    platformAccountId: string,
+    transaction?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const client = transaction ?? this.prisma;
+    await client.platformCredential.updateMany({
+      where: { platformAccountId },
+      data: {
+        encryptedPayload: this.encryption.encrypt({}),
+        keyVersion: this.encryption.keyVersion,
+        status: CredentialStatus.REVOKED,
+        expiresAt: null,
+      },
+    });
   }
 
   async upsertOAuthTokens(input: {

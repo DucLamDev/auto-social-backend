@@ -23,7 +23,7 @@ async function bootstrap(): Promise<void> {
     origin: (process.env.FRONTEND_URL ?? 'http://localhost:3000').split(',').map((value) => value.trim()),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['authorization', 'content-type', 'x-request-id'],
+    allowedHeaders: ['authorization', 'content-type', 'x-request-id', 'idempotency-key'],
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.useGlobalInterceptors(new RequestContextInterceptor(), new ApiResponseInterceptor());

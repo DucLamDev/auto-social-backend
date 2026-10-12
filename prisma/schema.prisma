@@ -122,23 +122,23 @@ enum OAuthStateStatus {
 }
 
 model User {
-  id              String                @id @default(uuid()) @db.Uuid
-  email           String                @unique
-  passwordHash    String
-  displayName     String
-  enabled         Boolean               @default(true)
-  lastLoginAt     DateTime?
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
-  roles           UserRole[]
-  refreshSessions RefreshTokenSession[]
-  sources         ContentSource[]
-  contents        Content[]
-  campaigns       Campaign[]
-  media           MediaAsset[]
+  id               String                @id @default(uuid()) @db.Uuid
+  email            String                @unique
+  passwordHash     String
+  displayName      String
+  enabled          Boolean               @default(true)
+  lastLoginAt      DateTime?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  roles            UserRole[]
+  refreshSessions  RefreshTokenSession[]
+  sources          ContentSource[]
+  contents         Content[]
+  campaigns        Campaign[]
+  media            MediaAsset[]
   platformAccounts PlatformAccount[]
-  auditLogs       AuditLog[]            @relation("AuditActor")
-  oauthStates     OAuthState[]
+  auditLogs        AuditLog[]            @relation("AuditActor")
+  oauthStates      OAuthState[]
 
   @@map("users")
 }
@@ -163,76 +163,81 @@ model UserRole {
 }
 
 model RefreshTokenSession {
-  id         String    @id @default(uuid()) @db.Uuid
-  userId     String    @db.Uuid
-  tokenHash  String    @unique
-  expiresAt  DateTime
-  revokedAt  DateTime?
-  userAgent  String?
-  ipAddress  String?
-  createdAt  DateTime  @default(now())
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ipAddress String?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
   @@map("refresh_token_sessions")
 }
 
 model Platform {
-  id           String                    @id @default(uuid()) @db.Uuid
-  slug         String                    @unique
-  name         String
-  mode         PlatformMode
-  availability PlatformAvailability
-  docsUrl      String?
-  enabled      Boolean                   @default(false)
-  createdAt    DateTime                  @default(now())
-  updatedAt    DateTime                  @updatedAt
-  capability   PlatformCapability?
-  accounts     PlatformAccount[]
-  variants     ContentVariant[]
-  prompts      PromptTemplate[]
+  id              String               @id @default(uuid()) @db.Uuid
+  slug            String               @unique
+  name            String
+  connectorKey    String               @default("manual")
+  groupKey        String               @default("COMMUNITY")
+  defaultSettings Json                 @default("{}")
+  mode            PlatformMode
+  availability    PlatformAvailability
+  docsUrl         String?
+  enabled         Boolean              @default(false)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  capability      PlatformCapability?
+  accounts        PlatformAccount[]
+  variants        ContentVariant[]
+  prompts         PromptTemplate[]
 
+  @@index([groupKey, enabled])
+  @@index([connectorKey])
   @@map("platforms")
 }
 
 model PlatformCapability {
-  id        String   @id @default(uuid()) @db.Uuid
-  platformId String  @unique @db.Uuid
-  text      Boolean  @default(true)
-  image     Boolean  @default(false)
-  video     Boolean  @default(false)
-  article   Boolean  @default(false)
-  delete    Boolean  @default(false)
-  schedule  Boolean  @default(false)
-  analytics Boolean  @default(false)
-  maxText   Int?
-  maxImages Int?
-  metadata  Json     @default("{}")
-  platform  Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  id         String   @id @default(uuid()) @db.Uuid
+  platformId String   @unique @db.Uuid
+  text       Boolean  @default(true)
+  image      Boolean  @default(false)
+  video      Boolean  @default(false)
+  article    Boolean  @default(false)
+  delete     Boolean  @default(false)
+  schedule   Boolean  @default(false)
+  analytics  Boolean  @default(false)
+  maxText    Int?
+  maxImages  Int?
+  metadata   Json     @default("{}")
+  platform   Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
 
   @@map("platform_capabilities")
 }
 
 model PlatformAccount {
-  id             String              @id @default(uuid()) @db.Uuid
-  ownerId        String              @db.Uuid
-  platformId     String              @db.Uuid
-  name           String
-  username       String?
-  externalId     String?
-  settings       Json                @default("{}")
-  enabled        Boolean             @default(true)
-  status         AccountStatus       @default(RECONNECT_REQUIRED)
-  lastTestedAt   DateTime?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  platform       Platform            @relation(fields: [platformId], references: [id], onDelete: Restrict)
-  owner          User                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  credential     PlatformCredential?
-  oauthToken     OAuthToken?
+  id              String              @id @default(uuid()) @db.Uuid
+  ownerId         String              @db.Uuid
+  platformId      String              @db.Uuid
+  name            String
+  username        String?
+  externalId      String?
+  settings        Json                @default("{}")
+  enabled         Boolean             @default(true)
+  status          AccountStatus       @default(RECONNECT_REQUIRED)
+  lastTestedAt    DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  platform        Platform            @relation(fields: [platformId], references: [id], onDelete: Restrict)
+  owner           User                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  credential      PlatformCredential?
+  oauthToken      OAuthToken?
   campaignTargets CampaignTarget[]
-  publishJobs    PublishJob[]
-  publishedPosts PublishedPost[]
+  publishJobs     PublishJob[]
+  publishedPosts  PublishedPost[]
 
   @@unique([platformId, externalId])
   @@index([platformId, enabled, status])
@@ -241,15 +246,15 @@ model PlatformAccount {
 }
 
 model PlatformCredential {
-  id               String           @id @default(uuid()) @db.Uuid
-  platformAccountId String          @unique @db.Uuid
-  encryptedPayload String
-  keyVersion       String
-  status           CredentialStatus @default(ACTIVE)
-  expiresAt        DateTime?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  account          PlatformAccount  @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
+  id                String           @id @default(uuid()) @db.Uuid
+  platformAccountId String           @unique @db.Uuid
+  encryptedPayload  String
+  keyVersion        String
+  status            CredentialStatus @default(ACTIVE)
+  expiresAt         DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  account           PlatformAccount  @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
 
   @@map("platform_credentials")
 }
@@ -270,19 +275,19 @@ model OAuthToken {
 }
 
 model ContentSource {
-  id          String          @id @default(uuid()) @db.Uuid
-  ownerId     String          @db.Uuid
-  name        String
-  type        SourceType
-  url         String?
-  config      Json            @default("{}")
-  enabled     Boolean         @default(true)
+  id            String          @id @default(uuid()) @db.Uuid
+  ownerId       String          @db.Uuid
+  name          String
+  type          SourceType
+  url           String?
+  config        Json            @default("{}")
+  enabled       Boolean         @default(true)
   lastFetchedAt DateTime?
-  nextFetchAt DateTime?
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  owner       User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  articles    SourceArticle[]
+  nextFetchAt   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  owner         User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  articles      SourceArticle[]
 
   @@index([ownerId, enabled])
   @@map("content_sources")
@@ -341,25 +346,25 @@ model Content {
 }
 
 model ContentVariant {
-  id          String        @id @default(uuid()) @db.Uuid
-  contentId   String        @db.Uuid
-  platformId  String        @db.Uuid
-  title       String?
-  body        String
-  summary     String?
-  hashtags    String[]
-  cta         String?
-  recommended Boolean       @default(true)
-  reason      String?
+  id                  String           @id @default(uuid()) @db.Uuid
+  contentId           String           @db.Uuid
+  platformId          String           @db.Uuid
+  title               String?
+  body                String
+  summary             String?
+  hashtags            String[]
+  cta                 String?
+  recommended         Boolean          @default(true)
+  reason              String?
   mediaRecommendation Json?
-  status      VariantStatus @default(GENERATED)
-  version     Int           @default(1)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  content     Content       @relation(fields: [contentId], references: [id], onDelete: Cascade)
-  platform    Platform      @relation(fields: [platformId], references: [id], onDelete: Restrict)
-  media       MediaAsset[]
-  targets     CampaignTarget[]
+  status              VariantStatus    @default(GENERATED)
+  version             Int              @default(1)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  content             Content          @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  platform            Platform         @relation(fields: [platformId], references: [id], onDelete: Restrict)
+  media               MediaAsset[]
+  targets             CampaignTarget[]
 
   @@unique([contentId, platformId, version])
   @@index([contentId, status])
@@ -367,24 +372,24 @@ model ContentVariant {
 }
 
 model MediaAsset {
-  id          String          @id @default(uuid()) @db.Uuid
-  ownerId     String          @db.Uuid
-  contentId   String?         @db.Uuid
-  variantId   String?         @db.Uuid
-  type        MediaType
-  storageKey  String          @unique
-  publicUrl   String?
-  mimeType    String
-  sizeBytes   BigInt
-  width       Int?
-  height      Int?
-  durationMs  Int?
-  checksum    String
-  metadata    Json            @default("{}")
-  createdAt   DateTime        @default(now())
-  owner       User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  content     Content?        @relation(fields: [contentId], references: [id], onDelete: Cascade)
-  variant     ContentVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  id         String          @id @default(uuid()) @db.Uuid
+  ownerId    String          @db.Uuid
+  contentId  String?         @db.Uuid
+  variantId  String?         @db.Uuid
+  type       MediaType
+  storageKey String          @unique
+  publicUrl  String?
+  mimeType   String
+  sizeBytes  BigInt
+  width      Int?
+  height     Int?
+  durationMs Int?
+  checksum   String
+  metadata   Json            @default("{}")
+  createdAt  DateTime        @default(now())
+  owner      User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  content    Content?        @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  variant    ContentVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@map("media_assets")
 }
@@ -424,8 +429,8 @@ model Campaign {
   content               Content          @relation(fields: [contentId], references: [id], onDelete: Restrict)
   targets               CampaignTarget[]
 
-  @@index([status, scheduledAt])
   @@unique([ownerId, automationKey])
+  @@index([status, scheduledAt])
   @@map("campaigns")
 }
 
@@ -471,17 +476,17 @@ model PublishJob {
 }
 
 model PublishAttempt {
-  id             String        @id @default(uuid()) @db.Uuid
-  publishJobId   String        @db.Uuid
-  attemptNumber  Int
-  status         AttemptStatus
-  requestMetadata Json?
+  id               String        @id @default(uuid()) @db.Uuid
+  publishJobId     String        @db.Uuid
+  attemptNumber    Int
+  status           AttemptStatus
+  requestMetadata  Json?
   responseMetadata Json?
-  errorCode      String?
-  errorMessage   String?
-  startedAt      DateTime      @default(now())
-  finishedAt     DateTime?
-  job            PublishJob    @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
+  errorCode        String?
+  errorMessage     String?
+  startedAt        DateTime      @default(now())
+  finishedAt       DateTime?
+  job              PublishJob    @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
 
   @@unique([publishJobId, attemptNumber])
   @@map("publish_attempts")
@@ -504,17 +509,17 @@ model PublishedPost {
 }
 
 model AuditLog {
-  id          String    @id @default(uuid()) @db.Uuid
-  actorId     String?   @db.Uuid
-  action      String
-  entityType  String
-  entityId    String?
-  requestId   String?
-  ipAddress   String?
-  before      Json?
-  after       Json?
-  createdAt   DateTime  @default(now())
-  actor       User?     @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid
+  action     String
+  entityType String
+  entityId   String?
+  requestId  String?
+  ipAddress  String?
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([entityType, entityId])
   @@index([createdAt])

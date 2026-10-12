@@ -40,6 +40,6 @@ export class ContentsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: GenerateContentDto,
   ) {
-    return this.ai.generate(user.id, id, dto.platforms);
+    return this.ai.generate(user.id, id, dto.platforms, dto.aiProvider);
   }
 }

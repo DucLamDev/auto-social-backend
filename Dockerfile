@@ -19,6 +19,7 @@ RUN pnpm prune --prod
 
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 RUN apt-get update \
@@ -32,8 +33,14 @@ ENV COREPACK_ENABLE_NETWORK=0
 WORKDIR /app
 COPY --from=build /app/package.json /app/pnpm-lock.yaml ./
 COPY --from=build /app/node_modules ./node_modules
+RUN node node_modules/playwright/cli.js install --with-deps chromium \
+    && chmod -R a+rX /ms-playwright
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
+# The production seed imports the canonical platform catalog from src. Keep
+# that small source tree available so `pnpm prisma:seed` works inside the API
+# container after migrations without duplicating catalog data.
+COPY --from=build /app/src ./src
 USER node
 EXPOSE 3001
 CMD ["node", "dist/main.js"]

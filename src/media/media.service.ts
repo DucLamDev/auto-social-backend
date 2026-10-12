@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { ListMediaQueryDto } from './dto/list-media-query.dto';
+import { MEDIA_ALT_TEXT_MAX_LENGTH } from './dto/upload-media.dto';
 import { paginatedData } from '../common/interceptors/api-response.interceptor';
 
 const MEDIA_FORMATS = new Map<string, { type: MediaType; extension: string; signature: (body: Buffer) => boolean }>([
@@ -19,12 +20,22 @@ const MEDIA_FORMATS = new Map<string, { type: MediaType; extension: string; sign
 export class MediaService {
   constructor(private readonly prisma: PrismaService, private readonly storage: StorageService) {}
 
-  async upload(ownerId: string, file: Express.Multer.File, contentId?: string, variantId?: string) {
+  async upload(
+    ownerId: string,
+    file: Express.Multer.File,
+    contentId?: string,
+    variantId?: string,
+    altText?: string,
+  ) {
     const mimeType = file.mimetype.toLowerCase();
     const format = MEDIA_FORMATS.get(mimeType);
     if (!format) throw new BadRequestException('Unsupported media type');
     if (file.size > 50 * 1024 * 1024) throw new BadRequestException('Media exceeds 50 MiB');
     if (!format.signature(file.buffer)) throw new BadRequestException('Media bytes do not match the declared MIME type');
+    const normalizedAltText = altText?.trim();
+    if (normalizedAltText && normalizedAltText.length > MEDIA_ALT_TEXT_MAX_LENGTH) {
+      throw new BadRequestException(`Media alt text exceeds ${MEDIA_ALT_TEXT_MAX_LENGTH} characters`);
+    }
     if (contentId) {
       const content = await this.prisma.content.findFirstOrThrow({
         where: { id: contentId, ownerId },
@@ -47,7 +58,18 @@ export class MediaService {
     const storageKey = `media/${new Date().toISOString().slice(0, 10)}/${randomUUID()}${format.extension}`;
     const publicUrl = await this.storage.put(storageKey, file.buffer, mimeType);
     return this.prisma.mediaAsset.create({
-      data: { ownerId, contentId, variantId, type: format.type, storageKey, publicUrl, mimeType, sizeBytes: BigInt(file.size), checksum },
+      data: {
+        ownerId,
+        contentId,
+        variantId,
+        type: format.type,
+        storageKey,
+        publicUrl,
+        mimeType,
+        sizeBytes: BigInt(file.size),
+        checksum,
+        ...(normalizedAltText ? { metadata: { altText: normalizedAltText } } : {}),
+      },
     });
   }
 

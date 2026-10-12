@@ -39,6 +39,21 @@ export class RedisService implements OnModuleDestroy {
     return result === 1;
   }
 
+  async extendLock(key: string, token: string, ttlMs: number): Promise<boolean> {
+    if (!Number.isSafeInteger(ttlMs) || ttlMs < 1) {
+      throw new Error('Redis lock TTL must be a positive integer');
+    }
+    if (!this.client) return true;
+    const result = await this.client.eval(
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end",
+      1,
+      key,
+      token,
+      ttlMs,
+    );
+    return result === 1;
+  }
+
   async consumeRateLimit(key: string, limit: number, windowSeconds: number): Promise<{ allowed: boolean; remaining: number }> {
     if (!this.client) return { allowed: true, remaining: limit - 1 };
     await this.connect();

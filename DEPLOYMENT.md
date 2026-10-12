@@ -175,7 +175,7 @@ Các key hiện có trong `.env.example`:
 | Auth | `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL` | Baseline template `15m`/`30d`; cân nhắc chính sách phiên |
 | Encryption | `CREDENTIAL_ENCRYPTION_KEY` | Base64 của đúng 32 random bytes |
 | Encryption | `CREDENTIAL_ENCRYPTION_KEY_VERSION` | Bắt đầu `v1`; dùng cho migration/rotation |
-| AI | `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_TIMEOUT_MS` | Server-side only; model phải được account cấp quyền |
+| AI | `OPENAI_*`, `DEEPSEEK_*`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `AI_TIMEOUT_MS` | Server-side only; model phải được account cấp quyền |
 | Storage | `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_FORCE_PATH_STYLE` | MinIO nội bộ hoặc S3-compatible production; user/bucket riêng |
 | Storage | `S3_PUBLIC_URL` | Public HTTPS origin **đã gồm bucket/prefix**, ví dụ `https://media.example.com/social-publisher`; provider phải tải được từ Internet |
 | OAuth future | `META_APP_ID`, `META_APP_SECRET`, `META_GRAPH_API_VERSION` | Placeholder cho OAuth Meta tương lai; source release hiện **không đọc** các key này, điền giá trị không bật được Instagram/Threads OAuth |

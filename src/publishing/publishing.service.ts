@@ -1,22 +1,44 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AccountStatus, AttemptStatus, MediaType, Prisma, PublishJobStatus, VariantStatus } from '@prisma/client';
+import {
+  AccountStatus,
+  AttemptStatus,
+  MediaType,
+  PlatformMode,
+  Prisma,
+  PublishJobStatus,
+  VariantStatus,
+} from '@prisma/client';
 import { ConnectorAccountsService } from '../connectors/connector-accounts.service';
+import { hasUsableBrowserStorageState } from '../connectors/browser/browser-session-readiness';
+import { ConnectorCapability } from '../connectors/core/connector-capability';
 import { ConnectorError } from '../connectors/core/connector-error';
 import { ConnectorRegistryService } from '../connectors/core/connector-registry.service';
-import { PostMedia, PostPayload, PublishResult } from '../connectors/core/connector.types';
+import {
+  POST_MEDIA_MANAGED_STORAGE,
+  PostMedia,
+  PostPayload,
+  PublishResult,
+} from '../connectors/core/connector.types';
 import { ErrorCode } from '../common/exceptions/application.exception';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
 import { PrismaService } from '../database/prisma.service';
 import { RedisService } from '../queue/redis.service';
+import { RedisLockLease } from '../queue/redis-lock-lease';
 import { DeadLetterDeliveryError } from '../queue/queue.types';
 import { sha256 } from '../common/utils/crypto.utils';
-import { WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
+import {
+  STALE_DELIVERY_AFTER_MS,
+  WORKER_CRASH_UNCERTAIN_RESULT_CODE,
+} from './publishing.constants';
 
 const RETRY_DELAYS_SECONDS = [30, 120, 600] as const;
 const FINGERPRINT_LOCK_TTL_MS = 10 * 60_000;
+const PUBLISH_LOCK_TTL_MS = 120_000;
 const UNCERTAIN_RESULT_ERROR_CODE = 'PUBLISH_RESULT_UNCERTAIN';
-const UNCERTAIN_RESULT_MESSAGE = 'A previous delivery may have reached the platform; verify it before publishing again';
-const PERSISTENCE_RECOVERY_MESSAGE = 'The platform accepted the publish, but its result could not be saved normally; verify it before publishing again';
+const UNCERTAIN_RESULT_MESSAGE =
+  'A previous delivery may have reached the platform; verify it before publishing again';
+const PERSISTENCE_RECOVERY_MESSAGE =
+  'The platform accepted the publish, but its result could not be saved normally; verify it before publishing again';
 const UNRESOLVED_DUPLICATE_STATUSES: PublishJobStatus[] = [
   PublishJobStatus.PUBLISHING,
   PublishJobStatus.PROCESSING,
@@ -42,6 +64,16 @@ interface PublishMediaAsset {
   type: MediaType;
   publicUrl: string | null;
   mimeType: string;
+  storageKey?: string;
+  checksum?: string;
+  sizeBytes?: bigint | number;
+  metadata?: unknown;
+}
+
+function stringMetadata(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : undefined;
 }
 
 export function collectPublishMedia(
@@ -55,11 +87,87 @@ export function collectPublishMedia(
       seen.add(asset.id);
       return true;
     })
-    .map((asset) => ({
-      type: asset.type.toLowerCase() as PostMedia['type'],
-      url: asset.publicUrl!,
-      mimeType: asset.mimeType,
-    }));
+    .map((asset) => {
+      const media: PostMedia = {
+        type: asset.type.toLowerCase() as PostMedia['type'],
+        url: asset.publicUrl!,
+        mimeType: asset.mimeType,
+        ...(stringMetadata(asset.metadata, 'altText')
+          ? { altText: stringMetadata(asset.metadata, 'altText') }
+          : {}),
+      };
+      if (
+        asset.storageKey &&
+        asset.checksum &&
+        asset.sizeBytes !== undefined &&
+        Number.isSafeInteger(Number(asset.sizeBytes))
+      ) {
+        Object.defineProperty(media, POST_MEDIA_MANAGED_STORAGE, {
+          enumerable: false,
+          configurable: false,
+          writable: false,
+          value: {
+            storageKey: asset.storageKey,
+            checksum: asset.checksum,
+            sizeBytes: Number(asset.sizeBytes),
+          },
+        });
+      }
+      return media;
+    });
+}
+
+export function filterPublishMediaForConnector(
+  media: readonly PostMedia[],
+  capability: ConnectorCapability | undefined,
+  mode: PlatformMode | undefined,
+): PostMedia[] {
+  if (mode === PlatformMode.MANUAL) return [...media];
+  let imageCount = 0;
+  return media.filter((asset) => {
+    if (asset.type === 'image') {
+      if (!capability?.image) return false;
+      imageCount += 1;
+      return capability.maxImages === undefined || imageCount <= capability.maxImages;
+    }
+    if (asset.type === 'video') return capability?.video === true;
+    return false;
+  });
+}
+
+export function effectiveConnectorCapability(
+  connector: ConnectorCapability,
+  platformValue: unknown,
+): ConnectorCapability {
+  if (!platformValue || typeof platformValue !== 'object' || Array.isArray(platformValue)) {
+    return connector;
+  }
+  const platform = platformValue as Record<string, unknown>;
+  const flag = (key: keyof ConnectorCapability): boolean =>
+    connector[key] === true && platform[key] === true;
+  const limit = (key: 'maxText' | 'maxImages'): number | undefined => {
+    const connectorLimit = connector[key];
+    const platformLimit = platform[key];
+    const normalizedPlatform = typeof platformLimit === 'number'
+      && Number.isSafeInteger(platformLimit)
+      && platformLimit > 0
+      ? platformLimit
+      : undefined;
+    if (connectorLimit === undefined) return normalizedPlatform;
+    if (normalizedPlatform === undefined) return connectorLimit;
+    return Math.min(connectorLimit, normalizedPlatform);
+  };
+  return {
+    text: flag('text'),
+    image: flag('image'),
+    video: flag('video'),
+    article: flag('article'),
+    delete: flag('delete'),
+    schedule: flag('schedule'),
+    analytics: flag('analytics'),
+    ...(limit('maxText') ? { maxText: limit('maxText') } : {}),
+    ...(limit('maxImages') ? { maxImages: limit('maxImages') } : {}),
+  };
 }
 
 export function assertPublishAccountReady(account: {
@@ -68,13 +176,61 @@ export function assertPublishAccountReady(account: {
   platform: { enabled: boolean };
 }): void {
   if (!account.platform.enabled) {
-    throw new ConnectorError(ErrorCode.CONNECTOR_NEEDS_ACTION, 'Platform is disabled by an administrator', false);
+    throw new ConnectorError(
+      ErrorCode.CONNECTOR_NEEDS_ACTION,
+      'Platform is disabled by an administrator',
+      false,
+    );
   }
   if (!account.enabled || account.status === AccountStatus.DISABLED) {
-    throw new ConnectorError(ErrorCode.CONNECTOR_NEEDS_ACTION, 'Platform account is disabled', false);
+    throw new ConnectorError(
+      ErrorCode.CONNECTOR_NEEDS_ACTION,
+      'Platform account is disabled',
+      false,
+    );
   }
   if (account.status !== AccountStatus.CONNECTED) {
-    throw new ConnectorError(ErrorCode.PLATFORM_AUTH_FAILED, 'Platform account is not connected and ready to publish', false);
+    throw new ConnectorError(
+      ErrorCode.PLATFORM_AUTH_FAILED,
+      'Platform account is not connected and ready to publish',
+      false,
+    );
+  }
+}
+
+export function assertFreshPublishAuthorization(loaded: {
+  enabled: boolean;
+  status: AccountStatus;
+  platformEnabled: boolean;
+  platformMode: PlatformMode;
+  account: { settings: Record<string, unknown>; credentials: Record<string, unknown> };
+}): void {
+  assertPublishAccountReady({
+    enabled: loaded.enabled,
+    status: loaded.status,
+    platform: { enabled: loaded.platformEnabled },
+  });
+  if (loaded.platformMode !== PlatformMode.BROWSER_ASSISTED) return;
+  if (!hasUsableBrowserStorageState(loaded.account.credentials)) {
+    throw new ConnectorError(
+      ErrorCode.PLATFORM_AUTH_FAILED,
+      'Browser login session is missing or revoked; reconnect the account',
+      false,
+    );
+  }
+  if (loaded.account.settings.automationPermissionAttested !== true) {
+    throw new ConnectorError(
+      ErrorCode.CONNECTOR_NEEDS_ACTION,
+      'Browser automation permission must be attested before publishing',
+      false,
+    );
+  }
+  if (loaded.account.settings.browserAutoSubmit !== true) {
+    throw new ConnectorError(
+      ErrorCode.CONNECTOR_NEEDS_ACTION,
+      'Browser auto-submit must be enabled for automatic publishing',
+      false,
+    );
   }
 }
 
@@ -92,19 +248,51 @@ export class PublishingService {
 
   async process(jobId: string): Promise<void> {
     const lockKey = `lock:publish:${jobId}`;
-    const lock = await this.redis.acquireLock(lockKey, 120_000);
+    const lock = await this.redis.acquireLock(lockKey, PUBLISH_LOCK_TTL_MS);
     if (!lock) return;
-    try { await this.processLocked(jobId); }
-    finally { await this.redis.releaseLock(lockKey, lock); }
+    const lease = new RedisLockLease(
+      this.redis,
+      lockKey,
+      lock,
+      PUBLISH_LOCK_TTL_MS,
+      {
+        onRenewed: async () => {
+          await this.prisma.publishJob.updateMany({
+            where: { id: jobId, status: PublishJobStatus.PUBLISHING },
+            data: { lockedAt: new Date() },
+          });
+        },
+        onLost: () => {
+          this.logger.error(JSON.stringify({
+            jobId,
+            event: 'PUBLISH_LOCK_LEASE_LOST',
+          }));
+        },
+        onCallbackError: (error) => {
+          this.logger.warn(JSON.stringify({
+            jobId,
+            event: 'PUBLISH_LOCK_LEASE_RENEWAL_ERROR',
+            errorType: error instanceof Error ? error.name : 'UnknownError',
+          }));
+        },
+      },
+    );
+    lease.start();
+    try {
+      await this.processLocked(jobId, lease);
+    } finally {
+      await lease.stop();
+      await this.redis.releaseLock(lockKey, lock);
+    }
   }
 
-  private async processLocked(jobId: string): Promise<void> {
+  private async processLocked(jobId: string, lease: RedisLockLease): Promise<void> {
     const job = await this.prisma.publishJob.findUniqueOrThrow({
       where: { id: jobId },
       include: {
         publishedPost: true,
         attempts: { orderBy: { attemptNumber: 'desc' }, take: 1 },
-        platformAccount: { include: { platform: true } },
+        platformAccount: { include: { platform: { include: { capability: true } } } },
         target: {
           include: {
             contentVariant: { include: { content: { include: { media: true } }, media: true } },
@@ -118,6 +306,14 @@ export class PublishingService {
       return;
     }
     if (job.status === PublishJobStatus.PUBLISHING) {
+      if (
+        job.lockedAt
+        && job.lockedAt.getTime() > Date.now() - STALE_DELIVERY_AFTER_MS
+      ) {
+        // A duplicated/redelivered queue message must not reconcile an active
+        // owner merely because it acquired Redis during a transient lease gap.
+        return;
+      }
       await this.reconcileInFlightDelivery(job.id);
       await this.campaignStatus.refresh(job.target.campaignId);
       return;
@@ -141,7 +337,8 @@ export class PublishingService {
             status: PublishJobStatus.RETRY,
             nextAttemptAt: new Date(Date.now() + 30_000),
             lastErrorCode: ErrorCode.PUBLISH_DUPLICATED,
-            lastErrorMessage: 'A matching publish is already in progress; duplicate check will retry',
+            lastErrorMessage:
+              'A matching publish is already in progress; duplicate check will retry',
           },
         });
         return;
@@ -149,97 +346,210 @@ export class PublishingService {
       fingerprintLock = { key, token };
     }
     try {
-    if (overrides.allowDuplicate !== true) {
-      const duplicate = await this.prisma.publishedPost.findFirst({
-        where: {
-          platformAccountId: job.platformAccountId,
-          job: { target: { contentVariant: { content: { contentHash: job.target.contentVariant.content.contentHash } } } },
-        },
-        select: { id: true },
-      });
-      const pendingDuplicate = duplicate ? null : await this.prisma.publishJob.findFirst({
-        where: {
-          id: { not: job.id },
-          platformAccountId: job.platformAccountId,
-          OR: [
-            { status: { in: UNRESOLVED_DUPLICATE_STATUSES } },
-            {
-              status: PublishJobStatus.POSSIBLE_DUPLICATE,
-              lastErrorCode: WORKER_CRASH_UNCERTAIN_RESULT_CODE,
+      if (overrides.allowDuplicate !== true) {
+        const duplicate = await this.prisma.publishedPost.findFirst({
+          where: {
+            platformAccountId: job.platformAccountId,
+            job: {
+              target: {
+                contentVariant: {
+                  content: { contentHash: job.target.contentVariant.content.contentHash },
+                },
+              },
             },
-          ],
-          target: { contentVariant: { content: { contentHash: job.target.contentVariant.content.contentHash } } },
-        },
-        select: { id: true },
-      });
-      if (duplicate || pendingDuplicate) {
-        await this.prisma.publishJob.update({ where: { id: job.id }, data: { status: PublishJobStatus.POSSIBLE_DUPLICATE, lastErrorCode: ErrorCode.PUBLISH_DUPLICATED, lastErrorMessage: 'Matching content was already published or still needs reconciliation for this account' } });
-        await this.campaignStatus.refresh(job.target.campaignId);
+          },
+          select: { id: true },
+        });
+        const pendingDuplicate = duplicate
+          ? null
+          : await this.prisma.publishJob.findFirst({
+              where: {
+                id: { not: job.id },
+                platformAccountId: job.platformAccountId,
+                OR: [
+                  { status: { in: UNRESOLVED_DUPLICATE_STATUSES } },
+                  {
+                    status: PublishJobStatus.POSSIBLE_DUPLICATE,
+                    lastErrorCode: WORKER_CRASH_UNCERTAIN_RESULT_CODE,
+                  },
+                ],
+                target: {
+                  contentVariant: {
+                    content: { contentHash: job.target.contentVariant.content.contentHash },
+                  },
+                },
+              },
+              select: { id: true },
+            });
+        if (duplicate || pendingDuplicate) {
+          await this.prisma.publishJob.update({
+            where: { id: job.id },
+            data: {
+              status: PublishJobStatus.POSSIBLE_DUPLICATE,
+              lastErrorCode: ErrorCode.PUBLISH_DUPLICATED,
+              lastErrorMessage:
+                'Matching content was already published or still needs reconciliation for this account',
+            },
+          });
+          await this.campaignStatus.refresh(job.target.campaignId);
+          return;
+        }
+      }
+      const platform = job.platformAccount.platform.slug;
+      const rate = await this.redis.consumeRateLimit(
+        `rate_limit:${platform}:${job.platformAccountId}`,
+        this.numberSetting(job.platformAccount.settings, 'rateLimit', 10),
+        this.numberSetting(job.platformAccount.settings, 'rateWindowSeconds', 60),
+      );
+      if (!rate.allowed) {
+        await this.prisma.publishJob.update({
+          where: { id: job.id },
+          data: {
+            status: PublishJobStatus.RETRY,
+            nextAttemptAt: new Date(Date.now() + 60_000),
+            lastErrorCode: ErrorCode.PLATFORM_RATE_LIMITED,
+            lastErrorMessage: 'Local per-account rate limit reached',
+          },
+        });
         return;
       }
-    }
-    const platform = job.platformAccount.platform.slug;
-    const rate = await this.redis.consumeRateLimit(`rate_limit:${platform}:${job.platformAccountId}`, this.numberSetting(job.platformAccount.settings, 'rateLimit', 10), this.numberSetting(job.platformAccount.settings, 'rateWindowSeconds', 60));
-    if (!rate.allowed) {
-      await this.prisma.publishJob.update({ where: { id: job.id }, data: { status: PublishJobStatus.RETRY, nextAttemptAt: new Date(Date.now() + 60_000), lastErrorCode: ErrorCode.PLATFORM_RATE_LIMITED, lastErrorMessage: 'Local per-account rate limit reached' } });
-      return;
-    }
-    const attemptNumber = job.attemptCount + 1;
-    const attempt = await this.prisma.$transaction(async (transaction) => {
-      await transaction.publishJob.update({ where: { id: job.id }, data: { status: PublishJobStatus.PUBLISHING, lockedAt: new Date(), attemptCount: attemptNumber } });
-      return transaction.publishAttempt.create({ data: { publishJobId: job.id, attemptNumber, status: AttemptStatus.STARTED, requestMetadata: { platform, idempotencyKey: job.idempotencyKey } } });
-    });
-    let deadLetter = false;
-    let connectorReturnedResult = false;
-    try {
-      assertPublishAccountReady(job.platformAccount);
-      const { account } = await this.connectorAccounts.load(job.platformAccountId);
-      const connector = this.registry.get(platform);
-      const variant = job.target.contentVariant;
-      assertVariantApproved(variant.status);
-      const payload: PostPayload = {
-        title: variant.title ?? undefined,
-        body: variant.body,
-        summary: variant.summary ?? undefined,
-        hashtags: variant.hashtags,
-        canonicalUrl: variant.content.canonicalUrl ?? undefined,
-        media: collectPublishMedia(variant.content.media, variant.media),
-        idempotencyKey: job.idempotencyKey,
-      };
-      await connector.validate(payload);
-      const result = await connector.publish(account, payload);
-      connectorReturnedResult = true;
+      const attemptNumber = job.attemptCount + 1;
+      let attempt: { id: string };
       try {
-        await this.persistPublishResult(job.id, job.platformAccountId, attempt.id, result);
-      } catch (persistenceError) {
-        this.logger.error(JSON.stringify({
-          jobId,
-          attempt: attemptNumber,
-          status: 'PERSISTENCE_RECOVERY',
-          error: persistenceError instanceof Error ? persistenceError.message : 'Unknown persistence error',
-        }));
-        // The provider call returned successfully, so this path must never use
-        // generic retry handling. Re-read first in case the transaction
-        // committed but its response was lost, then persist a reconciliation
-        // state without issuing another provider request.
-        const recovered = await this.recoverReturnedPublish(
-          job.id,
-          job.platformAccountId,
-          attempt.id,
-          result,
-        );
-        if (!recovered) throw persistenceError;
+        attempt = await this.prisma.$transaction(async (transaction) => {
+          // The unique id plus state/version predicates form a database CAS.
+          // Even if a Redis lease expires, only one owner can cross from
+          // QUEUED to PUBLISHING for this attempt number.
+          await transaction.publishJob.update({
+            where: {
+              id: job.id,
+              status: PublishJobStatus.QUEUED,
+              attemptCount: job.attemptCount,
+            },
+            data: {
+              status: PublishJobStatus.PUBLISHING,
+              lockedAt: new Date(),
+              attemptCount: attemptNumber,
+            },
+          });
+          return transaction.publishAttempt.create({
+            data: {
+              publishJobId: job.id,
+              attemptNumber,
+              status: AttemptStatus.STARTED,
+              requestMetadata: { platform, idempotencyKey: job.idempotencyKey },
+            },
+            select: { id: true },
+          });
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+          return;
+        }
+        throw error;
       }
-      this.logger.log(JSON.stringify({ jobId, campaignId: job.target.campaignId, platform, platformAccountId: job.platformAccountId, attempt: attemptNumber, status: result.status }));
-    } catch (error) {
-      // If the provider returned and even the recovery write failed, leave the
-      // row PUBLISHING. A RabbitMQ redelivery is reconciled at method entry and
-      // cannot call the provider again.
-      if (connectorReturnedResult) throw error;
-      deadLetter = await this.handleFailure(job.id, attempt.id, attemptNumber, job.maxAttempts, job.platformAccountId, error);
-    }
-    await this.campaignStatus.refresh(job.target.campaignId);
-    if (deadLetter) throw new DeadLetterDeliveryError(`Publish job ${job.id} failed permanently`);
+      let deadLetter = false;
+      let connectorReturnedResult = false;
+      try {
+        assertPublishAccountReady(job.platformAccount);
+        const connectorKey = job.platformAccount.platform.connectorKey || platform;
+        const connector = this.registry.get(connectorKey);
+        const variant = job.target.contentVariant;
+        assertVariantApproved(variant.status);
+        const capability = effectiveConnectorCapability(
+          connector.capability,
+          job.platformAccount.platform.capability,
+        );
+        const media = filterPublishMediaForConnector(
+          collectPublishMedia(variant.content.media, variant.media),
+          capability,
+          connector.mode,
+        );
+        const payload: PostPayload = {
+          title: variant.title ?? undefined,
+          body: variant.body,
+          summary: variant.summary ?? undefined,
+          hashtags: variant.hashtags,
+          canonicalUrl: variant.content.canonicalUrl ?? undefined,
+          ...(media.length ? { media } : {}),
+          idempotencyKey: job.idempotencyKey,
+        };
+        await connector.validate(payload);
+        // Credentials, enablement, connection status, and browser consent are
+        // loaded after all local payload work and immediately before crossing
+        // the provider boundary. The PUBLISHING CAS plus the renewable lease
+        // make an authorization failure safe to reconcile instead of replaying
+        // a possibly accepted request.
+        const loadedAccount = await this.connectorAccounts.load(job.platformAccountId);
+        assertFreshPublishAuthorization(loadedAccount);
+        if (loadedAccount.connectorKey !== connectorKey) {
+          throw new ConnectorError(
+            ErrorCode.CONNECTOR_NEEDS_ACTION,
+            'Platform connector configuration changed; queue the publish again',
+            false,
+          );
+        }
+        if (!await lease.verify()) {
+          throw new ConnectorError(
+            ErrorCode.INFRASTRUCTURE_UNAVAILABLE,
+            'Publish ownership lease was lost before the provider request',
+            true,
+          );
+        }
+        const result = await connector.publish(loadedAccount.account, payload);
+        connectorReturnedResult = true;
+        try {
+          await this.persistPublishResult(job.id, job.platformAccountId, attempt.id, result);
+        } catch (persistenceError) {
+          this.logger.error(
+            JSON.stringify({
+              jobId,
+              attempt: attemptNumber,
+              status: 'PERSISTENCE_RECOVERY',
+              error:
+                persistenceError instanceof Error
+                  ? persistenceError.message
+                  : 'Unknown persistence error',
+            }),
+          );
+          // The provider call returned successfully, so this path must never use
+          // generic retry handling. Re-read first in case the transaction
+          // committed but its response was lost, then persist a reconciliation
+          // state without issuing another provider request.
+          const recovered = await this.recoverReturnedPublish(
+            job.id,
+            job.platformAccountId,
+            attempt.id,
+            result,
+          );
+          if (!recovered) throw persistenceError;
+        }
+        this.logger.log(
+          JSON.stringify({
+            jobId,
+            campaignId: job.target.campaignId,
+            platform,
+            platformAccountId: job.platformAccountId,
+            attempt: attemptNumber,
+            status: result.status,
+          }),
+        );
+      } catch (error) {
+        // If the provider returned and even the recovery write failed, leave the
+        // row PUBLISHING. A RabbitMQ redelivery is reconciled at method entry and
+        // cannot call the provider again.
+        if (connectorReturnedResult) throw error;
+        deadLetter = await this.handleFailure(
+          job.id,
+          attempt.id,
+          attemptNumber,
+          job.maxAttempts,
+          job.platformAccountId,
+          error,
+        );
+      }
+      await this.campaignStatus.refresh(job.target.campaignId);
+      if (deadLetter) throw new DeadLetterDeliveryError(`Publish job ${job.id} failed permanently`);
     } finally {
       if (fingerprintLock) {
         await this.redis.releaseLock(fingerprintLock.key, fingerprintLock.token);
@@ -293,7 +603,10 @@ export class PublishingService {
       await transaction.publishJob.update({
         where: { id: jobId },
         data: {
-          status: result.status === 'PROCESSING' ? PublishJobStatus.PROCESSING : PublishJobStatus.PUBLISHED,
+          status:
+            result.status === 'PROCESSING'
+              ? PublishJobStatus.PROCESSING
+              : PublishJobStatus.PUBLISHED,
           nextAttemptAt: null,
           lockedAt: null,
           lastErrorCode: null,
@@ -321,12 +634,12 @@ export class PublishingService {
     // post when the first database transaction actually committed.
     const resultNeedsAction = result.status === 'NEEDS_ACTION';
     const responseMetadata = resultNeedsAction
-      ? {
+      ? ({
           ...(result.metadata ?? {}),
           resultPersistenceRecovered: true,
           originalResultStatus: result.status,
-        } as Prisma.InputJsonObject
-      : {
+        } as Prisma.InputJsonObject)
+      : ({
           ...(result.metadata ?? {}),
           externalPostId: result.externalId,
           ...(result.url ? { url: result.url } : {}),
@@ -334,7 +647,7 @@ export class PublishingService {
           reconciliationRequired: true,
           persistenceRecoveryRequired: true,
           originalResultStatus: result.status,
-        } as Prisma.InputJsonObject;
+        } as Prisma.InputJsonObject);
     const recovered = await this.prisma.$transaction(async (transaction) => {
       const claimed = await transaction.publishJob.updateMany({
         where: {
@@ -387,6 +700,10 @@ export class PublishingService {
     // wins, while only a row still marked PUBLISHING is moved to reconciliation.
     const current = await this.readDeliveryState(jobId);
     if (current.publishedPost || current.status !== PublishJobStatus.PUBLISHING) return;
+    if (
+      current.lockedAt
+      && current.lockedAt.getTime() > Date.now() - STALE_DELIVERY_AFTER_MS
+    ) return;
     const attempt = current.attempts[0];
     const responseMetadata = {
       ...this.asRecord(attempt?.responseMetadata),
@@ -421,7 +738,9 @@ export class PublishingService {
       return true;
     });
     if (reconciled) {
-      this.logger.warn(JSON.stringify({ jobId, status: 'NEEDS_ACTION', errorCode: UNCERTAIN_RESULT_ERROR_CODE }));
+      this.logger.warn(
+        JSON.stringify({ jobId, status: 'NEEDS_ACTION', errorCode: UNCERTAIN_RESULT_ERROR_CODE }),
+      );
     }
   }
 
@@ -458,25 +777,74 @@ export class PublishingService {
     return safeStatuses.includes(status);
   }
 
-  private async handleFailure(jobId: string, attemptId: string, attemptNumber: number, maxAttempts: number, accountId: string, error: unknown): Promise<boolean> {
-    const connectorError = error instanceof ConnectorError ? error : new ConnectorError(ErrorCode.PLATFORM_API_ERROR, 'Unexpected connector failure', true);
+  private async handleFailure(
+    jobId: string,
+    attemptId: string,
+    attemptNumber: number,
+    maxAttempts: number,
+    accountId: string,
+    error: unknown,
+  ): Promise<boolean> {
+    const connectorError =
+      error instanceof ConnectorError
+        ? error
+        : new ConnectorError(ErrorCode.PLATFORM_API_ERROR, 'Unexpected connector failure', true);
     const canRetry = connectorError.retryable && attemptNumber < maxAttempts;
-    const delay = connectorError.retryAfterSeconds ?? RETRY_DELAYS_SECONDS[Math.min(attemptNumber - 1, RETRY_DELAYS_SECONDS.length - 1)] ?? 600;
+    const delay =
+      connectorError.retryAfterSeconds ??
+      RETRY_DELAYS_SECONDS[Math.min(attemptNumber - 1, RETRY_DELAYS_SECONDS.length - 1)] ??
+      600;
     await this.prisma.$transaction([
-      this.prisma.publishAttempt.update({ where: { id: attemptId }, data: { status: canRetry ? AttemptStatus.RETRYABLE_FAILURE : AttemptStatus.PERMANENT_FAILURE, errorCode: connectorError.code, errorMessage: connectorError.message, finishedAt: new Date() } }),
-      this.prisma.publishJob.update({ where: { id: jobId }, data: { status: canRetry ? PublishJobStatus.RETRY : PublishJobStatus.FAILED, nextAttemptAt: canRetry ? new Date(Date.now() + delay * 1000) : null, lockedAt: null, lastErrorCode: connectorError.code, lastErrorMessage: connectorError.message } }),
+      this.prisma.publishAttempt.update({
+        where: { id: attemptId },
+        data: {
+          status: canRetry ? AttemptStatus.RETRYABLE_FAILURE : AttemptStatus.PERMANENT_FAILURE,
+          errorCode: connectorError.code,
+          errorMessage: connectorError.message,
+          finishedAt: new Date(),
+        },
+      }),
+      this.prisma.publishJob.update({
+        where: { id: jobId },
+        data: {
+          status: canRetry ? PublishJobStatus.RETRY : PublishJobStatus.FAILED,
+          nextAttemptAt: canRetry ? new Date(Date.now() + delay * 1000) : null,
+          lockedAt: null,
+          lastErrorCode: connectorError.code,
+          lastErrorMessage: connectorError.message,
+        },
+      }),
     ]);
-    if ([ErrorCode.PLATFORM_TOKEN_EXPIRED, ErrorCode.PLATFORM_AUTH_FAILED].includes(connectorError.code)) {
-      await this.prisma.platformAccount.update({ where: { id: accountId }, data: { status: AccountStatus.RECONNECT_REQUIRED } });
+    if (
+      [ErrorCode.PLATFORM_TOKEN_EXPIRED, ErrorCode.PLATFORM_AUTH_FAILED].includes(
+        connectorError.code,
+      )
+    ) {
+      await this.prisma.platformAccount.update({
+        where: { id: accountId },
+        data: { status: AccountStatus.RECONNECT_REQUIRED },
+      });
     }
-    this.logger.warn(JSON.stringify({ jobId, attempt: attemptNumber, status: canRetry ? 'RETRY' : 'FAILED', errorCode: connectorError.code }));
+    this.logger.warn(
+      JSON.stringify({
+        jobId,
+        attempt: attemptNumber,
+        status: canRetry ? 'RETRY' : 'FAILED',
+        errorCode: connectorError.code,
+      }),
+    );
     return !canRetry;
   }
 
-  private asRecord(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+  private asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  }
   private numberSetting(value: unknown, key: string, fallback: number): number {
     const setting = this.asRecord(value)[key];
-    return typeof setting === 'number' && Number.isFinite(setting) && setting > 0 ? Math.floor(setting) : fallback;
+    return typeof setting === 'number' && Number.isFinite(setting) && setting > 0
+      ? Math.floor(setting)
+      : fallback;
   }
-
 }

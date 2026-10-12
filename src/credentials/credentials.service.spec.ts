@@ -5,6 +5,51 @@ import { CredentialEncryptionService } from './credential-encryption.service';
 import { CredentialsService } from './credentials.service';
 
 describe('CredentialsService', () => {
+  it('resolves only active, unexpired credential payloads', async () => {
+    const decrypt = jest.fn().mockReturnValue({ apiKey: 'secret' });
+    const findUniqueOrThrow = jest.fn().mockResolvedValue({
+      encryptedPayload: 'encrypted-payload',
+      status: 'ACTIVE',
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const service = new CredentialsService(
+      { platformCredential: { findUniqueOrThrow } } as unknown as PrismaService,
+      { decrypt } as unknown as CredentialEncryptionService,
+      {} as ConfigService,
+    );
+
+    await expect(service.resolve('account-1')).resolves.toEqual({ apiKey: 'secret' });
+    expect(findUniqueOrThrow).toHaveBeenCalledWith({
+      where: { platformAccountId: 'account-1' },
+      select: { encryptedPayload: true, status: true, expiresAt: true },
+    });
+  });
+
+  it.each([
+    ['REVOKED', null],
+    ['ACTIVE', new Date(Date.now() - 1_000)],
+  ])('rejects %s or expired credential material', async (status, expiresAt) => {
+    const decrypt = jest.fn();
+    const service = new CredentialsService(
+      {
+        platformCredential: {
+          findUniqueOrThrow: jest.fn().mockResolvedValue({
+            encryptedPayload: 'must-not-decrypt',
+            status,
+            expiresAt,
+          }),
+        },
+      } as unknown as PrismaService,
+      { decrypt } as unknown as CredentialEncryptionService,
+      {} as ConfigService,
+    );
+
+    await expect(service.resolve('account-1')).rejects.toMatchObject({
+      code: 'PLATFORM_TOKEN_EXPIRED',
+    });
+    expect(decrypt).not.toHaveBeenCalled();
+  });
+
   it('uses the supplied transaction client for an atomic credential upsert', async () => {
     const defaultUpsert = jest.fn();
     const transactionalUpsert = jest.fn().mockResolvedValue({});
@@ -49,6 +94,98 @@ describe('CredentialsService', () => {
         keyVersion: 'v2',
         status: 'ACTIVE',
         expiresAt,
+      },
+    });
+  });
+
+  it('merges refreshed browser state without dropping other encrypted fields', async () => {
+    const updatedAt = new Date('2026-10-09T00:00:00.000Z');
+    const findUnique = jest.fn().mockResolvedValue({
+      encryptedPayload: 'before',
+      updatedAt,
+    });
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const prisma = {
+      platformCredential: { findUnique, updateMany },
+    } as unknown as PrismaService;
+    const encrypt = jest.fn().mockReturnValue('after');
+    const encryption = {
+      decrypt: jest.fn().mockReturnValue({ apiKey: 'preserved', storageState: { cookies: [] } }),
+      encrypt,
+      keyVersion: 'v2',
+    } as unknown as CredentialEncryptionService;
+    const service = new CredentialsService(prisma, encryption, {} as ConfigService);
+
+    await service.merge('account-1', { storageState: { cookies: ['new'], origins: [] } });
+
+    expect(encrypt).toHaveBeenCalledWith({
+      apiKey: 'preserved',
+      storageState: { cookies: ['new'], origins: [] },
+    });
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { platformAccountId: 'account-1', updatedAt },
+      data: {
+        encryptedPayload: 'after',
+        keyVersion: 'v2',
+        status: 'ACTIVE',
+        expiresAt: null,
+      },
+    });
+  });
+
+  it('creates the first encrypted credential row during browser login capture', async () => {
+    const create = jest.fn().mockResolvedValue({});
+    const prisma = {
+      platformCredential: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create,
+      },
+    } as unknown as PrismaService;
+    const encrypt = jest.fn().mockReturnValue('encrypted-browser-state');
+    const encryption = {
+      encrypt,
+      keyVersion: 'v3',
+    } as unknown as CredentialEncryptionService;
+    const service = new CredentialsService(prisma, encryption, {} as ConfigService);
+    const storageState = { cookies: [], origins: [] };
+
+    await service.merge('account-new', { storageState });
+
+    expect(encrypt).toHaveBeenCalledWith({ storageState });
+    expect(create).toHaveBeenCalledWith({
+      data: {
+        platformAccountId: 'account-new',
+        encryptedPayload: 'encrypted-browser-state',
+        keyVersion: 'v3',
+        status: 'ACTIVE',
+      },
+    });
+  });
+
+  it('cryptographically clears and revokes a captured browser session', async () => {
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const transaction = { platformCredential: { updateMany } };
+    const encrypt = jest.fn().mockReturnValue('encrypted-empty-payload');
+    const encryption = {
+      encrypt,
+      keyVersion: 'v4',
+    } as unknown as CredentialEncryptionService;
+    const service = new CredentialsService(
+      {} as PrismaService,
+      encryption,
+      {} as ConfigService,
+    );
+
+    await service.revoke('account-1', transaction as never);
+
+    expect(encrypt).toHaveBeenCalledWith({});
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { platformAccountId: 'account-1' },
+      data: {
+        encryptedPayload: 'encrypted-empty-payload',
+        keyVersion: 'v4',
+        status: 'REVOKED',
+        expiresAt: null,
       },
     });
   });

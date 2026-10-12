@@ -89,6 +89,13 @@ export interface ConnectorOutboundHttpResponse {
   text: string;
 }
 
+export interface ConnectorOutboundHttpBinaryResponse {
+  ok: boolean;
+  status: number;
+  headers: { get(name: string): string | null };
+  body: Buffer;
+}
+
 interface ConnectorOutboundHttpOptions {
   resolve?: ConnectorHostResolver;
   fetch?: ConnectorFetch;
@@ -98,7 +105,10 @@ const defaultResolver: ConnectorHostResolver = (hostname) =>
   systemLookup(hostname, { all: true, verbatim: true });
 
 const normalizeHostname = (value: string): string =>
-  value.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  value
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '');
 
 /**
  * Return only the DNS results that were validated before opening the socket.
@@ -127,11 +137,12 @@ export function createPinnedLookup(
       return;
     }
 
-    const requestedFamily = options.family === 4 || options.family === 'IPv4'
-      ? 4
-      : options.family === 6 || options.family === 'IPv6'
-        ? 6
-        : undefined;
+    const requestedFamily =
+      options.family === 4 || options.family === 'IPv4'
+        ? 4
+        : options.family === 6 || options.family === 'IPv6'
+          ? 6
+          : undefined;
     const candidates = addresses.filter(
       (candidate) => requestedFamily === undefined || candidate.family === requestedFamily,
     );
@@ -176,6 +187,24 @@ export class ConnectorOutboundHttpClient {
     init: RequestInit,
     timeoutMs: number,
   ): Promise<ConnectorOutboundHttpResponse> {
+    const response = await this.requestBytes(input, init, timeoutMs);
+    return {
+      ok: response.ok,
+      status: response.status,
+      headers: response.headers,
+      text: response.body.toString('utf8'),
+    };
+  }
+
+  /**
+   * Binary variant with the same HTTPS-only, DNS-pinned and redirect-safe
+   * transport used by JSON connectors. Responses are capped at 5 MiB.
+   */
+  async requestBytes(
+    input: string,
+    init: RequestInit,
+    timeoutMs: number,
+  ): Promise<ConnectorOutboundHttpBinaryResponse> {
     let current = this.parseUrl(input);
     let requestInit = { ...init };
     const signal = AbortSignal.timeout(timeoutMs);
@@ -184,15 +213,12 @@ export class ConnectorOutboundHttpClient {
       const addresses = await this.resolvePublicAddresses(current);
       const dispatcher = this.createPinnedDispatcher(current.hostname, addresses);
       try {
-        const response = await this.fetchImplementation(
-          current,
-          {
-            ...(requestInit as Parameters<ConnectorFetch>[1]),
-            redirect: 'manual',
-            signal,
-            dispatcher,
-          },
-        );
+        const response = await this.fetchImplementation(current, {
+          ...(requestInit as Parameters<ConnectorFetch>[1]),
+          redirect: 'manual',
+          signal,
+          dispatcher,
+        });
 
         if (response.status >= 300 && response.status < 400) {
           const location = response.headers.get('location');
@@ -218,7 +244,7 @@ export class ConnectorOutboundHttpClient {
           ok: response.ok,
           status: response.status,
           headers: response.headers,
-          text: await this.readLimitedText(response),
+          body: await this.readLimitedBytes(response),
         };
       } finally {
         await dispatcher.close().catch(() => undefined);
@@ -236,15 +262,16 @@ export class ConnectorOutboundHttpClient {
       this.block('Connector endpoint must be an absolute HTTPS URL');
     }
     if (url.protocol !== 'https:') this.block('Connector endpoint must use HTTPS');
-    if (url.username || url.password) this.block('Connector endpoint must not contain URL credentials');
+    if (url.username || url.password)
+      this.block('Connector endpoint must not contain URL credentials');
     return url;
   }
 
   private async resolvePublicAddresses(url: URL): Promise<readonly ConnectorResolvedAddress[]> {
     const hostname = this.normalizedHostname(url.hostname);
     if (
-      BLOCKED_HOSTS.has(hostname)
-      || BLOCKED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))
+      BLOCKED_HOSTS.has(hostname) ||
+      BLOCKED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))
     ) {
       this.block('Connector endpoint hostname is local or reserved');
     }
@@ -290,8 +317,8 @@ export class ConnectorOutboundHttpClient {
     return { ...init, method: method === 'HEAD' ? 'HEAD' : 'GET', body: undefined, headers };
   }
 
-  private async readLimitedText(response: Response): Promise<string> {
-    if (!response.body) return '';
+  private async readLimitedBytes(response: Response): Promise<Buffer> {
+    if (!response.body) return Buffer.alloc(0);
     const chunks: Buffer[] = [];
     let total = 0;
     for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
@@ -299,7 +326,7 @@ export class ConnectorOutboundHttpClient {
       if (total > MAX_RESPONSE_BYTES) this.responseTooLarge();
       chunks.push(Buffer.from(chunk));
     }
-    return Buffer.concat(chunks, total).toString('utf8');
+    return Buffer.concat(chunks, total);
   }
 
   private normalizedHostname(value: string): string {

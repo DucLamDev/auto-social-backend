@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Patch } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '@prisma/client';
 import { IsBoolean } from 'class-validator';
 import { PlatformsService } from './platforms.service';
 import { Roles } from '../common/decorators/roles.decorator';
 import { ApiOkEnvelope, PlatformContractDto } from '../common/swagger/api-contract.dto';
+import { ListPlatformsQueryDto } from './dto/list-platforms-query.dto';
 
 class TogglePlatformDto { @ApiProperty() @IsBoolean() enabled!: boolean; }
 
@@ -16,8 +17,8 @@ export class PlatformsController {
 
   @Get()
   @ApiOkEnvelope(PlatformContractDto, true)
-  list() {
-    return this.platforms.list();
+  list(@Query() query: ListPlatformsQueryDto) {
+    return this.platforms.list(query);
   }
 
   @Get(':slug')
