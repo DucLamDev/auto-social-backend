@@ -54,6 +54,9 @@ describe('validateEnvironment', () => {
     ['OPENAI_TIMEOUT_MS', 'Infinity'],
     ['AI_TIMEOUT_MS', '0'],
     ['BROWSER_AUTOMATION_TIMEOUT_MS', '0'],
+    ['AUTH_WAIT_TIMEOUT', '0'],
+    ['CAPTCHA_WAIT_TIMEOUT', 'Infinity'],
+    ['MAX_AUTH_ATTEMPTS', '1.5'],
   ])('rejects an invalid positive integer %s', (key, value) => {
     expect(() => validateEnvironment({ ...productionEnvironment(), [key]: value })).toThrow(key);
   });
@@ -61,6 +64,7 @@ describe('validateEnvironment', () => {
   it.each([
     ['BROWSER_AUTOMATION_ENABLED', 'yes'],
     ['BROWSER_AUTOMATION_HEADLESS', '1'],
+    ['BROWSER_AUTH_RECOVERY_ENABLED', 'yes'],
   ])('rejects an invalid browser automation boolean %s', (key, value) => {
     expect(() => validateEnvironment({ ...productionEnvironment(), [key]: value })).toThrow(key);
   });
@@ -70,6 +74,14 @@ describe('validateEnvironment', () => {
       ...productionEnvironment(),
       BROWSER_AUTOMATION_TIMEOUT_MS: '300001',
     })).toThrow('BROWSER_AUTOMATION_TIMEOUT_MS');
+  });
+
+  it('caps recovery timeouts and OTP attempts', () => {
+    expect(() => validateEnvironment({ ...productionEnvironment(), AUTH_WAIT_TIMEOUT: '900001' })).toThrow('timeouts');
+    expect(() => validateEnvironment({ ...productionEnvironment(), MAX_AUTH_ATTEMPTS: '4' })).toThrow('MAX_AUTH_ATTEMPTS');
+    expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({
+      BROWSER_AUTH_RECOVERY_ENABLED: false, AUTH_WAIT_TIMEOUT: 300000, CAPTCHA_WAIT_TIMEOUT: 300000, MAX_AUTH_ATTEMPTS: 3,
+    });
   });
 
   it('rejects an unknown default AI provider', () => {

@@ -52,7 +52,7 @@ export class SsrfSafeHttpService {
   async assertSafe(url: URL): Promise<void> {
     if (!['http:', 'https:'].includes(url.protocol)) this.block('Only HTTP(S) source URLs are allowed');
     if (url.username || url.password) this.block('Source URLs cannot contain credentials');
-    const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
     if (BLOCKED_HOSTS.has(hostname) || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
       this.block('Local and internal hostnames are blocked');
     }

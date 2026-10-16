@@ -1,7 +1,16 @@
 import { createHash, createHmac, type BinaryLike } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
+import { type BrowserContext, type Locator, type Page } from 'playwright';
+import { SessionManager } from '../src/auth/session-manager';
+import { AuthDetector } from '../src/auth/auth-detector';
+import { AuthState } from '../src/auth/auth.types';
+import {
+  createPrivateFileSessionStore,
+  captureAllowedStorageState,
+} from '../src/auth/file-session-store';
+import { waitForManualIntervention } from '../src/auth/manual-intervention';
+import { assertChromiumInstalled } from '../src/connectors/browser/browser-chromium';
 import {
   BrowserNetworkGuard,
   type BrowserNetworkProxy,
@@ -20,7 +29,7 @@ interface AuthRecord {
 }
 
 interface CliOptions {
-  authFile: string;
+  authFile?: string;
   platform: string;
   ordinal: number;
   accountRef?: string;
@@ -28,6 +37,10 @@ interface CliOptions {
   headless: boolean;
   requireTwoFactor: boolean;
   timeoutMs: number;
+  manualLogin: boolean;
+  profilesDir: string;
+  inspectSession: boolean;
+  accountLabel: string;
 }
 
 interface SmokeResult {
@@ -38,10 +51,42 @@ interface SmokeResult {
     | 'EDITOR_NOT_FOUND'
     | 'FORM_NOT_FOUND'
     | 'LOGIN_REJECTED'
+    | 'ACCOUNT_LOCKED'
+    | 'SESSION_NOT_VERIFIED'
     | 'TWO_FACTOR_REJECTED'
     | 'TWO_FACTOR_REQUIRED';
   url: string;
   statusCode?: number;
+  authState?: AuthState;
+}
+
+/** Missing UI or cookies is not evidence that credentials were rejected. */
+export async function inspectUnverifiedLogin(
+  page: Page,
+  allowedHosts: readonly string[],
+  detector = new AuthDetector(),
+): Promise<SmokeResult> {
+  const detection = await detector.detectAuthState(page, { allowedHosts, selectors: {} });
+  const status =
+    detection.failure === 'REJECTED'
+      ? 'LOGIN_REJECTED'
+      : detection.failure === 'LOCKED'
+        ? 'ACCOUNT_LOCKED'
+        : detection.state === AuthState.TWO_FACTOR_REQUIRED
+          ? 'TWO_FACTOR_REQUIRED'
+          : [
+                AuthState.CAPTCHA_REQUIRED,
+                AuthState.EMAIL_VERIFICATION_REQUIRED,
+                AuthState.DEVICE_CONFIRMATION_REQUIRED,
+              ].includes(detection.state)
+            ? 'CHALLENGE_REQUIRES_HUMAN'
+            : 'SESSION_NOT_VERIFIED';
+  return {
+    phase: 'authentication',
+    status,
+    authState: detection.state,
+    url: safePageUrl(page.url()),
+  };
 }
 
 interface TotpConfiguration {
@@ -58,17 +103,31 @@ class SafeCliError extends Error {
   }
 }
 
+/** Report a fixed code, never Playwright's message containing URLs or filled values. */
+export function safeRuntimeErrorCode(error: unknown): string {
+  if (error instanceof SafeCliError) return error.code;
+  if (!(error instanceof Error)) return 'UNEXPECTED_RUNTIME_ERROR';
+  if (error.name === 'TimeoutError') return 'BROWSER_TIMEOUT';
+  const networkCode = /net::(ERR_[A-Z_]+)/.exec(error.message)?.[1];
+  if (networkCode) return `BROWSER_${networkCode}`;
+  if (error.name === 'FileSessionStoreError') return 'SESSION_STORE_UNAVAILABLE';
+  if (error.name === 'BrowserRuntimeUnavailableError') return 'CHROMIUM_UNAVAILABLE';
+  return 'UNEXPECTED_RUNTIME_ERROR';
+}
+
 const DEV_TO_ALIASES = new Set(['dev.to', 'devto']);
 const DEV_TO_HOSTS = new Set(['dev.to']);
 const INSTAGRAM_ALIASES = new Set(['instagram']);
 const INSTAGRAM_HOSTS = new Set(['www.instagram.com']);
 const THREADS_ALIASES = new Set(['threads']);
 const THREADS_HOSTS = new Set(['www.threads.com']);
+const X_ALIASES = new Set(['x', 'twitter', 'x(twitter)', 'x/twitter']);
+const X_HOSTS = ['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'];
 const MAX_AUTH_FILE_BYTES = 1_000_000;
 const MAX_AUTH_RECORDS = 1_000;
 const MAX_AUTH_FIELD_CHARACTERS = 65_536;
 
-type SmokeRecipeKey = 'devto' | 'instagram' | 'threads';
+type SmokeRecipeKey = 'devto' | 'instagram' | 'threads' | 'x';
 
 /** RFC 4180-style parser with a tab delimiter and multiline quoted fields. */
 export function parseTsv(input: string): string[][] {
@@ -285,24 +344,40 @@ function positiveInteger(value: string | undefined, fallback: number, maximum: n
   return parsed;
 }
 
-function parseOptions(args: readonly string[]): CliOptions {
+export function parseOptions(args: readonly string[]): CliOptions {
   const authFile = optionValue(args, '--auth-file');
   const platform = optionValue(args, '--platform');
-  if (!authFile || !platform) throw new SafeCliError('CLI_REQUIRED_OPTION_MISSING');
+  if (!platform) throw new SafeCliError('CLI_REQUIRED_OPTION_MISSING');
+  const manualLogin = args.includes('--manual-login');
+  const inspectSession = args.includes('--inspect-session');
+  if (
+    !authFile &&
+    !(X_ALIASES.has(normalizedPlatform(platform)) && (manualLogin || inspectSession))
+  ) {
+    throw new SafeCliError('CLI_REQUIRED_OPTION_MISSING');
+  }
+  const accountLabel = optionValue(args, '--account-label') ?? 'account01';
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(accountLabel))
+    throw new SafeCliError('CLI_ACCOUNT_LABEL_INVALID');
   const accountRef = optionValue(args, '--account-ref');
-  const executeLiveLogin = args.includes('--execute-live-login');
-  if (executeLiveLogin && (!accountRef || !/^[a-f\d]{12}$/i.test(accountRef))) {
+  const executeLiveLogin =
+    args.includes('--execute-live-login') || inspectSession || (!authFile && manualLogin);
+  if (authFile && executeLiveLogin && (!accountRef || !/^[a-f\d]{12}$/i.test(accountRef))) {
     throw new SafeCliError('CLI_ACCOUNT_REF_REQUIRED');
   }
   return {
-    authFile: resolve(authFile),
+    authFile: authFile ? resolve(authFile) : undefined,
     platform,
     ordinal: positiveInteger(optionValue(args, '--ordinal'), 1, 1_000),
     accountRef,
     executeLiveLogin,
     headless: args.includes('--headless'),
     requireTwoFactor: args.includes('--require-2fa'),
-    timeoutMs: positiveInteger(optionValue(args, '--timeout-ms'), 60_000, 120_000),
+    timeoutMs: positiveInteger(optionValue(args, '--timeout-ms'), 60_000, 900_000),
+    manualLogin,
+    profilesDir: resolve(optionValue(args, '--profiles-dir') ?? 'profiles/social-login'),
+    inspectSession,
+    accountLabel,
   };
 }
 
@@ -315,12 +390,14 @@ function recipeKeyForPlatform(value: string): SmokeRecipeKey {
   if (DEV_TO_ALIASES.has(requested)) return 'devto';
   if (INSTAGRAM_ALIASES.has(requested)) return 'instagram';
   if (THREADS_ALIASES.has(requested)) return 'threads';
+  if (X_ALIASES.has(requested)) return 'x';
   throw new SafeCliError('PLATFORM_RECIPE_NOT_REVIEWED');
 }
 
 function recipeAliases(recipeKey: SmokeRecipeKey): ReadonlySet<string> {
   if (recipeKey === 'devto') return DEV_TO_ALIASES;
   if (recipeKey === 'instagram') return INSTAGRAM_ALIASES;
+  if (recipeKey === 'x') return X_ALIASES;
   return THREADS_ALIASES;
 }
 
@@ -349,7 +426,11 @@ function selectRecord(
 function assertSupportedLoginMethod(record: AuthRecord, recipeKey: SmokeRecipeKey): void {
   const method = record.loginMethod.trim().toLowerCase().replace(/\s+/g, ' ');
   const supported =
-    recipeKey === 'devto' ? method === 'gmail / google auth' : method === 'user + password';
+    recipeKey === 'devto'
+      ? method === 'gmail / google auth'
+      : recipeKey === 'x'
+        ? method === 'user + password' || X_ALIASES.has(normalizedPlatform(method))
+        : method === 'user + password';
   if (!supported) throw new SafeCliError('LOGIN_METHOD_NOT_REVIEWED');
 }
 
@@ -405,6 +486,12 @@ async function waitForFirstVisible(
 }
 
 async function hasHumanChallenge(page: Page): Promise<boolean> {
+  if (
+    /just a moment|verify (that )?you are human|checking your browser|performing security verification/i.test(
+      await page.title(),
+    )
+  )
+    return true;
   return Boolean(
     await firstVisible(
       page,
@@ -472,6 +559,8 @@ async function runDevToGoogleAuthentication(
   }
   await googleButton.click();
   await settleAfterSubmit(page, timeoutMs);
+  // A persistent Google session can complete the redirect without entering credentials again.
+  if (pageHost(page) === 'dev.to') return undefined;
   if (await hasHumanChallenge(page)) {
     return {
       phase: 'authentication',
@@ -515,11 +604,7 @@ async function runDevToGoogleAuthentication(
     Math.min(timeoutMs, 12_000),
   );
   if (!password) {
-    return {
-      phase: 'authentication',
-      status: 'LOGIN_REJECTED',
-      url: safePageUrl(page.url()),
-    };
+    return inspectUnverifiedLogin(page, ['accounts.google.com', 'dev.to']);
   }
   await password.fill(record.password);
   const passwordNext = page.locator('#passwordNext button,#passwordNext').first();
@@ -711,11 +796,7 @@ async function runInstagramSmoke(
     'form input[name="email"],form input[name="pass"]',
   );
   if (!sessionReady || remainingLogin) {
-    return {
-      phase: 'authentication',
-      status: 'LOGIN_REJECTED',
-      url: safePageUrl(page.url()),
-    };
+    return inspectUnverifiedLogin(page, ['www.instagram.com']);
   }
 
   const editorResponse = await page.goto('https://www.instagram.com/create/select/', {
@@ -813,11 +894,7 @@ async function runThreadsSmoke(
     'form input[autocomplete="username"],form input[autocomplete="current-password"]',
   );
   if (!sessionReady || remainingLogin) {
-    return {
-      phase: 'authentication',
-      status: 'LOGIN_REJECTED',
-      url: safePageUrl(page.url()),
-    };
+    return inspectUnverifiedLogin(page, ['www.threads.com', 'www.instagram.com']);
   }
 
   const editorResponse = await page.goto('https://www.threads.com/', {
@@ -929,34 +1006,261 @@ async function runDevToSmoke(
   };
 }
 
-function accountReference(record: AuthRecord): string {
+export function accountReference(record: AuthRecord): string {
   const input: BinaryLike = [
-    record.rowNumber,
-    record.sequence,
-    record.platform,
-    record.loginMethod,
-    record.user,
-    record.profileUrl,
+    normalizedPlatform(record.platform),
+    record.loginMethod.trim().toLowerCase(),
+    record.user.trim().toLowerCase(),
   ].join('\u0000');
   return createHash('sha256').update(input).digest('hex').slice(0, 12);
 }
 
+/** One sanctioned login attempt; never solve a CAPTCHA or repeat a rejected password/code. */
+export async function runXSmoke(
+  context: BrowserContext,
+  record: AuthRecord,
+  timeoutMs: number,
+): Promise<SmokeResult> {
+  let page = context
+    .pages()
+    .find(
+      (candidate) =>
+        !candidate.isClosed() &&
+        pageHost(candidate) === 'x.com' &&
+        new URL(candidate.url()).pathname === '/i/flow/login',
+    );
+  if (!page) {
+    page = await context.newPage();
+    await page.goto('https://x.com/i/flow/login', {
+      waitUntil: 'domcontentloaded',
+      timeout: timeoutMs,
+    });
+  }
+  const deadline = Date.now() + timeoutMs;
+  let identifierSubmitted = false;
+  let passwordSubmitted = false;
+  let otpSubmitted = false;
+  const detector = new AuthDetector();
+  const adapter = { allowedHosts: X_HOSTS, selectors: {} };
+  while (Date.now() < deadline) {
+    assertCredentialHost(page, X_HOSTS);
+    const authenticated = await inspectStoredSession(page, 'x');
+    if (authenticated) return authenticated;
+    const detection = await detector.detectAuthState(page, adapter);
+    if (
+      detection.failure ||
+      [
+        AuthState.CAPTCHA_REQUIRED,
+        AuthState.EMAIL_VERIFICATION_REQUIRED,
+        AuthState.DEVICE_CONFIRMATION_REQUIRED,
+      ].includes(detection.state) ||
+      /\/account\/(access|locked|suspended)/i.test(new URL(page.url()).pathname)
+    ) {
+      return inspectUnverifiedLogin(page, X_HOSTS);
+    }
+    const password = await firstVisible(page, 'input[name="password"][type="password"]');
+    if (password && !passwordSubmitted) {
+      const login = page.getByRole('button', { name: /^(Log in|Đăng nhập)$/i });
+      if ((await login.count()) !== 1 || !(await login.isVisible()))
+        return { phase: 'authentication', status: 'FORM_NOT_FOUND', url: safePageUrl(page.url()) };
+      await password.fill(record.password);
+      passwordSubmitted = true;
+      await login.click();
+    } else if (detection.state === AuthState.TWO_FACTOR_REQUIRED) {
+      const surfaces = (await page.locator('[role="dialog"],main').allInnerTexts())
+        .join('\n')
+        .slice(0, 16000);
+      // Email/SMS codes and generic verification inputs are never treated as an authenticator code.
+      if (
+        otpSubmitted ||
+        !record.twoFactor ||
+        !/authenticat(?:or|ion) app|code generator|ứng dụng xác thực/i.test(surfaces) ||
+        /(?:sent|send|emailed).*(?:email|phone|sms)|text message/i.test(surfaces)
+      ) {
+        return inspectUnverifiedLogin(page, X_HOSTS);
+      }
+      const otp = await firstVisible(
+        page,
+        'input[autocomplete="one-time-code"],input[data-testid="ocfEnterTextTextInput"]',
+      );
+      const next = page.getByRole('button', { name: /^(Next|Verify|Tiếp theo|Xác minh)$/i });
+      if (!otp || (await next.count()) !== 1 || !(await next.isVisible()))
+        return { phase: 'authentication', status: 'FORM_NOT_FOUND', url: safePageUrl(page.url()) };
+      const config = parseTotpConfiguration(record.twoFactor);
+      const remaining = config.period - (Math.floor(Date.now() / 1000) % config.period);
+      if (remaining < 5) await page.waitForTimeout((remaining + 1) * 1000);
+      let code: string | undefined = generateTotp(config);
+      try {
+        await otp.fill(code);
+        otpSubmitted = true;
+        await next.click();
+      } finally {
+        code = undefined;
+        config.secret = '';
+        await otp.fill('', { timeout: 1000 }).catch(() => undefined);
+      }
+    } else if (!identifierSubmitted) {
+      const identifier = await firstVisible(
+        page,
+        'input[autocomplete="username"],input[name="text"][type="text"]',
+      );
+      if (identifier) {
+        const next = page.getByRole('button', { name: /^(Next|Tiếp theo)$/i });
+        if ((await next.count()) !== 1 || !(await next.isVisible()))
+          return { phase: 'login-page', status: 'FORM_NOT_FOUND', url: safePageUrl(page.url()) };
+        await identifier.fill(record.user);
+        identifierSubmitted = true;
+        await next.click();
+      }
+    } else if (!passwordSubmitted && (await firstVisible(page, 'input[name="text"]'))) {
+      const surfaces = (await page.locator('[role="dialog"],main').allInnerTexts())
+        .join('\n')
+        .slice(0, 16000);
+      if (
+        /phone number or username|enter your (?:phone|username)|confirm (?:your )?(?:phone|username)|unusual login|số điện thoại hoặc tên người dùng/i.test(
+          surfaces,
+        )
+      ) {
+        // Additional identity/device confirmation needs the owner; no guessed identifiers.
+        return {
+          phase: 'authentication',
+          status: 'CHALLENGE_REQUIRES_HUMAN',
+          authState: AuthState.UNKNOWN_AUTH_CHALLENGE,
+          url: safePageUrl(page.url()),
+        };
+      }
+    }
+    await page.waitForTimeout(Math.min(1500, Math.max(1, deadline - Date.now())));
+  }
+  return inspectUnverifiedLogin(page, X_HOSTS);
+}
+
+/** Positive editor + account UI evidence, before any password submission. */
+export async function inspectStoredSession(
+  page: Page,
+  recipe: SmokeRecipeKey,
+): Promise<SmokeResult | undefined> {
+  if (await hasHumanChallenge(page)) return undefined;
+  const host = pageHost(page);
+  if (
+    recipe === 'x' &&
+    X_HOSTS.includes(host) &&
+    new URL(page.url()).pathname === '/home' &&
+    (await page.context().cookies(['https://x.com', 'https://twitter.com'])).some(
+      (cookie) => cookie.name === 'auth_token',
+    ) &&
+    (await firstVisible(page, '[data-testid="SideNav_AccountSwitcher_Button"]')) &&
+    (await firstVisible(page, '[data-testid="AppTabBar_Home_Link"]')) &&
+    !(await firstVisible(page, 'input[type="password"]'))
+  ) {
+    return {
+      phase: 'authentication',
+      status: 'READY',
+      authState: AuthState.AUTHENTICATED,
+      url: safePageUrl(page.url()),
+    };
+  }
+  if (
+    recipe === 'devto' &&
+    host === 'dev.to' &&
+    new URL(page.url()).pathname === '/new' &&
+    (await firstVisible(page, '#article-form-title')) &&
+    (await firstVisible(page, '#article_body_markdown,textarea[name="article[body_markdown]"]')) &&
+    (await firstVisible(
+      page,
+      '#nav-profile-image,#topbar__user__nav,[data-testid="header-user-menu-trigger"]',
+    ))
+  ) {
+    return { phase: 'editor', status: 'READY', url: safePageUrl(page.url()) };
+  }
+  if (
+    recipe === 'instagram' &&
+    host === 'www.instagram.com' &&
+    (await hasSessionCookie(page.context(), ['instagram.com'])) &&
+    (await firstVisible(page, 'a[href="/direct/inbox/"]')) &&
+    !(await firstVisible(page, 'input[type="password"]'))
+  ) {
+    return { phase: 'authentication', status: 'READY', url: safePageUrl(page.url()) };
+  }
+  if (
+    recipe === 'threads' &&
+    host === 'www.threads.com' &&
+    (await hasSessionCookie(page.context(), ['threads.com', 'instagram.com'])) &&
+    (await firstVisible(page, 'a[href="/activity"],[aria-label="Profile"]')) &&
+    !(await firstVisible(page, 'input[type="password"]'))
+  ) {
+    return { phase: 'authentication', status: 'READY', url: safePageUrl(page.url()) };
+  }
+  return undefined;
+}
+
+/** Allow a saved X session's account UI to hydrate, without entering or submitting credentials. */
+export async function waitForXStoredSession(
+  page: Page,
+  timeoutMs: number,
+): Promise<SmokeResult | undefined> {
+  const deadline = Date.now() + Math.min(timeoutMs, 15000);
+  while (!page.isClosed()) {
+    const result = await inspectStoredSession(page, 'x');
+    if (result) return result;
+    const unresolved = await inspectUnverifiedLogin(page, X_HOSTS);
+    if (
+      [
+        'LOGIN_REJECTED',
+        'ACCOUNT_LOCKED',
+        'CHALLENGE_REQUIRES_HUMAN',
+        'TWO_FACTOR_REQUIRED',
+      ].includes(unresolved.status)
+    )
+      return undefined;
+    if (
+      unresolved.authState === AuthState.LOGIN_REQUIRED &&
+      (await firstVisible(page, 'input[autocomplete="username"],input[name="password"]'))
+    )
+      return undefined;
+    if (Date.now() >= deadline) return undefined;
+    await page.waitForTimeout(Math.min(1500, deadline - Date.now()));
+  }
+  return undefined;
+}
+
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
-  const file = await stat(options.authFile);
-  if (!file.isFile() || file.size > MAX_AUTH_FILE_BYTES) {
-    throw new SafeCliError('AUTH_FILE_SIZE_INVALID');
-  }
-  const source = await readFile(options.authFile, 'utf8');
   const recipeKey = recipeKeyForPlatform(options.platform);
-  const record = selectRecord(authRecordsFromTsv(source), options, recipeKey);
-  assertSupportedLoginMethod(record, recipeKey);
+  let record: AuthRecord;
+  if (options.authFile) {
+    const file = await stat(options.authFile);
+    if (!file.isFile() || file.size > MAX_AUTH_FILE_BYTES)
+      throw new SafeCliError('AUTH_FILE_SIZE_INVALID');
+    let source = await readFile(options.authFile, 'utf8');
+    record = selectRecord(authRecordsFromTsv(source), options, recipeKey);
+    source = '';
+  } else {
+    // Local manual login needs only a stable label. No CSV or password is requested or copied.
+    record = {
+      rowNumber: 0,
+      sequence: '',
+      platform: 'x',
+      loginMethod: 'MANUAL',
+      user: options.accountLabel,
+      password: '',
+      twoFactor: '',
+      loginUrl: '',
+      profileUrl: '',
+    };
+  }
+  if ([record.user, record.password, record.twoFactor].some((value) => value.includes('\uFFFD'))) {
+    throw new SafeCliError('CREDENTIAL_ENCODING_INVALID');
+  }
+  if (options.authFile) assertSupportedLoginMethod(record, recipeKey);
   const host =
-    recipeKey === 'devto'
-      ? 'dev.to'
-      : recipeKey === 'instagram'
-        ? 'www.instagram.com'
-        : 'www.threads.com';
+    recipeKey === 'x'
+      ? 'x.com'
+      : recipeKey === 'devto'
+        ? 'dev.to'
+        : recipeKey === 'instagram'
+          ? 'www.instagram.com'
+          : 'www.threads.com';
   const reference = accountReference(record);
   if (!options.executeLiveLogin) {
     console.log(
@@ -973,44 +1277,181 @@ async function main(): Promise<void> {
   }
 
   const allowedHosts =
-    recipeKey === 'devto'
-      ? ['dev.to', 'accounts.google.com']
-      : recipeKey === 'instagram'
-        ? ['instagram.com']
-        : ['threads.com', 'instagram.com'];
+    recipeKey === 'x'
+      ? X_HOSTS
+      : recipeKey === 'devto'
+        ? ['dev.to', 'accounts.google.com']
+        : recipeKey === 'instagram'
+          ? ['instagram.com']
+          : ['threads.com', 'instagram.com'];
   const networkGuard = new BrowserNetworkGuard();
   let proxy: BrowserNetworkProxy | undefined;
-  let browser: Browser | undefined;
+  const session = new SessionManager(options.profilesDir);
+  const identity = { platform: recipeKey, account: reference };
+  let stage = 'browser-start';
+  let navigationStatusCode: number | undefined;
   try {
+    if (options.inspectSession && options.manualLogin)
+      throw new SafeCliError('INSPECT_AND_MANUAL_FLAGS_CONFLICT');
+    if (options.manualLogin && options.headless)
+      throw new SafeCliError('MANUAL_LOGIN_REQUIRES_VISIBLE_BROWSER');
+    // Normal runtime env loading; never print values. The CSV itself is not copied into the profile.
+    if (!process.env.BROWSER_SESSION_ENCRYPTION_KEY) {
+      try {
+        process.loadEnvFile();
+      } catch {
+        /* An explicitly supplied env key can be used without .env. */
+      }
+    }
+    const snapshots = await createPrivateFileSessionStore(
+      options.profilesDir,
+      process.env.BROWSER_SESSION_ENCRYPTION_KEY,
+    );
+    const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined;
+    await assertChromiumInstalled(executablePath);
     proxy = await networkGuard.startProxy();
-    browser = await chromium.launch({
+    const page = await session.open(identity, {
       headless: options.headless,
+      ...(executablePath ? { executablePath } : { channel: 'chromium' }),
       proxy: { server: proxy.server },
       args: ['--disable-dev-shm-usage', ...proxy.chromiumArgs],
     });
-    const context = await browser.newContext({
-      acceptDownloads: false,
-      serviceWorkers: 'block',
-    });
+    const context = session.getContext();
+    const observeNavigation = (observedPage: Page): void => {
+      observedPage.on('response', (response) => {
+        if (response.request().isNavigationRequest() && response.frame().parentFrame() === null) {
+          navigationStatusCode = response.status();
+        }
+      });
+    };
+    for (const openedPage of context.pages()) observeNavigation(openedPage);
+    context.on('page', observeNavigation);
     await networkGuard.install(context, allowedHosts);
+    const stored = await snapshots.load(session.getProfilePath(), identity);
+    const sessionCookies = stored.cookies.filter(
+      (cookie) => cookie.expires === undefined || cookie.expires === -1,
+    );
+    if (sessionCookies.length > 0) await context.addCookies(sessionCookies);
     context.setDefaultTimeout(Math.min(options.timeoutMs, 30_000));
-    const result =
-      recipeKey === 'devto'
-        ? await runDevToSmoke(context, record, options.timeoutMs)
-        : recipeKey === 'instagram'
-          ? await runInstagramSmoke(context, record, options.timeoutMs)
-          : await runThreadsSmoke(context, record, options.timeoutMs);
+    context.setDefaultNavigationTimeout(options.timeoutMs);
+    stage = 'session-preflight';
+    await page.goto(
+      recipeKey === 'x'
+        ? options.inspectSession
+          ? 'https://x.com/home'
+          : 'https://x.com/i/flow/login'
+        : recipeKey === 'devto'
+          ? 'https://dev.to/new'
+          : recipeKey === 'instagram'
+            ? 'https://www.instagram.com/'
+            : 'https://www.threads.com/',
+      { waitUntil: 'domcontentloaded', timeout: options.timeoutMs },
+    );
+    if (recipeKey === 'x') await page.waitForTimeout(1500);
+    let result =
+      options.inspectSession && recipeKey === 'x'
+        ? await waitForXStoredSession(page, options.timeoutMs)
+        : await inspectStoredSession(page, recipeKey);
+    const reusedSession = Boolean(result);
+    if (!result && options.inspectSession) {
+      result = await inspectUnverifiedLogin(page, [
+        host,
+        'accounts.google.com',
+        'www.instagram.com',
+      ]);
+    }
+    if (!result && !options.manualLogin && (await hasHumanChallenge(page))) {
+      result = {
+        phase: 'login-page',
+        status: 'CHALLENGE_REQUIRES_HUMAN',
+        url: safePageUrl(page.url()),
+      };
+    }
+    if (!result && options.manualLogin) {
+      console.log(
+        JSON.stringify({
+          platform: recipeKey,
+          accountRef: reference,
+          status: 'MANUAL_LOGIN_REQUIRED',
+          profilePath: session.getProfilePath(),
+          message:
+            'Đăng nhập trong Chromium này, hoàn thành xác thực và mở editor. Session được lưu khi có bằng chứng đã đăng nhập.',
+        }),
+      );
+      await waitForManualIntervention({
+        ...identity,
+        type: 'LOGIN',
+        timeout: options.timeoutMs,
+        check: async () => {
+          for (const active of context.pages()) {
+            const verified = await inspectStoredSession(active, recipeKey);
+            if (verified) {
+              result = verified;
+              return true;
+            }
+          }
+          return false;
+        },
+      });
+    } else if (!result) {
+      stage = 'authentication';
+      result =
+        recipeKey === 'devto'
+          ? await runDevToSmoke(context, record, options.timeoutMs)
+          : recipeKey === 'instagram'
+            ? await runInstagramSmoke(context, record, options.timeoutMs)
+            : recipeKey === 'x'
+              ? await runXSmoke(context, record, options.timeoutMs)
+              : await runThreadsSmoke(context, record, options.timeoutMs);
+    }
+    if (!result) throw new SafeCliError('SESSION_NOT_VERIFIED');
+    if (result.status === 'READY') {
+      let verified = false;
+      for (const active of context.pages()) {
+        if (!active.isClosed() && (await inspectStoredSession(active, recipeKey))) {
+          verified = true;
+          break;
+        }
+      }
+      if (!verified) result = { ...result, status: 'SESSION_NOT_VERIFIED' };
+    }
+    const sessionSaved = result.status === 'READY';
+    if (sessionSaved && !options.inspectSession)
+      await snapshots.save(
+        session.getProfilePath(),
+        identity,
+        await captureAllowedStorageState(context, allowedHosts),
+      );
     console.log(
       JSON.stringify({
         platform: recipeKey,
         accountRef: reference,
         host,
+        profilePath: session.getProfilePath(),
+        reusedSession,
+        sessionSaved: sessionSaved && !options.inspectSession,
+        mode: options.inspectSession ? 'SESSION_CHECK_ONLY' : 'LOGIN',
         ...result,
       }),
     );
     if (result.status !== 'READY') process.exitCode = 2;
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        status: 'ERROR',
+        platform: recipeKey,
+        accountRef: reference,
+        stage,
+        navigationStatusCode,
+        errorCode: safeRuntimeErrorCode(error),
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+      }),
+    );
+    process.exitCode = 1;
   } finally {
-    await browser?.close().catch(() => undefined);
+    record.password = '';
+    record.twoFactor = '';
+    await session.close();
     await proxy?.close().catch(() => undefined);
   }
 }
@@ -1020,7 +1461,7 @@ if (require.main === module) {
     console.error(
       JSON.stringify({
         status: 'ERROR',
-        errorCode: error instanceof SafeCliError ? error.code : 'UNEXPECTED_RUNTIME_ERROR',
+        errorCode: safeRuntimeErrorCode(error),
         errorType: error instanceof Error ? error.name : 'UnknownError',
       }),
     );

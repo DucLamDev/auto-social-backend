@@ -1,10 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AccountStatus } from '@prisma/client';
-import { constants } from 'node:fs';
-import { access } from 'node:fs/promises';
 import { chromium, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from 'playwright';
 import { sha256 } from '../../common/utils/crypto.utils';
+import { assertChromiumInstalled } from './browser-chromium';
+import {
+  browserContextOptions,
+  browserProxyName,
+  resolveBrowserContextProfile,
+} from './browser-context-profile';
 import { PrismaService } from '../../database/prisma.service';
 import { RedisService } from '../../queue/redis.service';
 import { RedisLockLease } from '../../queue/redis-lock-lease';
@@ -93,8 +97,11 @@ export class BrowserLoginCaptureService {
       const startUrl = recipe.startUrl(loaded.account);
       await assertPublicBrowserUrl(startUrl, recipe.allowedHosts);
       const state = await this.sessions.load(accountId, loaded.account.credentials.storageState);
-      await this.assertChromiumInstalled();
-      networkProxy = await this.networkGuard.startProxy();
+      // Capture through the same profile and egress proxy that publishing will
+      // reuse, so the platform sees one consistent environment for this account.
+      const profile = resolveBrowserContextProfile(loaded.account.settings);
+      await assertChromiumInstalled(this.executablePath);
+      networkProxy = await this.networkGuard.startProxy(browserProxyName(loaded.account.settings));
       browser = await chromium.launch({
         headless: false,
         ...(this.executablePath ? { executablePath: this.executablePath } : {}),
@@ -102,6 +109,7 @@ export class BrowserLoginCaptureService {
         args: ['--disable-dev-shm-usage', ...networkProxy.chromiumArgs],
       });
       context = await browser.newContext({
+        ...browserContextOptions(profile),
         acceptDownloads: false,
         serviceWorkers: 'block',
         storageState: state as Exclude<BrowserContextOptions['storageState'], string | undefined>,
@@ -179,18 +187,5 @@ export class BrowserLoginCaptureService {
       if (!page.isClosed() && await recipe.isEditorReady(page).catch(() => false)) return page;
     }
     return undefined;
-  }
-
-  private async assertChromiumInstalled(): Promise<void> {
-    const executablePath = this.executablePath ?? chromium.executablePath();
-    try {
-      await access(executablePath, constants.F_OK);
-    } catch {
-      throw new Error(
-        `Chromium executable was not found at '${executablePath}'. `
-        + 'Run "pnpm browser:install" in social-publisher-backend, '
-        + 'or set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to a valid Chromium executable.',
-      );
-    }
   }
 }

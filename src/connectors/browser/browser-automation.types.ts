@@ -1,5 +1,7 @@
 import type { Page } from 'playwright';
 import type { ConnectorAccount, PostPayload } from '../core/connector.types';
+import type { BrowserDiagnosticsArtifact } from './browser-diagnostics';
+import type { AuthRecoveryResult, PlatformAuthAdapter } from '../../auth/auth.types';
 
 export interface BrowserStorageCookie extends Record<string, unknown> {
   name: string;
@@ -19,7 +21,8 @@ export interface BrowserStorageState {
 }
 
 export type BrowserChallengeKind =
-  'CAPTCHA_REQUIRED' | 'LOGIN_REQUIRED' | 'SECURITY_CHECK_REQUIRED' | 'TWO_FACTOR_REQUIRED';
+  'CAPTCHA_REQUIRED' | 'LOGIN_REQUIRED' | 'SECURITY_CHECK_REQUIRED' | 'TWO_FACTOR_REQUIRED'
+  | 'EMAIL_VERIFICATION_REQUIRED' | 'DEVICE_CONFIRMATION_REQUIRED' | 'SESSION_EXPIRED' | 'UNKNOWN_AUTH_CHALLENGE';
 
 export interface BrowserChallenge {
   kind: BrowserChallengeKind;
@@ -63,6 +66,7 @@ export interface BrowserRecipePublishResult {
  * recipe by key; they can never inject JavaScript or arbitrary browser steps.
  */
 export interface BrowserPublishRecipe {
+  readonly authSelectors?: PlatformAuthAdapter['selectors'];
   readonly key: string;
   readonly allowedHosts: readonly string[];
   readonly finalSubmitPolicy: 'AUTOMATED' | 'HUMAN_REQUIRED';
@@ -75,6 +79,7 @@ export interface BrowserPublishRecipe {
 }
 
 export interface BrowserAutomationNeedsAction {
+  authRecovery?: AuthRecoveryResult;
   status: 'NEEDS_ACTION';
   reason:
     | BrowserChallengeKind
@@ -90,6 +95,8 @@ export interface BrowserAutomationNeedsAction {
   challengeKind?: BrowserChallengeKind;
   reconciliationRequired?: boolean;
   submissionUncertain?: boolean;
+  /** Pointer to on-disk failure evidence (screenshot/HTML/trace), when captured. */
+  diagnostics?: BrowserDiagnosticsArtifact;
 }
 
 export interface BrowserAutomationPublished {

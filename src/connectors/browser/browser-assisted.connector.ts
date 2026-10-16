@@ -98,6 +98,8 @@ export class BrowserAssistedConnector implements SocialPublisher {
               submissionUncertain: true,
             }
           : {}),
+        ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+        ...(result.authRecovery ? { authRecovery: result.authRecovery } : {}),
       },
     };
   }

@@ -14,12 +14,20 @@ export class BrowserSessionStateStore {
     return Promise.resolve(seed === undefined ? { ...EMPTY_STORAGE_STATE } : this.normalize(seed));
   }
 
-  async save(accountId: string, state: unknown): Promise<void> {
+  async save(accountId: string, state: unknown, requireActive = false): Promise<void> {
     const storageState = this.normalize(state);
+    if (requireActive) {
+      await this.credentials.merge(accountId, { storageState }, { requireActive: true });
+      return;
+    }
     await this.credentials.merge(accountId, { storageState });
   }
 
   normalize(value: unknown): BrowserStorageState {
+    return BrowserSessionStateStore.normalize(value);
+  }
+
+  static normalize(value: unknown): BrowserStorageState {
     let candidate = value;
     if (typeof candidate === 'string') {
       if (Buffer.byteLength(candidate, 'utf8') > MAX_STORAGE_STATE_BYTES) {

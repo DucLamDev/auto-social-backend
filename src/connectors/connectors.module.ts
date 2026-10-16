@@ -74,6 +74,7 @@ const implementations = [
     ConnectorAccountsService,
     BrowserLoginCaptureService,
     BrowserRecipeRegistry,
+    BrowserAutomationService,
   ],
 })
 export class ConnectorsModule {}

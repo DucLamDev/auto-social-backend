@@ -63,12 +63,16 @@ export class CredentialsService {
    * credential fields. The optimistic compare prevents a browser worker from
    * overwriting a credential update performed by another API/worker replica.
    */
-  async merge(platformAccountId: string, patch: Record<string, unknown>): Promise<void> {
+  async merge(platformAccountId: string, patch: Record<string, unknown>, options: { requireActive?: boolean } = {}): Promise<void> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const current = await this.prisma.platformCredential.findUnique({
         where: { platformAccountId },
-        select: { encryptedPayload: true, updatedAt: true },
+        select: { encryptedPayload: true, updatedAt: true, status: true, expiresAt: true },
       });
+      if (options.requireActive && (!current || current.status !== CredentialStatus.ACTIVE
+        || (current.expiresAt && current.expiresAt.getTime() <= Date.now()))) {
+        throw new Error('Credential was revoked or expired; explicit login is required');
+      }
       if (!current) {
         try {
           await this.prisma.platformCredential.create({
@@ -88,7 +92,10 @@ export class CredentialsService {
       const payload = { ...this.encryption.decrypt(current.encryptedPayload), ...patch };
       const encryptedPayload = this.encryption.encrypt(payload);
       const updated = await this.prisma.platformCredential.updateMany({
-        where: { platformAccountId, updatedAt: current.updatedAt },
+        where: { platformAccountId, updatedAt: current.updatedAt,
+          ...(options.requireActive ? { status: CredentialStatus.ACTIVE,
+            OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] } : {}),
+        },
         data: {
           encryptedPayload,
           keyVersion: this.encryption.keyVersion,

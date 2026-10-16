@@ -34,6 +34,10 @@ export interface Environment {
   BROWSER_AUTOMATION_ENABLED: boolean;
   BROWSER_AUTOMATION_HEADLESS: boolean;
   BROWSER_AUTOMATION_TIMEOUT_MS: number;
+  BROWSER_AUTH_RECOVERY_ENABLED: boolean;
+  AUTH_WAIT_TIMEOUT: number;
+  CAPTCHA_WAIT_TIMEOUT: number;
+  MAX_AUTH_ATTEMPTS: number;
   PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?: string;
 }
 
@@ -126,6 +130,14 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT is invalid');
   const rabbitmqPrefetch = parsePositiveInteger(raw.RABBITMQ_PREFETCH, 'RABBITMQ_PREFETCH', 10);
   const browserAutomationEnabled = parseBoolean(raw.BROWSER_AUTOMATION_ENABLED, 'BROWSER_AUTOMATION_ENABLED', false);
+  const authRecoveryEnabled = parseBoolean(raw.BROWSER_AUTH_RECOVERY_ENABLED, 'BROWSER_AUTH_RECOVERY_ENABLED', false);
+  const authWaitTimeout = parsePositiveInteger(raw.AUTH_WAIT_TIMEOUT, 'AUTH_WAIT_TIMEOUT', 300_000);
+  const captchaWaitTimeout = parsePositiveInteger(raw.CAPTCHA_WAIT_TIMEOUT, 'CAPTCHA_WAIT_TIMEOUT', 300_000);
+  const maxAuthAttempts = parsePositiveInteger(raw.MAX_AUTH_ATTEMPTS, 'MAX_AUTH_ATTEMPTS', 3);
+  if (authWaitTimeout > 900_000 || captchaWaitTimeout > 900_000) {
+    throw new Error('Authentication wait timeouts must not exceed 900000');
+  }
+  if (maxAuthAttempts > 3) throw new Error('MAX_AUTH_ATTEMPTS must not exceed 3');
   const browserAutomationHeadless = parseBoolean(raw.BROWSER_AUTOMATION_HEADLESS, 'BROWSER_AUTOMATION_HEADLESS', true);
   const browserAutomationTimeoutMs = parsePositiveInteger(
     raw.BROWSER_AUTOMATION_TIMEOUT_MS,
@@ -135,6 +147,20 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   if (browserAutomationTimeoutMs > 300_000) {
     throw new Error('BROWSER_AUTOMATION_TIMEOUT_MS must not exceed 300000');
   }
+  const browserDiagnosticsEnabled = parseBoolean(
+    raw.BROWSER_DIAGNOSTICS_ENABLED,
+    'BROWSER_DIAGNOSTICS_ENABLED',
+    true,
+  );
+  const browserDiagnosticsDir =
+    typeof raw.BROWSER_DIAGNOSTICS_DIR === 'string' && raw.BROWSER_DIAGNOSTICS_DIR.trim()
+      ? raw.BROWSER_DIAGNOSTICS_DIR.trim()
+      : undefined;
+  const browserDiagnosticsRetentionHours = parsePositiveInteger(
+    raw.BROWSER_DIAGNOSTICS_RETENTION_HOURS,
+    'BROWSER_DIAGNOSTICS_RETENTION_HOURS',
+    72,
+  );
   const legacyOpenAiTimeoutMs = parsePositiveInteger(raw.OPENAI_TIMEOUT_MS, 'OPENAI_TIMEOUT_MS', 60_000);
   const aiTimeoutMs = raw.AI_TIMEOUT_MS === undefined
     ? legacyOpenAiTimeoutMs
@@ -184,8 +210,15 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
     LOG_LEVEL: logLevel,
     RABBITMQ_PREFETCH: rabbitmqPrefetch,
     BROWSER_AUTOMATION_ENABLED: browserAutomationEnabled,
+    BROWSER_AUTH_RECOVERY_ENABLED: authRecoveryEnabled,
+    AUTH_WAIT_TIMEOUT: authWaitTimeout,
+    CAPTCHA_WAIT_TIMEOUT: captchaWaitTimeout,
+    MAX_AUTH_ATTEMPTS: maxAuthAttempts,
     BROWSER_AUTOMATION_HEADLESS: browserAutomationHeadless,
     BROWSER_AUTOMATION_TIMEOUT_MS: browserAutomationTimeoutMs,
+    BROWSER_DIAGNOSTICS_ENABLED: browserDiagnosticsEnabled,
+    BROWSER_DIAGNOSTICS_DIR: browserDiagnosticsDir,
+    BROWSER_DIAGNOSTICS_RETENTION_HOURS: browserDiagnosticsRetentionHours,
     AI_DEFAULT_PROVIDER: aiDefaultProvider,
     AI_TIMEOUT_MS: aiTimeoutMs,
     OPENAI_TIMEOUT_MS: legacyOpenAiTimeoutMs,

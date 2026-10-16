@@ -4,6 +4,10 @@ import { CredentialsService } from '../credentials/credentials.service';
 import { PrismaService } from '../database/prisma.service';
 import { CreatePlatformAccountDto } from './dto/create-platform-account.dto';
 import { BrowserRecipeRegistry } from '../connectors/browser/browser-recipe.registry';
+import {
+  assertBrowserProfileSettings,
+  BrowserProfileSettingError,
+} from '../connectors/browser/browser-context-profile';
 import { hasUsableBrowserStorageState } from '../connectors/browser/browser-session-readiness';
 import { RedisService } from '../queue/redis.service';
 import { RedisLockLease } from '../queue/redis-lock-lease';
@@ -42,11 +46,24 @@ const BROWSER_EDITABLE_SETTINGS = new Set([
   'threadPrefixId',
   'automationPermissionAttested',
   'browserAutoSubmit',
+  'browserAutoTotp',
+  'browserProxy',
+  'browserLocale',
+  'browserTimezone',
+  'browserViewport',
   'rateLimit',
   'rateWindowSeconds',
 ]);
 
-const BROWSER_NAVIGATION_SETTINGS = new Set(['forumPath']);
+// Changing these invalidates the last connection test: a session captured
+// through another egress proxy or browser profile must be re-verified.
+const BROWSER_NAVIGATION_SETTINGS = new Set([
+  'forumPath',
+  'browserProxy',
+  'browserLocale',
+  'browserTimezone',
+  'browserViewport',
+]);
 
 function asSettings(value: Prisma.JsonValue): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -90,10 +107,16 @@ function assertBrowserEditableSettings(settings: Record<string, unknown>): void 
       throw new BadRequestException('threadPrefixId must be empty or numeric');
     }
   }
-  for (const key of ['automationPermissionAttested', 'browserAutoSubmit'] as const) {
+  for (const key of ['automationPermissionAttested', 'browserAutoSubmit', 'browserAutoTotp'] as const) {
     if (settings[key] !== undefined && typeof settings[key] !== 'boolean') {
       throw new BadRequestException(`${key} must be a boolean`);
     }
+  }
+  try {
+    assertBrowserProfileSettings(settings);
+  } catch (error) {
+    if (error instanceof BrowserProfileSettingError) throw new BadRequestException(error.message);
+    throw error;
   }
   for (const [key, maximum] of [['rateLimit', 1_000], ['rateWindowSeconds', 86_400]] as const) {
     const value = settings[key];
