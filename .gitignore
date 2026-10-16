@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 coverage/
 .env
@@ -11,3 +11,6 @@ tmp/
 uploads/
 auth*.csv
 *.storage-state.json
+profiles/
+logs/screenshots/
+logs/bot-publish/

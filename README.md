@@ -2,6 +2,12 @@
 
 Backend độc lập cho nền tảng phân phối nội dung đa kênh. Repository này là nguồn sự thật của REST/OpenAPI; frontend chỉ giao tiếp qua `/api/v1` và không truy cập database, queue hoặc social credential.
 
+Kiểm tra đăng nhập CSV, đăng nhập thủ công trong đúng profile và tái sử dụng session được mô tả tại
+[AUTH_RECOVERY.md](AUTH_RECOVERY.md#đăng-nhập-từ-danh-sách-csv-và-giữ-phiên-cục-bộ). Công cụ smoke chỉ kiểm tra
+login; đăng bài dùng connector/publisher tương ứng khi có credential và hạ tầng backend hoạt động.
+
+Kiểm thử X bằng Chrome đã cài trên máy Windows 10: [WINDOWS_X_LOGIN.md](WINDOWS_X_LOGIN.md).
+
 ## Trạng thái MVP
 
 - NestJS 11, TypeScript strict, PostgreSQL/Prisma, RabbitMQ, Redis, MinIO/S3.
@@ -90,6 +96,13 @@ Tài khoản seed lấy từ `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`. Productio
 
 ## Lệnh chất lượng
 
+Browser publisher có luồng phục hồi CAPTCHA/2FA với người vận hành, persistent profile và OTP nhập ẩn:
+`pnpm bot login <platform> <account>`, `pnpm bot auth-check`, `pnpm bot post`, `pnpm bot publish-all` và
+`pnpm bot accounts`. `publish-all --skip-auth-blocked` bỏ qua account cần xác thực. Xem cú pháp đầy đủ, cấu hình
+timeout và giới hạn nền tảng trong [AUTH_RECOVERY.md](AUTH_RECOVERY.md).
+Account do bạn quản lý có thể bật `browserAutoTotp=true` để bot tự sinh/nhập TOTP từ secret được cấu hình riêng
+trong environment. CAPTCHA/Cloudflare vẫn cần người dùng hoàn thành; hướng dẫn lưu secret và giới hạn ở tài liệu trên.
+
 ```bash
 corepack pnpm prisma:generate
 corepack pnpm lint
@@ -140,6 +153,10 @@ ContentSource → SourceArticle → Content → AI ContentVariant
 - [SECURITY.md](SECURITY.md)
 - [DEPLOYMENT.md](DEPLOYMENT.md)
 - [SOCIAL_CONFIGURATION.md](SOCIAL_CONFIGURATION.md)
+- [SOCIAL_API_SETUP_GUIDE.md](SOCIAL_API_SETUP_GUIDE.md) — lấy token/key từng nền tảng và điền vào form
+- [OPERATIONS_REVIEW.md](OPERATIONS_REVIEW.md) — rà soát vận hành và kế hoạch hoàn thiện
 - [DISCOURSE_CONFIGURATION.md](DISCOURSE_CONFIGURATION.md)
+- [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md)
+- [AUTH_RECOVERY.md](AUTH_RECOVERY.md) — persistent profile, CAPTCHA/2FA thủ công, OTP nhập ẩn và CLI `pnpm bot`
 - [EXTENDED_PLATFORM_CATALOG.md](EXTENDED_PLATFORM_CATALOG.md)
 - [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md)

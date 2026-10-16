@@ -23,15 +23,18 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage --runInBand",
     "test:e2e": "jest --config test/jest-e2e.json --runInBand",
+    "test:auth:browser": "jest --runInBand --runTestsByPath src/auth/auth-browser.integration.spec.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
     "openapi:export": "ts-node scripts/export-openapi.ts",
     "cli": "ts-node src/cli.ts",
+    "bot": "ts-node src/bot.ts",
     "browser:login": "ts-node src/cli.ts browser:login",
     "browser:install": "playwright install chromium",
-    "social:auth-smoke": "tsx scripts/social-auth-smoke.ts"
+    "social:auth-smoke": "tsx scripts/social-auth-smoke.ts",
+    "social:auth-live-smoke": "tsx scripts/auth-live-smoke.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

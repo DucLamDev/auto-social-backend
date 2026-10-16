@@ -3,13 +3,17 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import { RedisService } from '../../queue/redis.service';
 import { BrowserAutomationService } from './browser-automation.service';
 import { BrowserChallengeDetector } from './browser-challenge.detector';
-import { BrowserNetworkGuard } from './browser-network-guard.service';
+import { BrowserNetworkGuard, BrowserProxyConfigurationError } from './browser-network-guard.service';
 import { BrowserMediaPreparationService } from './browser-media-preparation.service';
 import type { BrowserPublishRecipe } from './browser-automation.types';
 import { BrowserSessionStateStore } from './browser-session-state.store';
 import { BrowserSubmissionAuthorizationService } from './browser-submission-authorization.service';
 
 jest.mock('playwright', () => ({ chromium: { launch: jest.fn() } }));
+jest.mock('./browser-chromium', () => ({
+  assertChromiumInstalled: jest.fn().mockResolvedValue(undefined),
+  BrowserRuntimeUnavailableError: class BrowserRuntimeUnavailableError extends Error {},
+}));
 jest.mock('./browser-navigation-safety', () => ({
   assertPublicBrowserUrl: jest.fn().mockResolvedValue(new URL('https://example.com/editor')),
   safeBrowserActionUrl: jest.fn((value: string) => value),
@@ -511,3 +515,109 @@ function browserSubmitAuthorization(
   } as unknown as BrowserSubmissionAuthorizationService;
 }
 
+
+describe('BrowserAutomationService context consistency', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  function serviceWith(guard: BrowserNetworkGuard): BrowserAutomationService {
+    return new BrowserAutomationService(
+      {
+        get: jest.fn((key: string, fallback: unknown) =>
+          key === 'BROWSER_AUTOMATION_ENABLED' ? true : fallback,
+        ),
+      } as unknown as ConfigService,
+      {
+        load: jest.fn().mockResolvedValue({ cookies: [], origins: [] }),
+        save: jest.fn().mockResolvedValue(undefined),
+      } as unknown as BrowserSessionStateStore,
+      { detect: jest.fn().mockResolvedValue(undefined) } as unknown as BrowserChallengeDetector,
+      {
+        acquireLock: jest.fn().mockResolvedValue('lock-token'),
+        extendLock: jest.fn().mockResolvedValue(true),
+        releaseLock: jest.fn().mockResolvedValue(true),
+      } as unknown as RedisService,
+      guard,
+      { withPreparedImages: jest.fn() } as unknown as BrowserMediaPreparationService,
+      browserSubmitAuthorization(),
+    );
+  }
+
+  const recipe = {
+    key: 'example',
+    allowedHosts: ['example.com'],
+    finalSubmitPolicy: 'AUTOMATED',
+    startUrl: jest.fn().mockReturnValue('https://example.com/editor'),
+    isEditorReady: jest.fn().mockResolvedValue(true),
+    prepare: jest.fn(),
+    submit: jest.fn(),
+  } satisfies BrowserPublishRecipe;
+
+  it('launches full Chromium through the account proxy with the account profile', async () => {
+    const page = {
+      goto: jest.fn().mockResolvedValue(undefined),
+      url: jest.fn().mockReturnValue('https://example.com/editor'),
+    } as unknown as Page;
+    const newContext = jest.fn().mockResolvedValue({
+      setDefaultTimeout: jest.fn(),
+      setDefaultNavigationTimeout: jest.fn(),
+      newPage: jest.fn().mockResolvedValue(page),
+      storageState: jest.fn().mockResolvedValue({ cookies: [], origins: [] }),
+      close: jest.fn().mockResolvedValue(undefined),
+    });
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const launch = chromium.launch as jest.MockedFunction<typeof chromium.launch>;
+    launch.mockResolvedValue({
+      newContext,
+      close: jest.fn().mockResolvedValue(undefined),
+    } as unknown as Browser);
+    const guard = browserNetworkGuard();
+
+    await expect(serviceWith(guard).inspect(
+      {
+        id: 'account-1',
+        settings: {
+          browserProxy: 'vn-1',
+          browserLocale: 'en-US',
+          browserTimezone: 'Europe/Berlin',
+          browserViewport: '1440x900',
+        },
+        credentials: { storageState: { cookies: [], origins: [] } },
+      },
+      recipe,
+    )).resolves.toMatchObject({ ready: true });
+
+    expect((guard as unknown as { startProxy: jest.Mock }).startProxy).toHaveBeenCalledWith('vn-1');
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ channel: 'chromium' }));
+    expect(newContext).toHaveBeenCalledWith(expect.objectContaining({
+      locale: 'en-US',
+      timezoneId: 'Europe/Berlin',
+      viewport: { width: 1440, height: 900 },
+    }));
+  });
+
+  it('reports a missing proxy configuration to the operator without launching', async () => {
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const launch = chromium.launch as jest.MockedFunction<typeof chromium.launch>;
+    const guard = {
+      startProxy: jest.fn().mockRejectedValue(new BrowserProxyConfigurationError(
+        "Browser proxy 'vn-9' is not configured on this server",
+      )),
+      install: jest.fn(),
+    } as unknown as BrowserNetworkGuard;
+
+    await expect(serviceWith(guard).publish(
+      {
+        id: 'account-1',
+        settings: { browserProxy: 'vn-9', browserAutoSubmit: true },
+        credentials: { storageState: { cookies: [], origins: [] } },
+      },
+      { body: 'Body', idempotencyKey: 'job-1' },
+      recipe,
+    )).resolves.toMatchObject({
+      status: 'NEEDS_ACTION',
+      reason: 'AUTOMATION_FAILED',
+      message: expect.stringContaining("'vn-9' is not configured") as string,
+    });
+    expect(launch).not.toHaveBeenCalled();
+  });
+});

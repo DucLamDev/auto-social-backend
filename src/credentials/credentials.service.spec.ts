@@ -5,6 +5,31 @@ import { CredentialEncryptionService } from './credential-encryption.service';
 import { CredentialsService } from './credentials.service';
 
 describe('CredentialsService', () => {
+  it('refuses to reactivate a revoked credential during automatic auth recovery', async () => {
+    const decrypt = jest.fn();
+    const updateMany = jest.fn();
+    const service = new CredentialsService({ platformCredential: {
+      findUnique: jest.fn().mockResolvedValue({ status: 'REVOKED', expiresAt: null, encryptedPayload: 'revoked' }), updateMany,
+    } } as unknown as PrismaService, { decrypt } as unknown as CredentialEncryptionService, {} as ConfigService);
+    await expect(service.merge('account-1', { storageState: { cookies: [], origins: [] } }, { requireActive: true })).rejects.toThrow('revoked');
+    expect(decrypt).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('preserves revocation when it races an encrypted session refresh', async () => {
+    const updatedAt = new Date('2026-10-13T00:00:00Z');
+    const updateMany = jest.fn().mockResolvedValue({ count: 0 });
+    const service = new CredentialsService({ platformCredential: {
+      findUnique: jest.fn().mockResolvedValueOnce({ status: 'ACTIVE', expiresAt: null, encryptedPayload: 'before', updatedAt })
+        .mockResolvedValueOnce({ status: 'REVOKED', expiresAt: null, encryptedPayload: 'revoked', updatedAt }), updateMany,
+    } } as unknown as PrismaService, { decrypt: jest.fn().mockReturnValue({}), encrypt: jest.fn().mockReturnValue('after'), keyVersion: 'v1' } as unknown as CredentialEncryptionService, {} as ConfigService);
+    await expect(service.merge('account-1', { storageState: { cookies: [], origins: [] } }, { requireActive: true })).rejects.toThrow('revoked');
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      updatedAt, status: 'ACTIVE', OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) as unknown } }],
+    }) as unknown }));
+  });
+
   it('resolves only active, unexpired credential payloads', async () => {
     const decrypt = jest.fn().mockReturnValue({ apiKey: 'secret' });
     const findUniqueOrThrow = jest.fn().mockResolvedValue({
