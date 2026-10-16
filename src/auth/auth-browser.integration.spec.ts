@@ -55,7 +55,7 @@ browserSuite('Auth recovery with real Chromium and synthetic HTTPS fixtures', ()
         };</script>`,
     }));
     const result = await runXSmoke(session.getContext(), { rowNumber: 1, sequence: '1', platform: 'X (Twitter)', loginMethod: 'User + Password',
-      user: 'fixture-user', password: 'fixture-password', twoFactor: '', loginUrl: '', profileUrl: '' }, 15000);
+      user: 'fixture-user', password: '', twoFactor: '', loginUrl: '', profileUrl: '' }, 15000);
     expect(result).toMatchObject({ status: 'READY', authState: AuthState.AUTHENTICATED });
     const xPage = session.getContext().pages().find((candidate) => candidate.url() === 'https://x.com/home')!;
     expect(await xPage.evaluate(() => [localStorage.getItem('identifier-count'), localStorage.getItem('password-count')])).toEqual(['1', '1']);

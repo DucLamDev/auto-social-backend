@@ -151,7 +151,7 @@ describe('social auth smoke helpers', () => {
       loginUrl: '',
       loginMethod: 'Gmail / Google Auth',
       user: 'fixture-user',
-      password: 'fixture-password',
+      password: '',
       twoFactor: '',
       profileUrl: 'https://dev.to/old',
     };
