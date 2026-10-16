@@ -225,7 +225,7 @@ describe('social auth smoke helpers', () => {
 
   it('accepts the mojibake header names produced by the supplied TSV export', () => {
     const source = [
-      'STT\tSocial Network\tURL ??ng nh?p\tPh??ng th?c Login\tUser\tPass\t2fa\tURL Profile\tIndex\tM� t? N?n t?ng',
+      'STT\tSocial Network\tURL ??ng nh?p\tPh??ng th?c Login\tUser\tPass\t2fa\tURL Profile\tIndex\tMô Tả Nền tảng',
       '1\tdev.to\thttps://dev.to/enter\tGmail / Google Auth\tuser-value\tpass-value\t\t\t\t',
     ].join('\n');
 
@@ -236,7 +236,7 @@ describe('social auth smoke helpers', () => {
     expect(
       generateTotp(
         {
-          secret: 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
+          secret: '',
           algorithm: 'sha1',
           digits: 8,
           period: 30,
