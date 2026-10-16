@@ -157,7 +157,7 @@ browserSuite('Auth recovery with real Chromium and synthetic HTTPS fixtures', ()
     });
     const log = jest.fn();
     // Public RFC 6238 vector, not a real account seed; no external verification service.
-    const otpProvider = () => Promise.resolve(generateTotp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', 1111111111000));
+    const otpProvider = () => Promise.resolve(generateTotp('', 1111111111000));
     const makeVisible = jest.fn();
     const manager = new AuthManager(new AuthDetector(), jest.fn(), log);
     const result = await manager.ensureAuthenticated({ ...identity, adapter, getPage: () => page,
