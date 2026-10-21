@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { AccountHealthModule } from './account-health/account-health.module';
 import { AiModule } from './ai/ai.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
@@ -53,6 +54,7 @@ import { AuditModule } from './audit/audit.module';
     SettingsModule,
     OAuthModule,
     HealthModule,
+    AccountHealthModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

@@ -6252,7 +6252,7 @@
         ],
         "responses": {
           "303": {
-            "description": "OAuth completed; redirects to the frontend accounts page"
+            "description": "OAuth finished; redirects to the frontend accounts page with oauth=success or oauth=error"
           },
           "default": {
             "description": "Standard application error envelope",
@@ -6494,6 +6494,200 @@
         },
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/api/v1/account-health": {
+      "get": {
+        "operationId": "AccountHealth_attention",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AccountHealthContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Accounts needing reconnection, tokens expiring soon and publish jobs needing an operator",
+        "tags": [
+          "account-health"
+        ]
+      }
+    },
+    "/api/v1/account-health/check": {
+      "post": {
+        "operationId": "AccountHealth_check",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MaintenanceRunContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Refresh due Meta tokens and test every connected account of the current user now",
+        "tags": [
+          "account-health"
         ]
       }
     }
@@ -8707,6 +8901,149 @@
           "redis",
           "rabbitmq",
           "timestamp"
+        ]
+      },
+      "AttentionAccountContractDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CONNECTED",
+              "EXPIRED",
+              "RECONNECT_REQUIRED",
+              "DISABLED",
+              "ERROR"
+            ]
+          },
+          "platform": {
+            "type": "string"
+          },
+          "platformName": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "autoRefresh": {
+            "type": "boolean",
+            "description": "The system renews this token without the user signing in again"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "platform",
+          "platformName",
+          "expiresAt",
+          "autoRefresh"
+        ]
+      },
+      "AttentionAccountsContractDto": {
+        "type": "object",
+        "properties": {
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionAccountContractDto"
+            }
+          },
+          "expiringSoon": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionAccountContractDto"
+            }
+          }
+        },
+        "required": [
+          "problems",
+          "expiringSoon"
+        ]
+      },
+      "AttentionJobsContractDto": {
+        "type": "object",
+        "properties": {
+          "needsAction": {
+            "type": "number"
+          },
+          "failed": {
+            "type": "number"
+          },
+          "possibleDuplicate": {
+            "type": "number"
+          },
+          "retrying": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "needsAction",
+          "failed",
+          "possibleDuplicate",
+          "retrying"
+        ]
+      },
+      "AccountHealthContractDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "description": "Items an operator should act on"
+          },
+          "accounts": {
+            "$ref": "#/components/schemas/AttentionAccountsContractDto"
+          },
+          "jobs": {
+            "$ref": "#/components/schemas/AttentionJobsContractDto"
+          },
+          "alertsEnabled": {
+            "type": "boolean"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "total",
+          "accounts",
+          "jobs",
+          "alertsEnabled",
+          "generatedAt"
+        ]
+      },
+      "MaintenanceRunContractDto": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "type": "object",
+            "example": {
+              "refreshed": 1,
+              "failed": 0,
+              "skipped": 2
+            }
+          },
+          "connections": {
+            "type": "object",
+            "example": {
+              "checked": 3,
+              "failed": 0
+            }
+          }
+        },
+        "required": [
+          "tokens",
+          "connections"
         ]
       }
     }

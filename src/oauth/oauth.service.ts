@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AccountStatus } from '@prisma/client';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { CredentialsService } from '../credentials/credentials.service';
+import { isMetaProvider, MetaProvider, MetaTokenService } from '../credentials/meta-token.service';
 import { PrismaService } from '../database/prisma.service';
 import { OAuthStateService } from './oauth-state.service';
 
@@ -50,9 +51,11 @@ export class OAuthService {
     private readonly states: OAuthStateService,
     private readonly prisma: PrismaService,
     private readonly credentials: CredentialsService,
+    private readonly meta: MetaTokenService,
   ) {}
 
   async start(userId: string, providerName: string) {
+    if (isMetaProvider(providerName)) return this.startMeta(userId, providerName);
     const provider = this.provider(providerName);
     const clientId = this.requiredEnv(provider.clientIdEnv);
     this.requiredEnv(provider.clientSecretEnv);
@@ -71,11 +74,82 @@ export class OAuthService {
   }
 
   async callback(providerName: string, state: string, code: string) {
+    if (isMetaProvider(providerName)) return this.callbackMeta(providerName, state, code);
     const provider = this.provider(providerName);
     const oauthState = await this.states.consume(providerName, state);
     const token = await this.exchange(provider, code, oauthState.redirectUri);
     if (providerName === 'linkedin') return this.saveLinkedIn(oauthState.userId, token);
     return this.saveBlogger(oauthState.userId, token);
+  }
+
+  private async startMeta(userId: string, provider: MetaProvider) {
+    const definition = this.meta.definition(provider);
+    const clientId = this.meta.appId(provider);
+    this.requiredEnv(definition.appSecretEnv);
+    const redirectUri = this.callbackUrl(provider);
+    const state = await this.states.create(userId, provider, redirectUri);
+    const url = new URL(definition.authorizationEndpoint);
+    url.search = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      // Meta documents comma-separated scopes for both Instagram and Threads.
+      scope: definition.scopes.join(','),
+      state: state.state,
+    }).toString();
+    return { authorizationUrl: url.toString(), expiresInSeconds: 600 };
+  }
+
+  /**
+   * Stores a 60-day token for an Instagram professional or Threads profile.
+   * TokenMaintenanceService refreshes it before expiry, so the user only has
+   * to sign in again when Meta revokes access or the token lapses unrefreshed.
+   */
+  private async callbackMeta(provider: MetaProvider, state: string, code: string) {
+    const oauthState = await this.states.consume(provider, state);
+    const definition = this.meta.definition(provider);
+    const token = await this.meta.exchangeCode(provider, code, oauthState.redirectUri);
+    const profile = await this.meta.profile(provider, token.accessToken);
+    const platform = await this.prisma.platform.findUniqueOrThrow({ where: { slug: definition.platformSlug } });
+    const existing = await this.prisma.platformAccount.findUnique({
+      where: { platformId_externalId: { platformId: platform.id, externalId: profile.userId } },
+    });
+    if (existing && existing.ownerId !== oauthState.userId) {
+      throw new ApplicationException(ErrorCode.FORBIDDEN, `This ${platform.name} account is already linked to another user`, HttpStatus.CONFLICT);
+    }
+    const name = profile.username ? `@${profile.username}` : platform.name;
+    const apiVersion = this.meta.apiVersion(provider);
+    const account = await this.prisma.platformAccount.upsert({
+      where: { platformId_externalId: { platformId: platform.id, externalId: profile.userId } },
+      create: {
+        ownerId: oauthState.userId,
+        platformId: platform.id,
+        name,
+        username: profile.username,
+        externalId: profile.userId,
+        status: AccountStatus.CONNECTED,
+        lastTestedAt: new Date(),
+        settings: { apiVersion },
+      },
+      update: {
+        name,
+        username: profile.username,
+        status: AccountStatus.CONNECTED,
+        lastTestedAt: new Date(),
+        settings: { ...this.asRecord(existing?.settings), apiVersion },
+      },
+    });
+    // A manually pasted token would otherwise take precedence over OAuth in
+    // ConnectorAccountsService; the OAuth token is now the source of truth.
+    await this.prisma.platformCredential.deleteMany({ where: { platformAccountId: account.id } });
+    await this.credentials.upsertOAuthTokens({
+      platformAccountId: account.id,
+      accessToken: token.accessToken,
+      scopes: definition.scopes,
+      tokenType: token.tokenType ?? 'bearer',
+      expiresAt: token.expiresAt,
+    });
+    return { provider, accountIds: [account.id] };
   }
 
   private async exchange(provider: ProviderDefinition, code: string, redirectUri: string): Promise<ValidToken> {

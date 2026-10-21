@@ -4,6 +4,12 @@
 > `file:line` đã được đối chiếu với code; mục ghi *(cần kiểm chứng)* là suy luận chưa chạy thử.
 > Hướng dẫn lấy thông tin cấu hình từng nền tảng: [SOCIAL_API_SETUP_GUIDE.md](SOCIAL_API_SETUP_GUIDE.md).
 
+> **Cập nhật 21/10/2026 (bản 1.1.0):** đã xử lý T3 (Meta OAuth + tự gia hạn Instagram/Threads), T4 (cron kiểm tra
+> kết nối hằng ngày, nhắc token sắp hết hạn), T6 (lỗi OAuth quay về UI), một phần O1/Q2 (cảnh báo qua
+> `ALERT_WEBHOOK_URL`, bảng **Cần xử lý** và chuông đếm số) và phần Instagram/Threads của Q1 (lỗi đọc permalink sau
+> khi đã đăng không còn gây thử lại). Còn mở: T1, T2, T5, T7, Q1 cho các connector khác và lỗi timeout ngay bước
+> `*_publish`, DLQ consumer, graceful shutdown, tạm giữ job khi account mất kết nối.
+
 ## 1. Kết luận nhanh
 
 Phần lõi (chống trùng bằng khoá Redis, đối soát job treo, mã hoá credential, chặn SSRF) làm chắc. Hệ thống **chưa

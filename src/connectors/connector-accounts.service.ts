@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AccountStatus, CredentialStatus, PlatformMode } from '@prisma/client';
 import { CredentialsService } from '../credentials/credentials.service';
+import { isMetaProvider, META_MIN_TOKEN_AGE_MS, MetaTokenService } from '../credentials/meta-token.service';
 import { PrismaService } from '../database/prisma.service';
 import { ConnectorAccount } from './core/connector.types';
 import { ConnectorRegistryService } from './core/connector-registry.service';
@@ -36,6 +37,7 @@ export class ConnectorAccountsService {
     private readonly prisma: PrismaService,
     private readonly credentials: CredentialsService,
     private readonly registry: ConnectorRegistryService,
+    private readonly meta: MetaTokenService,
   ) {}
 
   async load(id: string): Promise<{
@@ -83,7 +85,7 @@ export class ConnectorAccountsService {
       include: {
         platform: { select: { slug: true, connectorKey: true, enabled: true, mode: true } },
         credential: { select: { id: true, status: true, expiresAt: true } },
-        oauthToken: { select: { id: true } },
+        oauthToken: { select: { id: true, updatedAt: true } },
       },
     });
     let credentialValues: Record<string, unknown> = {};
@@ -98,6 +100,30 @@ export class ConnectorAccountsService {
       }
     } else if (source.oauthToken) {
       let token = await this.credentials.resolveOAuth(id);
+      const connectorKey = source.platform.connectorKey;
+      // The hourly maintenance job normally renews Meta tokens weeks ahead;
+      // this catches a token that reached its last day while that job was down.
+      if (
+        isMetaProvider(connectorKey)
+        && token.expiresAt
+        && token.expiresAt.getTime() > Date.now()
+        && token.expiresAt.getTime() <= Date.now() + 24 * 60 * 60_000
+        && Date.now() - source.oauthToken.updatedAt.getTime() >= META_MIN_TOKEN_AGE_MS
+      ) {
+        try {
+          const renewed = await this.meta.refresh(connectorKey, token.accessToken);
+          await this.credentials.upsertOAuthTokens({
+            platformAccountId: id,
+            accessToken: renewed.accessToken,
+            scopes: token.scopes,
+            tokenType: renewed.tokenType ?? 'bearer',
+            expiresAt: renewed.expiresAt,
+          });
+          token = await this.credentials.resolveOAuth(id);
+        } catch {
+          // The current token is still valid; publish with it and let maintenance retry.
+        }
+      }
       if (token.expiresAt && token.expiresAt.getTime() <= Date.now() + 60_000) {
         if (source.platform.connectorKey === 'blogger' && token.refreshToken) {
           try {

@@ -102,4 +102,21 @@ describe('validateEnvironment', () => {
   ])('rejects an unsafe production %s', (key, value) => {
     expect(() => validateEnvironment({ ...productionEnvironment(), [key]: value })).toThrow(key);
   });
+
+  it.each([
+    ['THREADS_API_VERSION', '1.0'],
+    ['INSTAGRAM_API_VERSION', 'latest'],
+    ['ALERT_WEBHOOK_URL', 'http://hooks.example.com/alert'],
+  ])('rejects an invalid %s', (key, value) => {
+    expect(() => validateEnvironment({ ...productionEnvironment(), [key]: value })).toThrow(key);
+  });
+
+  it('accepts Meta API versions and an HTTPS alert webhook', () => {
+    expect(() => validateEnvironment({
+      ...productionEnvironment(),
+      THREADS_API_VERSION: 'v1.0',
+      INSTAGRAM_API_VERSION: 'v24.0',
+      ALERT_WEBHOOK_URL: 'https://hooks.example.com/alert',
+    })).not.toThrow();
+  });
 });

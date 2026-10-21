@@ -16,8 +16,8 @@
 | 4 | Discourse (community VPSTTT) | 1+ | Admin API key | ✅ Ngay | Không hết hạn |
 | 5 | Blogger | 4 | Google OAuth (env server) | ✅, mặc định tạo nháp | Tự refresh |
 | 6 | LinkedIn | 1 | LinkedIn OAuth (env server) | ✅ | Nối lại mỗi ~60 ngày |
-| 7 | Threads | ~15 | Token Meta nhập tay | ⚠️ Chạy 60 ngày rồi chết | Lấy lại token mỗi 60 ngày |
-| 8 | Instagram | ~17 | Token Meta nhập tay | ⚠️ Như Threads, chỉ đăng ảnh | Lấy lại token mỗi 60 ngày |
+| 7 | Threads | ~15 | Nút **Kết nối** (Meta OAuth, env server) | ✅ | Tự gia hạn |
+| 8 | Instagram | ~17 | Nút **Kết nối** (Meta OAuth, env server) | ✅, chỉ đăng ảnh | Tự gia hạn |
 | 9 | Bluesky | 1 | Access JWT nhập tay | ⛔ Chỉ để thử, ~2 giờ | Chờ sửa connector |
 | 10 | X | 1 | OAuth 2.0 user token | ⛔ Chỉ để thử, ~2 giờ, tốn phí | Chờ sửa connector |
 | 11 | WordPress self-hosted / WordPress.com | 4 (đều WordPress.com) | Application Password | ⛔ WordPress.com gói miễn phí chưa hỗ trợ | — |
@@ -44,6 +44,9 @@ ghi vào repo, tài liệu, ticket hay chat:
 | `FRONTEND_URL` | `https://app.<tên-miền>` (nơi OAuth quay về sau khi kết nối) |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Mục 5 |
 | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_API_VERSION` | Mục 6 |
+| `THREADS_APP_ID`, `THREADS_APP_SECRET` | Mục 7 |
+| `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` | Mục 8 |
+| `ALERT_WEBHOOK_URL` (tuỳ chọn) | Webhook kênh chat (Slack, Google Chat, Discord) nhận cảnh báo tài khoản/bài đăng |
 | `BROWSER_AUTOMATION_ENABLED`, `BROWSER_PROXIES` | [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md) |
 
 **Thao tác trên giao diện (chung cho mọi kênh):** đăng nhập bằng tài khoản `ADMIN` → **Tài khoản** → **Kết nối / cấu
@@ -196,63 +199,43 @@ nhập LinkedIn bằng Google, vẫn dùng được) → đồng ý.
 **Reconnect**.
 Nguồn: [Share on LinkedIn](https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/share-on-linkedin).
 
-## 7. Threads — token Meta (~15 account)
+## 7. Threads — nút Kết nối (~15 account)
 
-> Hiện hệ thống nhận token **nhập tay**, sống 60 ngày và chưa tự refresh. Làm theo mục này để chạy ngay. Với ~15
-> account, nên đợi bản OAuth + tự refresh (Giai đoạn 2) trước khi đưa toàn bộ vào chạy thật.
+Mỗi account chỉ cần đăng nhập Threads **một lần** qua nút **Kết nối**. Backend đổi sang token 60 ngày, lưu mã hoá và
+**tự gia hạn** mỗi giờ khi token còn dưới 15 ngày; không phải làm lại trừ khi Meta thu hồi quyền (đổi mật khẩu,
+gỡ quyền app). Khi đó account chuyển **Cần kết nối lại**, hiện ở bảng **Cần xử lý** trên Dashboard và được báo qua
+`ALERT_WEBHOOK_URL` nếu có.
 
 **A. Tạo app Meta** (một lần)
 1. <https://developers.facebook.com/apps> → **Create app** → use case **Access the Threads API**.
 2. **Use cases → Threads → Customize → Permissions:** thêm `threads_basic`, `threads_content_publish`.
-3. **Settings:** điền **Redirect callback URL** là một URL HTTPS của bạn, ví dụ
-   `https://app.<tên-miền>/oauth/threads` (trang không cần tồn tại, chỉ để đọc mã trên thanh địa chỉ). Điền thêm
-   Uninstall/Delete callback (có thể cùng URL).
-4. Ghi lại **Threads App ID** và **Threads App Secret** (dùng bộ của Threads, không phải App ID chung).
-5. **App roles → Roles → Add People → Threads Tester** → nhập từng username Threads. Mỗi account mở Threads →
-   **Settings → Account → Website permissions → Invites** → **Accept**. Account chưa chấp nhận sẽ không lấy được
-   token khi app chưa qua App Review.
+3. **Settings → Redirect callback URLs:** điền đúng `https://api.<tên-miền>/api/v1/oauth/threads/callback`
+   (tức `<OAUTH_REDIRECT_BASE_URL>/threads/callback`). Điền Uninstall/Delete callback (có thể cùng URL).
+4. Ghi **Threads App ID** và **Threads App Secret** (bộ của Threads, không phải App ID chung) → nhờ quản trị đặt
+   `THREADS_APP_ID`, `THREADS_APP_SECRET` ở Bí mật của dự án; `THREADS_API_VERSION` mặc định `v1.0`.
+5. Khi app **chưa qua App Review** quyền `threads_content_publish`: **App roles → Roles → Add People → Threads
+   Tester** cho từng username; mỗi account mở Threads → **Settings → Account → Website permissions → Invites** →
+   **Accept**. Sau App Review thì không cần bước này.
 
-**B. Lấy token cho từng account** (đăng nhập Threads bằng account đó trong trình duyệt)
-1. Mở trình duyệt:
-   ```text
-   https://threads.net/oauth/authorize?client_id=<THREADS_APP_ID>&redirect_uri=<REDIRECT_URL>&scope=threads_basic,threads_content_publish&response_type=code
-   ```
-   Đồng ý quyền. Trình duyệt chuyển về `<REDIRECT_URL>?code=...`. Copy giá trị `code` (bỏ đuôi `#_` nếu có). Mã sống
-   1 giờ, dùng được 1 lần.
-2. Đổi mã lấy token ngắn hạn (chạy trên máy quản trị):
-   ```bash
-   curl -X POST https://graph.threads.net/oauth/access_token \
-     -F client_id=<THREADS_APP_ID> -F client_secret=<THREADS_APP_SECRET> \
-     -F grant_type=authorization_code -F redirect_uri=<REDIRECT_URL> -F code=<CODE>
-   ```
-3. Đổi sang token dài hạn (60 ngày):
-   ```bash
-   curl "https://graph.threads.net/access_token?grant_type=th_exchange_token&client_secret=<THREADS_APP_SECRET>&access_token=<SHORT_TOKEN>"
-   ```
-4. Lấy **Threads User ID**:
-   ```bash
-   curl "https://graph.threads.net/v1.0/me?fields=id,username&access_token=<LONG_TOKEN>"
-   ```
+**B. Kết nối từng account**
+1. Trên trình duyệt đang đăng nhập Threads bằng account cần nối: **Tài khoản → Kết nối / cấu hình → Threads →
+   Kết nối** → đồng ý quyền.
+2. Trình duyệt quay về trang **Tài khoản** với thông báo thành công; account hiện tên `@username`, cột kiểu kết nối
+   ghi **Token tự gia hạn**. Nối account tiếp theo: đăng xuất Threads (hoặc dùng cửa sổ ẩn danh) rồi lặp lại.
+3. Lỗi thường gặp (thông báo hiện ngay trên trang): *Phiên kết nối đã hết hạn* → bấm lại (mỗi lần bấm có hiệu lực
+   10 phút); *Nền tảng từ chối đổi mã* → sai App Secret hoặc Redirect URL chưa khớp tuyệt đối.
 
-**Điền form** (chọn **Threads**)
+**Kiểm tra:** nút **Test** gọi `GET /me`; đăng một bài `[TEST]` rồi xoá tay.
+**Lưu ý:** nội dung ≤ 500 ký tự, tối đa 1 ảnh (JPEG/PNG ≤ 8 MB) ở `S3_PUBLIC_URL` HTTPS công khai; hệ thống chờ
+Meta xử lý ảnh xong mới đăng. Mỗi profile tối đa 250 bài / 24 giờ.
+Form **Credential** (dán token tay) vẫn còn để dự phòng nhưng token đó không tự gia hạn.
+Nguồn: [Threads API – access tokens](https://developers.facebook.com/docs/threads/get-started/get-access-tokens-and-permissions),
+[long-lived tokens](https://developers.facebook.com/docs/threads/get-started/long-lived-tokens).
 
-| Ô | Giá trị |
-|---|---|
-| Access token | Token dài hạn ở bước 3 |
-| Threads User ID | `id` ở bước 4 |
-| Threads API version | `v1.0` |
+## 8. Instagram — nút Kết nối (~17 account)
 
-**Kiểm tra:** `GET /me` phải trả đúng username.
-**Phải làm lại:** trước ngày thứ 60 gia hạn bằng
-`GET https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token=<LONG_TOKEN>` (token phải
-còn hạn và ≥ 24 giờ tuổi) rồi cập nhật credential; quá hạn thì làm lại bước B.
-**Lưu ý:** nội dung ≤ 500 ký tự, tối đa 1 ảnh; ảnh phải nằm ở `S3_PUBLIC_URL` HTTPS công khai.
-Nguồn: [Threads API – Get started](https://developers.facebook.com/docs/threads/get-started).
-
-## 8. Instagram — token Meta (~17 account)
-
-> Cùng tình trạng với Threads: token tay 60 ngày, chưa tự refresh. Instagram **bắt buộc có ảnh**; bài chỉ có chữ bị
-> từ chối.
+Cách hoạt động giống Threads (mục 7): đăng nhập một lần, token tự gia hạn. Instagram **bắt buộc có ảnh**; bài chỉ có
+chữ bị từ chối.
 
 **A. Chuẩn bị từng account Instagram:** app Instagram → **Settings → Account type and tools → Switch to professional
 account** → chọn **Creator** hoặc **Business**. Tài khoản cá nhân không đăng qua API được.
@@ -260,43 +243,23 @@ account** → chọn **Creator** hoặc **Business**. Tài khoản cá nhân kh�
 **B. Tạo app Meta** (một lần, có thể dùng chung app với Threads)
 1. Thêm use case **Manage messaging & content on Instagram**, chọn **API setup with Instagram login**.
 2. Permissions: `instagram_business_basic`, `instagram_business_content_publish`.
-3. Ở mục **Set up Instagram business login**, đặt **OAuth redirect URI** là URL HTTPS của bạn (như mục 7), ghi lại
-   **Instagram App ID** và **Instagram App Secret**.
-4. **App roles → Roles → Add People → Instagram Tester** cho từng account. Account chấp nhận tại
-   <https://www.instagram.com/accounts/manage_access/> → tab **Tester invites**.
+3. Ở **Set up Instagram business login**, đặt **OAuth redirect URI** là
+   `https://api.<tên-miền>/api/v1/oauth/instagram/callback`; ghi **Instagram App ID** và **Instagram App Secret**
+   → quản trị đặt `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` (`INSTAGRAM_API_VERSION` mặc định `v24.0`).
+4. App chỉ cần **Standard Access** cho account do chính bạn sở hữu/quản lý và đã thêm vào app
+   (**App roles → Roles → Instagram Tester**; account chấp nhận tại
+   <https://www.instagram.com/accounts/manage_access/> → tab **Tester invites**). Account của khách hàng/bên khác cần
+   **Advanced Access** qua App Review.
 
-**C. Lấy token cho từng account.** App Dashboard có nút **Generate access tokens** (thêm account → đăng nhập → copy
-token dài hạn). Nếu giao diện khác, dùng luồng thủ công:
-1. ```text
-   https://www.instagram.com/oauth/authorize?client_id=<IG_APP_ID>&redirect_uri=<REDIRECT_URL>&response_type=code&scope=instagram_business_basic,instagram_business_content_publish
-   ```
-   Copy `code` (bỏ `#_`).
-2. ```bash
-   curl -X POST https://api.instagram.com/oauth/access_token \
-     -F client_id=<IG_APP_ID> -F client_secret=<IG_APP_SECRET> \
-     -F grant_type=authorization_code -F redirect_uri=<REDIRECT_URL> -F code=<CODE>
-   ```
-   Response có `access_token` ngắn hạn và `user_id`.
-3. ```bash
-   curl "https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=<IG_APP_SECRET>&access_token=<SHORT_TOKEN>"
-   ```
-4. Xác nhận ID: `curl "https://graph.instagram.com/v24.0/me?fields=user_id,username&access_token=<LONG_TOKEN>"`.
+**C. Kết nối từng account:** **Tài khoản → Kết nối / cấu hình → Instagram → Kết nối** → đăng nhập Instagram → đồng ý.
+Hệ thống tự lấy đúng Instagram professional account ID (`user_id`), không cần nhập tay.
 
-**Điền form** (chọn **Instagram**)
-
-| Ô | Giá trị |
-|---|---|
-| Access token | Token dài hạn |
-| Instagram User ID | `user_id` (bước 2 hoặc 4) |
-| Graph API version | `v24.0` hoặc version hiện hành |
-
-**Kiểm tra:** bước test chỉ xác minh token, **không** xác minh User ID. Hãy đăng một bài `[TEST]` có ảnh rồi xoá tay.
-Nếu báo lỗi kiểu "object does not exist", kiểm tra lại User ID.
-**Phải làm lại:** trước ngày thứ 60:
-`GET https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=<LONG_TOKEN>`.
-**Lưu ý:** dùng ảnh JPEG cho chắc; mỗi bài đúng 1 ảnh; ảnh phải ở URL HTTPS công khai.
-Nguồn: [Refresh access token](https://developers.facebook.com/docs/instagram-platform/reference/refresh_access_token/),
-[Instagram API with Instagram Login](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/).
+**Kiểm tra:** đăng một bài `[TEST]` có ảnh rồi xoá tay.
+**Lưu ý:** dùng ảnh **JPEG**; mỗi bài đúng 1 ảnh ở URL HTTPS công khai; hệ thống chờ container `FINISHED` rồi mới
+đăng. Giới hạn hiện hành ~50 bài / 24 giờ mỗi account.
+Nguồn: [Business login](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login),
+[Refresh access token](https://developers.facebook.com/docs/instagram-platform/reference/refresh_access_token/),
+[Content publishing](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/content-publishing).
 
 ## 9. Bluesky — chỉ để thử (1 account)
 
@@ -379,7 +342,7 @@ Forum dùng XenForo có thể làm recipe trình duyệt như Voz khi điều kh
 
 - [ ] **Lưu & kiểm tra** thành công, account `CONNECTED`, đúng username mong muốn.
 - [ ] Đăng 1 bài `[TEST]` (nháp/không công khai nếu có), xác minh URL, rồi xoá.
-- [ ] Ghi ngày hết hạn token (Threads/Instagram/LinkedIn: +60 ngày) vào lịch nhắc cho tới khi có tự refresh.
+- [ ] LinkedIn không tự gia hạn: hệ thống nhắc 7 ngày trước hạn (Dashboard → Cần xử lý, và `ALERT_WEBHOOK_URL`).
 - [ ] Đặt `rateLimit`/khoảng cách hợp lý; không cho nhiều account cùng nền tảng đăng cùng văn bản cùng lúc.
 - [ ] Chỉ sau đó mới bật **Enabled** và đưa vào chiến dịch.
 - [ ] Sau khi đã nhập hết, **xoá `auth_v2.csv`** và đổi các mật khẩu/app password từng nằm trong file.
