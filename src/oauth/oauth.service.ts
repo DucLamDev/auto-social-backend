@@ -42,6 +42,14 @@ const PROVIDERS: Record<string, ProviderDefinition> = {
     scopes: ['openid', 'profile', 'https://www.googleapis.com/auth/blogger'],
     extraAuthorization: { access_type: 'offline', prompt: 'consent' },
   },
+  tumblr: {
+    authorizationEndpoint: 'https://www.tumblr.com/oauth2/authorize',
+    tokenEndpoint: 'https://api.tumblr.com/v2/oauth2/token',
+    clientIdEnv: 'TUMBLR_CLIENT_ID',
+    clientSecretEnv: 'TUMBLR_CLIENT_SECRET',
+    // offline_access is what makes Tumblr return a refresh token.
+    scopes: ['basic', 'write', 'offline_access'],
+  },
 };
 
 @Injectable()
@@ -79,6 +87,7 @@ export class OAuthService {
     const oauthState = await this.states.consume(providerName, state);
     const token = await this.exchange(provider, code, oauthState.redirectUri);
     if (providerName === 'linkedin') return this.saveLinkedIn(oauthState.userId, token);
+    if (providerName === 'tumblr') return this.saveTumblr(oauthState.userId, token);
     return this.saveBlogger(oauthState.userId, token);
   }
 
@@ -219,6 +228,8 @@ export class OAuthService {
       throw new ApplicationException(ErrorCode.RESOURCE_NOT_FOUND, 'No Blogger blogs are available for this Google account', HttpStatus.NOT_FOUND);
     }
     const platform = await this.prisma.platform.findUniqueOrThrow({ where: { slug: 'blogger' } });
+    // New blogs start from the catalog default (draft until the operator turns on immediate publishing).
+    const defaults = this.asRecord(platform.defaultSettings);
     const accountIds: string[] = [];
     for (const blog of blogs) {
       const existing = await this.prisma.platformAccount.findUnique({
@@ -227,7 +238,7 @@ export class OAuthService {
       if (existing && existing.ownerId !== userId) continue;
       const account = await this.prisma.platformAccount.upsert({
         where: { platformId_externalId: { platformId: platform.id, externalId: blog.id } },
-        create: { ownerId: userId, platformId: platform.id, name: blog.name ?? 'Blogger', externalId: blog.id, status: AccountStatus.CONNECTED, settings: { blogUrl: blog.url ?? null } },
+        create: { ownerId: userId, platformId: platform.id, name: blog.name ?? 'Blogger', externalId: blog.id, status: AccountStatus.CONNECTED, settings: { ...defaults, blogUrl: blog.url ?? null } },
         update: {
           name: blog.name ?? 'Blogger',
           status: AccountStatus.CONNECTED,
@@ -238,6 +249,43 @@ export class OAuthService {
       accountIds.push(account.id);
     }
     return { provider: 'google', accountIds };
+  }
+
+  /** One platform account per Tumblr blog the login can post to, like Blogger. */
+  private async saveTumblr(userId: string, token: ValidToken) {
+    const response = await fetch('https://api.tumblr.com/v2/user/info', {
+      headers: { authorization: `Bearer ${token.access_token}`, 'user-agent': 'SocialPublisher/1.1 (+https://vpsttt.com)', accept: 'application/json' },
+      signal: AbortSignal.timeout(30_000),
+    });
+    const payload = (await response.json()) as { response?: { user?: { blogs?: Array<{ name?: string; uuid?: string; url?: string; title?: string }> } } };
+    if (!response.ok) {
+      throw new ApplicationException(ErrorCode.PLATFORM_AUTH_FAILED, 'Tumblr blog lookup failed', HttpStatus.BAD_GATEWAY);
+    }
+    const blogs = (payload.response?.user?.blogs ?? []).filter(
+      (blog): blog is { name: string; uuid?: string; url?: string; title?: string } => typeof blog.name === 'string' && blog.name.length > 0,
+    );
+    if (!blogs.length) {
+      throw new ApplicationException(ErrorCode.RESOURCE_NOT_FOUND, 'No Tumblr blogs are available for this login', HttpStatus.NOT_FOUND);
+    }
+    const platform = await this.prisma.platform.findUniqueOrThrow({ where: { slug: 'tumblr' } });
+    const defaults = this.asRecord(platform.defaultSettings);
+    const accountIds: string[] = [];
+    for (const blog of blogs) {
+      const externalId = blog.uuid ?? blog.name;
+      const existing = await this.prisma.platformAccount.findUnique({
+        where: { platformId_externalId: { platformId: platform.id, externalId } },
+      });
+      if (existing && existing.ownerId !== userId) continue;
+      const settings = { blogName: blog.name, blogUrl: blog.url ?? null };
+      const account = await this.prisma.platformAccount.upsert({
+        where: { platformId_externalId: { platformId: platform.id, externalId } },
+        create: { ownerId: userId, platformId: platform.id, name: blog.title || blog.name, username: blog.name, externalId, status: AccountStatus.CONNECTED, lastTestedAt: new Date(), settings: { ...defaults, ...settings } },
+        update: { name: blog.title || blog.name, username: blog.name, status: AccountStatus.CONNECTED, lastTestedAt: new Date(), settings: { ...defaults, ...this.asRecord(existing?.settings), ...settings } },
+      });
+      await this.saveToken(account.id, token, ['basic', 'write', 'offline_access']);
+      accountIds.push(account.id);
+    }
+    return { provider: 'tumblr', accountIds };
   }
 
   private saveToken(accountId: string, token: ValidToken, fallbackScopes: string[]): Promise<void> {

@@ -80,3 +80,41 @@ describe('OAuthService Meta providers', () => {
     expect(upsert).not.toHaveBeenCalled();
   });
 });
+
+describe('OAuthService Tumblr', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('links every blog of the login with its rotating refresh token', async () => {
+    const tumblrConfig = new ConfigService({ OAUTH_REDIRECT_BASE_URL: 'https://api.example.com/api/v1/oauth', TUMBLR_CLIENT_ID: 'tk', TUMBLR_CLIENT_SECRET: 'ts' });
+    const upsert = jest.fn<Promise<{ id: string }>, [Record<string, unknown>]>().mockResolvedValueOnce({ id: 'acc-1' }).mockResolvedValueOnce({ id: 'acc-2' });
+    const prisma = {
+      platform: { findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'p-tumblr', name: 'Tumblr', defaultSettings: { publishImmediately: true } }) },
+      platformAccount: { findUnique: jest.fn().mockResolvedValue(null), upsert },
+    };
+    const credentials = { upsertOAuthTokens: jest.fn().mockResolvedValue(undefined) };
+    const states = { consume: jest.fn().mockResolvedValue({ userId: 'user-1', redirectUri: 'https://api.example.com/api/v1/oauth/tumblr/callback' }) };
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'at', refresh_token: 'rt', expires_in: 2520, scope: 'write offline_access' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ response: { user: { blogs: [
+        { name: 'vpsttt', uuid: 't:1', title: 'VPSTTT', url: 'https://vpsttt.tumblr.com/' },
+        { name: 'vpsttt-dev', uuid: 't:2', url: 'https://vpsttt-dev.tumblr.com/' },
+      ] } } })));
+    const service = new OAuthService(tumblrConfig, states as unknown as OAuthStateService, prisma as unknown as PrismaService, credentials as unknown as CredentialsService, new MetaTokenService(tumblrConfig));
+
+    await expect(service.callback('tumblr', 'state', 'code')).resolves.toEqual({ provider: 'tumblr', accountIds: ['acc-1', 'acc-2'] });
+    expect(fetchMock.mock.calls[0]![0] as string).toBe('https://api.tumblr.com/v2/oauth2/token');
+    expect(upsert.mock.calls[0]?.[0]).toMatchObject({
+      create: { externalId: 't:1', name: 'VPSTTT', settings: { publishImmediately: true, blogName: 'vpsttt', blogUrl: 'https://vpsttt.tumblr.com/' } },
+    });
+    expect(credentials.upsertOAuthTokens).toHaveBeenCalledWith(expect.objectContaining({ platformAccountId: 'acc-2', accessToken: 'at', refreshToken: 'rt' }));
+  });
+
+  it('starts Tumblr OAuth with offline_access so a refresh token is issued', async () => {
+    const tumblrConfig = new ConfigService({ OAUTH_REDIRECT_BASE_URL: 'https://api.example.com/api/v1/oauth', TUMBLR_CLIENT_ID: 'tk', TUMBLR_CLIENT_SECRET: 'ts' });
+    const states = { create: jest.fn().mockResolvedValue({ state: 's' }) };
+    const service = new OAuthService(tumblrConfig, states as unknown as OAuthStateService, {} as PrismaService, {} as CredentialsService, new MetaTokenService(tumblrConfig));
+    const url = new URL((await service.start('user-1', 'tumblr')).authorizationUrl);
+    expect(url.origin + url.pathname).toBe('https://www.tumblr.com/oauth2/authorize');
+    expect(url.searchParams.get('scope')).toBe('basic write offline_access');
+  });
+});

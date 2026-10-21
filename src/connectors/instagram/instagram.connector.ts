@@ -5,7 +5,7 @@ import { ConnectorError } from '../core/connector-error';
 import { HttpConnectorBase } from '../core/http-connector.base';
 import { ConnectionTestResult, ConnectorAccount, PostPayload, PublishResult } from '../core/connector.types';
 import { SocialPublisher } from '../core/social-publisher.interface';
-import { ContainerPollOptions, waitForMetaContainer } from '../core/meta-container';
+import { ContainerPollOptions, isUncertainMetaPublishFailure, uncertainMetaPublishResult, waitForMetaContainer } from '../core/meta-container';
 
 interface MetaIdResponse { id: string }
 interface ContainerState { status_code?: string }
@@ -53,11 +53,17 @@ export class InstagramConnector extends HttpConnectorBase implements SocialPubli
       return state.status_code;
     }, this.containerPoll);
     const publish = new URLSearchParams({ access_token: accessToken, creation_id: container.id });
-    const { data } = await this.request<MetaIdResponse>(`${this.base(account)}/${encodeURIComponent(userId)}/media_publish`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: publish,
-    });
+    let data: MetaIdResponse;
+    try {
+      data = (await this.request<MetaIdResponse>(`${this.base(account)}/${encodeURIComponent(userId)}/media_publish`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: publish,
+      })).data;
+    } catch (error) {
+      if (isUncertainMetaPublishFailure(error)) return uncertainMetaPublishResult(container.id, error);
+      throw error;
+    }
     // media_publish already made the post public; never turn a failed
     // permalink lookup into a retry that would publish it a second time.
     const permalink = await this.request<InstagramMedia>(`${this.base(account)}/${encodeURIComponent(data.id)}?fields=id,permalink&access_token=${encodeURIComponent(accessToken)}`, {})

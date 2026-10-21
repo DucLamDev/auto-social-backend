@@ -33,6 +33,7 @@ export class OAuthController {
     return [
       { provider: 'linkedin', platform: 'linkedin', status: linkedinReady ? 'READY' : 'CREDENTIAL_REQUIRED', callback: '/api/v1/oauth/linkedin/callback' },
       { provider: 'google', platform: 'blogger', status: googleReady ? 'READY' : 'CREDENTIAL_REQUIRED', callback: '/api/v1/oauth/google/callback' },
+      { provider: 'tumblr', platform: 'tumblr', status: this.configured('TUMBLR_CLIENT_ID', 'TUMBLR_CLIENT_SECRET') ? 'READY' : 'CREDENTIAL_REQUIRED', callback: '/api/v1/oauth/tumblr/callback' },
       { provider: 'instagram', platform: 'instagram', status: this.meta.isConfigured('instagram') ? 'READY' : 'CREDENTIAL_REQUIRED', callback: '/api/v1/oauth/instagram/callback' },
       { provider: 'threads', platform: 'threads', status: this.meta.isConfigured('threads') ? 'READY' : 'CREDENTIAL_REQUIRED', callback: '/api/v1/oauth/threads/callback' },
       { provider: 'x', status: 'API_RESEARCH_REQUIRED' },

@@ -18,12 +18,13 @@
 | 6 | LinkedIn | 1 | LinkedIn OAuth (env server) | ✅ | Nối lại mỗi ~60 ngày |
 | 7 | Threads | ~15 | Nút **Kết nối** (Meta OAuth, env server) | ✅ | Tự gia hạn |
 | 8 | Instagram | ~17 | Nút **Kết nối** (Meta OAuth, env server) | ✅, chỉ đăng ảnh | Tự gia hạn |
-| 9 | Bluesky | 1 | Access JWT nhập tay | ⛔ Chỉ để thử, ~2 giờ | Chờ sửa connector |
+| 9 | Bluesky | 1 | Handle + App Password | ✅ Ngay | Không hết hạn |
 | 10 | X | 1 | OAuth 2.0 user token | ⛔ Chỉ để thử, ~2 giờ, tốn phí | Chờ sửa connector |
 | 11 | WordPress self-hosted / WordPress.com | 4 (đều WordPress.com) | Application Password | ⛔ WordPress.com gói miễn phí chưa hỗ trợ | — |
 | 12 | Voz (trình duyệt) | 1 | Session chụp tay | ✅ | Khi session hết hạn |
+| 13 | Tumblr | 5 | Nút **Kết nối** (Tumblr OAuth2, env server) | ✅ bài chữ | Tự gia hạn |
 
-Thứ tự nên làm: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8. Mục 9–11 đợi các bản sửa ở Giai đoạn 1–2/5 của kế hoạch.
+Thứ tự nên làm: 1 → 2 → 3 → 4 → 9 → 5 → 13 → 6 → 7 → 8. Mục 10–11 chưa nên dùng thật.
 
 ---
 
@@ -46,6 +47,7 @@ ghi vào repo, tài liệu, ticket hay chat:
 | `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_API_VERSION` | Mục 6 |
 | `THREADS_APP_ID`, `THREADS_APP_SECRET` | Mục 7 |
 | `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` | Mục 8 |
+| `TUMBLR_CLIENT_ID`, `TUMBLR_CLIENT_SECRET` | Mục 13 |
 | `ALERT_WEBHOOK_URL` (tuỳ chọn) | Webhook kênh chat (Slack, Google Chat, Discord) nhận cảnh báo tài khoản/bài đăng |
 | `BROWSER_AUTOMATION_ENABLED`, `BROWSER_PROXIES` | [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md) |
 
@@ -173,8 +175,9 @@ Phần A làm **một lần** trên Google Cloud. Phần B lặp cho từng Gmai
 2. Mở một **cửa sổ ẩn danh**, đăng nhập app → **Tài khoản → OAuth chính thức → Google · Blogger → OAuth**.
 3. Chọn đúng Gmail, đồng ý quyền. Hệ thống tự tạo **một account cho mỗi blog** của Gmail đó.
 
-**Lưu ý:** mặc định Blogger tạo **bản nháp** (job `NEEDS_ACTION`), và giao diện hiện chưa có ô để đổi sang đăng ngay
-(lỗi T7, nằm trong Giai đoạn 2). Token tự refresh; thu hồi quyền ở tài khoản Google thì phải kết nối lại.
+**Lưu ý:** blog mới nối mặc định **Lưu nháp** (job `NEEDS_ACTION`, vào Blogger duyệt). Khi đã yên tâm, bật công tắc
+**Đăng ngay** ở cột *Kiểu kết nối* trên trang **Tài khoản**. Token tự refresh; thu hồi quyền ở tài khoản Google thì
+phải kết nối lại.
 Nguồn: [Blogger API](https://developers.google.com/blogger/docs/3.0/using),
 [OAuth web server](https://developers.google.com/identity/protocols/oauth2/web-server).
 
@@ -261,20 +264,16 @@ Nguồn: [Business login](https://developers.facebook.com/docs/instagram-platfor
 [Refresh access token](https://developers.facebook.com/docs/instagram-platform/reference/refresh_access_token/),
 [Content publishing](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/content-publishing).
 
-## 9. Bluesky — chỉ để thử (1 account)
-
-Connector hiện cần **Access JWT**, loại token này sống khoảng 2 giờ và hệ thống chưa tự gia hạn. Dùng để kiểm thử;
-chạy thật đợi bản sửa dùng App Password (Giai đoạn 1).
+## 9. Bluesky — App Password (1 account)
 
 1. bsky.app → **Settings → Privacy and security → App passwords → Add App Password** → tên `Social Publisher` → copy.
-   App Password này dùng lâu dài; giữ lại cho bản sửa sau.
-2. Đổi lấy JWT trên máy quản trị:
-   ```bash
-   curl -X POST https://bsky.social/xrpc/com.atproto.server.createSession \
-     -H 'Content-Type: application/json' \
-     -d '{"identifier":"<handle-hoặc-email>","password":"<APP_PASSWORD>"}'
-   ```
-3. Điền form **Bluesky**: **Access JWT** = `accessJwt`, **DID** = `did`, **PDS service URL** = `https://bsky.social`.
+   App Password không hết hạn và thu hồi được bất cứ lúc nào; không dùng mật khẩu đăng nhập chính.
+2. Điền form **Bluesky**: **Handle** (ví dụ `ten.bsky.social`), **App Password**, **PDS service URL** = `https://bsky.social`.
+3. **Lưu & kiểm tra**. Mỗi lần đăng hệ thống tự tạo phiên mới từ App Password, nên không phải làm lại.
+
+Giới hạn hiện tại: bài chữ ≤ 300 ký tự, chưa đăng ảnh. Account cũ dùng Access JWT vẫn chạy nhưng hết hạn sau ~2 giờ;
+hãy nhập lại bằng App Password.
+Nguồn: [Bluesky – creating a post](https://docs.bsky.app/docs/tutorials/creating-a-post).
 
 ## 10. X (Twitter) — chưa nên cấu hình
 
@@ -317,13 +316,25 @@ account **Voz Forums**, chọn box (`forumPath`), chụp session bằng `pnpm br
 
 ---
 
+## 13. Tumblr — nút Kết nối (5 account)
+
+1. <https://www.tumblr.com/oauth/apps> → **Register application**. **Default callback URL** và **OAuth2 redirect URLs**:
+   `https://api.<tên-miền>/api/v1/oauth/tumblr/callback`.
+2. Ghi **OAuth Consumer Key** và **Secret Key** → quản trị đặt `TUMBLR_CLIENT_ID`, `TUMBLR_CLIENT_SECRET`.
+3. Trên trình duyệt đang đăng nhập Tumblr bằng account cần nối: **Tài khoản → Kết nối / cấu hình → Tumblr → Kết nối**
+   → **Allow**. Mỗi blog của account thành một dòng riêng trên trang Tài khoản.
+4. Token Tumblr sống ~42 phút; hệ thống tự làm mới bằng refresh token trước mỗi lần đăng (quyền `offline_access`).
+5. Mặc định **Đăng ngay**; tắt công tắc để lưu nháp.
+
+Giới hạn hiện tại: bài chữ (tiêu đề + đoạn văn + tag), chưa đăng ảnh. Tumblr cho tối đa 250 bài/ngày mỗi user.
+Nguồn: [Tumblr API v2 – OAuth2, posts](https://www.tumblr.com/docs/en/api/v2), [NPF](https://www.tumblr.com/docs/npf).
+
 ## Phụ lục A — Có API nhưng hệ thống chưa có connector
 
 Chuẩn bị trước được, nhưng **chưa nhập vào hệ thống** cho tới khi connector được viết (Giai đoạn 5):
 
 | Nền tảng | Account | Cần chuẩn bị |
 |---|---|---|
-| Tumblr | 5 | Đăng ký app tại <https://www.tumblr.com/oauth/apps> → OAuth consumer key/secret; xác thực OAuth 2 |
 | WordPress.com | 4 | App tại <https://developer.wordpress.com/apps/> (Client ID/Secret, redirect URL) |
 | Pixelfed.social | 1 | Settings → Applications → personal access token (nền tảng ảnh, bài cần có ảnh) |
 | Lemmy.world | 1 | Tài khoản + chọn community; Lemmy dùng đăng nhập lấy JWT |

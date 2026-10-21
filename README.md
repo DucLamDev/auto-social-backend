@@ -8,6 +8,8 @@ login; đăng bài dùng connector/publisher tương ứng khi có credential v�
 
 Kiểm thử X bằng Chrome đã cài trên máy Windows 10: [WINDOWS_X_LOGIN.md](WINDOWS_X_LOGIN.md).
 
+**Hướng dẫn dựng và test từng bước: [TESTING.md](TESTING.md).** Sau khi dựng, `pnpm smoke:stack` kiểm tra nhanh API, hạ tầng, đăng nhập, OAuth và việc cần xử lý.
+
 ## Trạng thái MVP
 
 - NestJS 11, TypeScript strict, PostgreSQL/Prisma, RabbitMQ, Redis, MinIO/S3.
@@ -18,9 +20,9 @@ Kiểm thử X bằng Chrome đã cài trên máy Windows 10: [WINDOWS_X_LOGIN.m
 - AI đa provider (`openai | deepseek | gemini`) với structured output và kiểm tra schema; prompt SEO/theo ngữ cảnh từng destination được lưu trong database.
 - Campaign → target → publish job; scheduler, retry 30s/120s/600s, DLQ, per-job lock, cross-job fingerprint lock (`account + content hash`), rate limit và idempotency key.
 - Catalog có **65 destination duy nhất**, gom trong 8 nhóm `SOCIAL | BLOGGING | COMMUNITY | FORUM | DEVELOPER | MEDIA | COMMERCE | EVENT`. API `GET /api/v1/platforms` hỗ trợ phân trang, tìm kiếm và lọc theo nhóm/chế độ/mức hỗ trợ/trạng thái bật.
-- Connector tự động MVP: Instagram (một ảnh), Threads (text/một ảnh), X (text), LinkedIn (text), WordPress (article), Blogger (article), dev.to (article), Discourse (topic text/article), Discord (text), Bluesky (text), Mastodon (text). Nhiều instance cùng engine dùng lại connector Discourse hoặc Mastodon bằng base URL riêng.
+- Connector tự động MVP: Instagram (một ảnh), Threads (text/một ảnh), X (text), LinkedIn (text), WordPress (article), Blogger (article), dev.to (article), Discourse (topic text/article), Discord (text), Bluesky (text, App Password), Mastodon (text), Tumblr (text, OAuth2 tự làm mới). Nhiều instance cùng engine dùng lại connector Discourse hoặc Mastodon bằng base URL riêng.
 - Medium, Reddit, TikTok và các destination không có create API phù hợp chạy bàn giao `MANUAL/NEEDS_ACTION`: AI vẫn tạo nội dung và giữ media để người dùng copy/mở editor/xác nhận kết quả. Hệ thống không bypass CAPTCHA, 2FA, anti-bot hay chính sách nền tảng.
-- OAuth hoàn chỉnh cho LinkedIn, Google→Blogger, Instagram (Instagram Login) và Threads: bấm **Kết nối** một lần, token Instagram/Threads/Blogger được tự gia hạn. Provider khác hiển thị rõ `API_REVIEW_REQUIRED`, `API_RESEARCH_REQUIRED` hoặc `MANUAL`.
+- OAuth hoàn chỉnh cho LinkedIn, Google→Blogger, Instagram (Instagram Login), Threads và Tumblr: bấm **Kết nối** một lần, token Instagram/Threads/Blogger/Tumblr được tự gia hạn. Provider khác hiển thị rõ `API_REVIEW_REQUIRED`, `API_RESEARCH_REQUIRED` hoặc `MANUAL`.
 - `src/account-health`: cron gia hạn token Meta, kiểm tra kết nối hằng ngày, cảnh báo qua `ALERT_WEBHOOK_URL`; `GET /api/v1/account-health` cấp dữ liệu cho bảng **Cần xử lý**.
 
 Các connector chưa được coi là “đã kiểm chứng production” cho đến khi chạy integration test bằng app/account thật. Xem [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md).

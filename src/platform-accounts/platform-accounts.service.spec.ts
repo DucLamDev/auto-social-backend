@@ -2,7 +2,7 @@ import { AccountStatus, PlatformMode } from '@prisma/client';
 import { CredentialsService } from '../credentials/credentials.service';
 import { PrismaService } from '../database/prisma.service';
 import { BrowserRecipeRegistry } from '../connectors/browser/browser-recipe.registry';
-import { PlatformAccountsService } from './platform-accounts.service';
+import { apiPublishingSettings, PlatformAccountsService } from './platform-accounts.service';
 import { RedisService } from '../queue/redis.service';
 
 function browserRecipes(): BrowserRecipeRegistry {
@@ -455,5 +455,14 @@ describe('PlatformAccountsService credential updates', () => {
     await expect(service.revokeBrowserSession('owner-1', 'account-1'))
       .rejects.toThrow('currently in use');
     expect(transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('apiPublishingSettings', () => {
+  it('accepts only publishing options for API accounts', () => {
+    expect(apiPublishingSettings({ publishImmediately: true, rateLimit: 5 })).toEqual({ publishImmediately: true, rateLimit: 5 });
+    expect(() => apiPublishingSettings({ accessToken: 'x' })).toThrow('accessToken');
+    expect(() => apiPublishingSettings({ publishImmediately: 'yes' })).toThrow('true or false');
+    expect(() => apiPublishingSettings({ rateLimit: 0 })).toThrow('positive integer');
   });
 });

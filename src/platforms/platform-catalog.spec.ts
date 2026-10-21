@@ -54,8 +54,12 @@ describe('platform catalog', () => {
   });
 
   it('routes platforms with confirmed public publishing APIs to connector review instead of Playwright', () => {
+    expect(PLATFORM_CATALOG.find((platform) => platform.slug === 'tumblr')).toMatchObject({
+      connectorKey: 'tumblr',
+      mode: PlatformMode.OFFICIAL_API,
+      availability: PlatformAvailability.CREDENTIAL_REQUIRED,
+    });
     const apiCandidates = [
-      'tumblr',
       'reddit',
       'pixelfed-social',
       'lemmy-world',

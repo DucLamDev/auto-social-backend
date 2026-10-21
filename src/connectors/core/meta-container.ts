@@ -1,5 +1,6 @@
 import { ErrorCode } from '../../common/exceptions/application.exception';
 import { ConnectorError } from './connector-error';
+import { PublishResult } from './connector.types';
 
 /** Meta values: FINISHED, IN_PROGRESS, ERROR, EXPIRED, PUBLISHED. */
 export type ContainerStatus = string;
@@ -34,4 +35,28 @@ export async function waitForMetaContainer(
     await sleep(options.intervalMs);
   }
   throw new ConnectorError(ErrorCode.PUBLISH_TIMEOUT, 'Media container is still processing; retry later', true);
+}
+
+/** A timeout, dropped connection or 5xx on `*_publish` may still have made the post public. */
+export function isUncertainMetaPublishFailure(error: unknown): error is ConnectorError {
+  return error instanceof ConnectorError
+    && [ErrorCode.PUBLISH_TIMEOUT, ErrorCode.PLATFORM_API_ERROR].includes(error.code);
+}
+
+/**
+ * Same contract as the Discourse connector: the job stops at NEEDS_ACTION and
+ * the operator checks the profile, then either marks it published or confirms
+ * it is absent (reconcile-not-found), which queues one more attempt.
+ */
+export function uncertainMetaPublishResult(containerId: string, error: ConnectorError): PublishResult {
+  return {
+    externalId: `pending:${containerId}`,
+    status: 'NEEDS_ACTION',
+    metadata: {
+      reconciliationRequired: true,
+      submissionUncertain: true,
+      containerId,
+      originalErrorCode: error.code,
+    },
+  };
 }

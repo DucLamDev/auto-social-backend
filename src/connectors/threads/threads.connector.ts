@@ -5,7 +5,7 @@ import { ConnectorError } from '../core/connector-error';
 import { HttpConnectorBase } from '../core/http-connector.base';
 import { ConnectionTestResult, ConnectorAccount, PostPayload, PublishResult } from '../core/connector.types';
 import { SocialPublisher } from '../core/social-publisher.interface';
-import { ContainerPollOptions, waitForMetaContainer } from '../core/meta-container';
+import { ContainerPollOptions, isUncertainMetaPublishFailure, uncertainMetaPublishResult, waitForMetaContainer } from '../core/meta-container';
 
 interface ThreadsResponse { id: string; permalink?: string; username?: string; status?: string }
 
@@ -43,9 +43,15 @@ export class ThreadsConnector extends HttpConnectorBase implements SocialPublish
       return state.status;
     }, this.containerPoll);
     const publish = new URLSearchParams({ access_token: token, creation_id: container.id });
-    const { data } = await this.request<ThreadsResponse>(`${this.base(account)}/${encodeURIComponent(userId)}/threads_publish`, {
-      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: publish,
-    });
+    let data: ThreadsResponse;
+    try {
+      data = (await this.request<ThreadsResponse>(`${this.base(account)}/${encodeURIComponent(userId)}/threads_publish`, {
+        method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: publish,
+      })).data;
+    } catch (error) {
+      if (isUncertainMetaPublishFailure(error)) return uncertainMetaPublishResult(container.id, error);
+      throw error;
+    }
     // The post is live once threads_publish returns; a failed permalink lookup
     // must not surface as a retryable error, or the job would post it twice.
     const permalink = await this.request<ThreadsResponse>(`${this.base(account)}/${encodeURIComponent(data.id)}?fields=id,permalink&access_token=${encodeURIComponent(token)}`, {})

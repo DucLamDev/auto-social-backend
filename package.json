@@ -34,7 +34,8 @@
     "browser:login": "ts-node src/cli.ts browser:login",
     "browser:install": "playwright install chromium",
     "social:auth-smoke": "tsx scripts/social-auth-smoke.ts",
-    "social:auth-live-smoke": "tsx scripts/auth-live-smoke.ts"
+    "social:auth-live-smoke": "tsx scripts/auth-live-smoke.ts",
+    "smoke:stack": "tsx scripts/stack-smoke.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -17,7 +17,7 @@ export const META_REFRESH_BEFORE_EXPIRY_MS = 15 * DAY_MS;
 /** Tokens without automatic refresh are reported this far ahead of expiry. */
 export const EXPIRY_WARNING_MS = 7 * DAY_MS;
 /** Connectors whose stored token is renewed by the system without the user signing in again. */
-const AUTO_REFRESH_CONNECTORS = new Set(['instagram', 'threads', 'blogger']);
+const AUTO_REFRESH_CONNECTORS = new Set(['instagram', 'threads', 'blogger', 'tumblr']);
 const ATTENTION_JOB_STATUSES = [
   PublishJobStatus.NEEDS_ACTION,
   PublishJobStatus.FAILED,

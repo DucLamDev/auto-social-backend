@@ -6,7 +6,7 @@ import { PrismaService } from '../database/prisma.service';
 import { ConnectorAccount } from './core/connector.types';
 import { ConnectorRegistryService } from './core/connector-registry.service';
 import { ConnectorError } from './core/connector-error';
-import { ErrorCode } from '../common/exceptions/application.exception';
+import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -125,13 +125,25 @@ export class ConnectorAccountsService {
         }
       }
       if (token.expiresAt && token.expiresAt.getTime() <= Date.now() + 60_000) {
-        if (source.platform.connectorKey === 'blogger' && token.refreshToken) {
+        if ((connectorKey === 'blogger' || connectorKey === 'tumblr') && token.refreshToken) {
           try {
-            await this.credentials.refreshGoogleOAuth(id, token.refreshToken);
+            if (connectorKey === 'tumblr') await this.credentials.refreshTumblrOAuth(id, token.refreshToken);
+            else await this.credentials.refreshGoogleOAuth(id, token.refreshToken);
             token = await this.credentials.resolveOAuth(id);
-          } catch {
-            await this.prisma.platformAccount.update({ where: { id }, data: { status: AccountStatus.RECONNECT_REQUIRED } });
-            throw new ConnectorError(ErrorCode.PLATFORM_TOKEN_EXPIRED, 'Google token refresh failed; reconnect the account', false);
+          } catch (error) {
+            // Only a refresh the provider answered and refused means the grant
+            // is gone; a network failure is retried without asking for a reconnect.
+            if (!(error instanceof ApplicationException)) {
+              throw new ConnectorError(ErrorCode.PLATFORM_API_ERROR, 'OAuth token refresh is temporarily unavailable', true);
+            }
+            // Tumblr rotates refresh tokens: a parallel job may have just used
+            // ours. If it stored a fresh token, carry on with that one.
+            const latest = await this.credentials.resolveOAuth(id);
+            if (!latest.expiresAt || latest.expiresAt.getTime() <= Date.now() + 60_000) {
+              await this.prisma.platformAccount.update({ where: { id }, data: { status: AccountStatus.RECONNECT_REQUIRED } });
+              throw new ConnectorError(ErrorCode.PLATFORM_TOKEN_EXPIRED, 'OAuth token refresh was rejected; reconnect the account', false);
+            }
+            token = latest;
           }
         } else {
           await this.prisma.platformAccount.update({ where: { id }, data: { status: AccountStatus.RECONNECT_REQUIRED } });

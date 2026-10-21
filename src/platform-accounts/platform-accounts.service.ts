@@ -65,6 +65,29 @@ const BROWSER_NAVIGATION_SETTINGS = new Set([
   'browserViewport',
 ]);
 
+/**
+ * API/OAuth accounts keep their connection data server-side; operators may
+ * only change how posts go out. Anything else must go through the credential
+ * or OAuth flow.
+ */
+export function apiPublishingSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  const allowed = new Set(['publishImmediately', 'rateLimit', 'rateWindowSeconds']);
+  const unknownKeys = Object.keys(settings).filter((key) => !allowed.has(key));
+  if (unknownKeys.length) {
+    throw new BadRequestException(`Only publishImmediately, rateLimit and rateWindowSeconds can be changed here: ${unknownKeys.join(', ')}`);
+  }
+  if ('publishImmediately' in settings && typeof settings.publishImmediately !== 'boolean') {
+    throw new BadRequestException('publishImmediately must be true or false');
+  }
+  for (const key of ['rateLimit', 'rateWindowSeconds'] as const) {
+    const value = settings[key];
+    if (value !== undefined && (!Number.isSafeInteger(value) || (value as number) < 1)) {
+      throw new BadRequestException(`${key} must be a positive integer`);
+    }
+  }
+  return settings;
+}
+
 function asSettings(value: Prisma.JsonValue): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value
@@ -243,7 +266,11 @@ export class PlatformAccountsService {
         },
       });
       if (account.platform.mode !== PlatformMode.BROWSER_ASSISTED) {
-        throw new BadRequestException('This settings endpoint is only for browser-assisted accounts');
+        await transaction.platformAccount.update({
+          where: { id },
+          data: { settings: { ...asSettings(account.settings), ...apiPublishingSettings(settings) } as Prisma.InputJsonObject },
+        });
+        return;
       }
       if (Object.prototype.hasOwnProperty.call(settings, 'browserRecipe')) {
         throw new BadRequestException('browserRecipe is controlled by the platform catalog');

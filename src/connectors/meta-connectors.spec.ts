@@ -147,4 +147,26 @@ describe('Meta connector HTTP contracts', () => {
       .mockRejectedValueOnce(new TypeError('fetch failed'));
     await expect(new InstagramConnector().publish(account('v24.0'), post)).resolves.toMatchObject({ externalId: 'post-2', status: 'PUBLISHED' });
   });
+
+  it('stops for reconciliation instead of retrying when the publish call itself times out', async () => {
+    jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-9' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'FINISHED' }))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'upstream' } }, 503));
+    await expect(new ThreadsConnector().publish(account('v1.0'), post)).resolves.toEqual({
+      externalId: 'pending:container-9',
+      status: 'NEEDS_ACTION',
+      metadata: { reconciliationRequired: true, submissionUncertain: true, containerId: 'container-9', originalErrorCode: ErrorCode.PLATFORM_API_ERROR },
+    });
+
+    jest.restoreAllMocks();
+    jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-10' }))
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'FINISHED' }))
+      .mockRejectedValueOnce(Object.assign(new Error('timeout'), { name: 'TimeoutError' }));
+    await expect(new InstagramConnector().publish(account('v24.0'), post)).resolves.toMatchObject({
+      status: 'NEEDS_ACTION',
+      metadata: { originalErrorCode: ErrorCode.PUBLISH_TIMEOUT },
+    });
+  });
 });

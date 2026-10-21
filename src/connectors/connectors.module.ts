@@ -13,6 +13,7 @@ import { InstagramConnector } from './instagram/instagram.connector';
 import { LinkedInConnector } from './linkedin/linkedin.connector';
 import { MastodonConnector } from './mastodon/mastodon.connector';
 import { ThreadsConnector } from './threads/threads.connector';
+import { TumblrConnector } from './tumblr/tumblr.connector';
 import { WordPressConnector } from './wordpress/wordpress.connector';
 import { XConnector } from './x/x.connector';
 import { BrowserAssistedConnector } from './browser/browser-assisted.connector';
@@ -43,6 +44,7 @@ const implementations = [
   DiscordConnector,
   BlueskyConnector,
   MastodonConnector,
+  TumblrConnector,
   BrowserAssistedConnector,
   BrowserAutomationService,
   BrowserChallengeDetector,
