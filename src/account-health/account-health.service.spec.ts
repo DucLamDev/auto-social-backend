@@ -38,7 +38,9 @@ function setup(options: { tokens?: unknown[]; refresh?: jest.Mock; accounts?: un
     publishJob: {
       findMany: jest.fn().mockResolvedValue(options.jobs ?? []),
       groupBy: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
     },
+    extensionDevice: { count: jest.fn().mockResolvedValue(0) },
   };
   const credentials = {
     resolveOAuth: jest.fn().mockResolvedValue({ accessToken: 'current', scopes: ['threads_basic'] }),

@@ -6,6 +6,7 @@ import { PrismaService } from '../database/prisma.service';
 import { ConnectorAccount } from './core/connector.types';
 import { ConnectorRegistryService } from './core/connector-registry.service';
 import { ConnectorError } from './core/connector-error';
+import { effectiveConnectorKey } from './extension/extension-delivery';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -154,7 +155,7 @@ export class ConnectorAccountsService {
     }
     return {
       platform: source.platform.slug,
-      connectorKey: source.platform.connectorKey,
+      connectorKey: effectiveConnectorKey(source.platform.connectorKey, source.settings),
       platformEnabled: source.platform.enabled,
       platformMode: source.platform.mode,
       enabled: source.enabled,

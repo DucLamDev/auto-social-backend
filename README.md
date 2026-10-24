@@ -8,6 +8,8 @@ login; đăng bài dùng connector/publisher tương ứng khi có credential v�
 
 Kiểm thử X bằng Chrome đã cài trên máy Windows 10: [WINDOWS_X_LOGIN.md](WINDOWS_X_LOGIN.md).
 
+**Đăng diễn đàn bằng tiện ích Chrome (XenForo, Discourse, phpBB): [BROWSER_EXTENSION_CHROME.md](BROWSER_EXTENSION_CHROME.md).**
+
 **Hướng dẫn dựng và test từng bước: [TESTING.md](TESTING.md).** Sau khi dựng, `pnpm smoke:stack` kiểm tra nhanh API, hạ tầng, đăng nhập, OAuth và việc cần xử lý.
 
 ## Trạng thái MVP
@@ -133,6 +135,7 @@ corepack pnpm openapi:export
 | `src/queue`, `src/scheduler`, `src/workers`, `src/publishing` | Dispatch, lock, rate-limit, retry và gọi connector | Scheduler chỉ enqueue; worker mới publish |
 | `src/media`, `src/storage` | Kiểm MIME/magic bytes, chuẩn hóa extension và upload asset vào S3/MinIO | Content và Variant có thể tham chiếu media; worker hợp nhất/dedupe hai nguồn, URL public phải cấu hình đúng |
 | `src/account-health` | Gia hạn token Meta, kiểm tra kết nối định kỳ, tổng hợp việc cần xử lý, cảnh báo webhook | Chạy trong process API (cron + khoá Redis); dùng `ConnectorAccountsService` và `MetaTokenService` |
+| `src/extension-agent`, `src/connectors/extension`, `browser-extension/` | Tiện ích Chrome: ghép nối thiết bị, nhận bài, báo kết quả; bộ chỉ dẫn form theo loại diễn đàn | Tài khoản bật `delivery=extension` đi qua `ExtensionConnector`; tiện ích gọi `/api/v1/extension/agent/*` |
 | `src/audit`, `src/logs` | Audit metadata mutation và màn hình log | Chỉ ghi actor/action/entity/request/IP; không sao chép body, token hay credential |
 | `src/settings`, `src/health` | Setting admin, health/readiness | Readiness kiểm tra PostgreSQL, Redis và RabbitMQ; secret setting được AES-GCM |
 | `prisma` | Schema, migration, seed role/platform/prompt | Là source of truth của persistence |

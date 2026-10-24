@@ -430,12 +430,19 @@ export class AttentionJobsContractDto {
   @ApiProperty() failed!: number;
   @ApiProperty() possibleDuplicate!: number;
   @ApiProperty() retrying!: number;
+  @ApiProperty({ description: 'Posts queued for the Chrome extension (not operator work)' }) waitingExtension!: number;
+}
+
+export class AttentionExtensionContractDto {
+  @ApiProperty({ description: 'Paired Chrome extensions seen in the last 3 minutes' }) devicesOnline!: number;
+  @ApiProperty({ description: 'Posts are waiting but no Chrome extension is running' }) offline!: boolean;
 }
 
 export class AccountHealthContractDto {
   @ApiProperty({ description: 'Items an operator should act on' }) total!: number;
   @ApiProperty({ type: AttentionAccountsContractDto }) accounts!: AttentionAccountsContractDto;
   @ApiProperty({ type: AttentionJobsContractDto }) jobs!: AttentionJobsContractDto;
+  @ApiProperty({ type: AttentionExtensionContractDto }) extension!: AttentionExtensionContractDto;
   @ApiProperty() alertsEnabled!: boolean;
   @ApiProperty({ format: 'date-time' }) generatedAt!: string;
 }

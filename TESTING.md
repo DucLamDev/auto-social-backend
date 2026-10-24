@@ -120,6 +120,26 @@ Khi Meta/Tumblr không trả lời ở đúng bước đăng (timeout, lỗi 5xx
 thì bấm xác nhận "không tìm thấy" để hệ thống đăng thêm đúng một lần. Kiểm tra bằng unit test:
 `corepack pnpm test -- meta-connectors tumblr`.
 
+## G. Diễn đàn bằng tiện ích Chrome (XenForo, Discourse, phpBB)
+
+Làm trên máy Windows/macOS có Chrome đã đăng nhập diễn đàn; backend có thể ở máy chủ. Chi tiết:
+[BROWSER_EXTENSION_CHROME.md](BROWSER_EXTENSION_CHROME.md).
+
+1. **Tài khoản → Ghép nối Chrome → Tạo mã**, cài tiện ích (`chrome://extensions` → Load unpacked thư mục
+   `browser-extension`), dán địa chỉ API + mã vào Cài đặt của tiện ích, bấm **Cấp quyền diễn đàn**.
+   **Kết quả đúng:** trang Tài khoản hiện tên Chrome với chấm xanh "đang chạy".
+2. Tạo tài khoản diễn đàn (ví dụ Voz Forums), bấm **Tiện ích** trên dòng đó, dán trang "Đăng chủ đề" của một box thử
+   nghiệm, **tắt Tự bấm Đăng** cho lần đầu, **Lưu**.
+3. **Chiến dịch → Tạo tự động** chọn tài khoản đó, nội dung có `[TEST]`, **Chạy ngay**.
+   **Kết quả đúng:** trong ≤ 1 phút Chrome mở tab diễn đàn, điền sẵn tiêu đề/nội dung, đưa tab lên trước; trang
+   Publishing ghi "Tiện ích cần bạn". Bấm **Đăng** trên diễn đàn → vài giây sau job **Đã đăng** kèm link chủ đề.
+4. Bật lại **Tự bấm Đăng**, chạy chiến dịch khác. **Kết quả đúng:** tiện ích tự đăng trong tab nền, tự đóng tab, job
+   **Đã đăng**.
+5. Đăng xuất diễn đàn rồi chạy lần nữa. **Kết quả đúng:** job **Thất bại** với lý do chưa đăng nhập; đăng nhập lại rồi
+   bấm **Retry** thì bài được đăng.
+
+Kiểm thử tự động không cần diễn đàn thật: `scripts/extension-e2e/` (xem cuối BROWSER_EXTENSION_CHROME.md).
+
 ## Bảng nghiệm thu
 
 | # | Mục | Đạt khi |
@@ -133,6 +153,7 @@ thì bấm xác nhận "không tìm thấy" để hệ thống đăng thêm đú
 | 7 | Lỗi OAuth | Huỷ đăng nhập → thông báo đỏ trên trang Tài khoản |
 | 8 | Theo dõi | Gỡ quyền app → Cần kết nối lại + Cần xử lý + chuông (+ tin chat nếu bật) |
 | 9 | Gia hạn | Bước E.4 báo gia hạn 1 token |
+| 10 | Tiện ích Chrome | G.3–G.5 đạt trên một diễn đàn thật |
 
 ## Lỗi thường gặp
 

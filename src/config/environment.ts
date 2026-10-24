@@ -176,6 +176,9 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
     throw new Error('LOG_LEVEL must be error, warn, info, debug, or verbose');
   }
 
+  if (env === 'production' && raw.INLINE_PUBLISH_WORKER === 'true') {
+    throw new Error('INLINE_PUBLISH_WORKER is a development/demo mode and cannot run in production');
+  }
   if (env === 'production') {
     for (const key of REQUIRED_IN_PRODUCTION) {
       if (typeof raw[key] !== 'string' || raw[key].length === 0) {

@@ -16,6 +16,7 @@ import { sha256, stableIdempotencyKey } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { hasUsableBrowserStorageState } from '../connectors/browser/browser-session-readiness';
+import { isExtensionDelivery } from '../connectors/extension/extension-delivery';
 import { CampaignsService } from './campaigns.service';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
 
@@ -313,7 +314,8 @@ export class CampaignAutomationService {
     if (found.length !== accountIds.length) {
       throw new BadRequestException('Every selected account must belong to you and be enabled, connected, and ready');
     }
-    const unsupported = found.filter((account) => !AUTOMATION_PLATFORM_MODES.has(account.platform.mode));
+    // Extension delivery makes any forum automatic, including catalog MANUAL platforms.
+    const unsupported = found.filter((account) => !AUTOMATION_PLATFORM_MODES.has(account.platform.mode) && !isExtensionDelivery(account.settings));
     if (unsupported.length) {
       throw new BadRequestException(
         `Automatic publishing is unavailable for: ${unsupported.map((account) => account.platform.slug).join(', ')}`,
@@ -321,7 +323,7 @@ export class CampaignAutomationService {
     }
     const browserNotReady: string[] = [];
     for (const account of found) {
-      if (account.platform.mode !== PlatformMode.BROWSER_ASSISTED) continue;
+      if (account.platform.mode !== PlatformMode.BROWSER_ASSISTED || isExtensionDelivery(account.settings)) continue;
       const settings = account.settings !== null
         && typeof account.settings === 'object'
         && !Array.isArray(account.settings)

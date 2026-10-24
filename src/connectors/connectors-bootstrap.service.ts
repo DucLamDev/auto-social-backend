@@ -14,6 +14,7 @@ import { TumblrConnector } from './tumblr/tumblr.connector';
 import { WordPressConnector } from './wordpress/wordpress.connector';
 import { XConnector } from './x/x.connector';
 import { BrowserAssistedConnector } from './browser/browser-assisted.connector';
+import { ExtensionConnector } from './extension/extension.connector';
 
 @Injectable()
 export class ConnectorsBootstrapService implements OnModuleInit {
@@ -50,6 +51,7 @@ export class ConnectorsBootstrapService implements OnModuleInit {
       this.tumblr,
       this.browserAssisted,
       new ManualConnector('manual'),
+      new ExtensionConnector(),
     ].forEach((connector) => this.registry.register(connector));
   }
 }

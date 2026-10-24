@@ -42,6 +42,11 @@ const safeAccountSelect = {
 } satisfies Prisma.PlatformAccountSelect;
 
 const BROWSER_EDITABLE_SETTINGS = new Set([
+  // Chrome extension delivery, managed through PUT /extension/accounts/:id.
+  'delivery',
+  'extensionEngine',
+  'extensionTargetUrl',
+  'extensionAutoSubmit',
   'forumPath',
   'threadPrefixId',
   'automationPermissionAttested',

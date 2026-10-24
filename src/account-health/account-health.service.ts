@@ -23,6 +23,14 @@ const ATTENTION_JOB_STATUSES = [
   PublishJobStatus.FAILED,
   PublishJobStatus.POSSIBLE_DUPLICATE,
 ];
+/** Jobs parked for the Chrome extension are work in progress, not operator work. */
+const WAITING_FOR_EXTENSION = {
+  status: PublishJobStatus.NEEDS_ACTION,
+  lastErrorCode: null,
+  platformAccount: { settings: { path: ['delivery'], equals: 'extension' } },
+} satisfies Prisma.PublishJobWhereInput;
+/** A paired Chrome polls every ~30 s; silent for longer than this counts as offline. */
+const EXTENSION_ONLINE_WINDOW_MS = 3 * 60_000;
 const PROBLEM_ACCOUNT_STATUSES = [AccountStatus.RECONNECT_REQUIRED, AccountStatus.EXPIRED, AccountStatus.ERROR];
 
 export interface MaintenanceResult {
@@ -209,7 +217,7 @@ export class AccountHealthService {
   /** Notifies each job once per problem status; Redis remembers what was already sent. */
   async alertAttentionJobs(now = new Date()): Promise<number> {
     const jobs = await this.prisma.publishJob.findMany({
-      where: { status: { in: ATTENTION_JOB_STATUSES }, updatedAt: { gte: new Date(now.getTime() - 60 * 60_000) } },
+      where: { status: { in: ATTENTION_JOB_STATUSES }, updatedAt: { gte: new Date(now.getTime() - 60 * 60_000) }, NOT: WAITING_FOR_EXTENSION },
       select: {
         id: true,
         status: true,
@@ -239,7 +247,7 @@ export class AccountHealthService {
       oauthToken: { select: { expiresAt: true } },
       credential: { select: { expiresAt: true } },
     } satisfies Prisma.PlatformAccountSelect;
-    const [problemAccounts, expiringAccounts, jobCounts] = await Promise.all([
+    const [problemAccounts, expiringAccounts, jobCounts, waitingExtension, devicesOnline] = await Promise.all([
       this.prisma.platformAccount.findMany({
         where: { ownerId, enabled: true, status: { in: PROBLEM_ACCOUNT_STATUSES } },
         select: accountSelect,
@@ -264,6 +272,8 @@ export class AccountHealthService {
         where: { target: { campaign: { ownerId } }, status: { in: [...ATTENTION_JOB_STATUSES, PublishJobStatus.RETRY] } },
         _count: { _all: true },
       }),
+      this.prisma.publishJob.count({ where: { ...WAITING_FOR_EXTENSION, target: { campaign: { ownerId } } } }),
+      this.prisma.extensionDevice.count({ where: { ownerId, revokedAt: null, lastSeenAt: { gte: new Date(now.getTime() - EXTENSION_ONLINE_WINDOW_MS) } } }),
     ]);
     const count = (status: PublishJobStatus) => jobCounts.find((row) => row.status === status)?._count._all ?? 0;
     const toAccount = (row: (typeof problemAccounts)[number]) => ({
@@ -283,15 +293,19 @@ export class AccountHealthService {
         .filter((account) => !account.autoRefresh || (account.expiresAt !== null && new Date(account.expiresAt).getTime() <= now.getTime() + DAY_MS)),
     };
     const jobs = {
-      needsAction: count(PublishJobStatus.NEEDS_ACTION),
+      needsAction: count(PublishJobStatus.NEEDS_ACTION) - waitingExtension,
+      waitingExtension,
       failed: count(PublishJobStatus.FAILED),
       possibleDuplicate: count(PublishJobStatus.POSSIBLE_DUPLICATE),
       retrying: count(PublishJobStatus.RETRY),
     };
+    // Posts are queued for the extension but no Chrome is running it.
+    const extensionOffline = waitingExtension > 0 && devicesOnline === 0;
     return {
-      total: accounts.problems.length + accounts.expiringSoon.length + jobs.needsAction + jobs.failed + jobs.possibleDuplicate,
+      total: accounts.problems.length + accounts.expiringSoon.length + jobs.needsAction + jobs.failed + jobs.possibleDuplicate + (extensionOffline ? 1 : 0),
       accounts,
       jobs,
+      extension: { devicesOnline, offline: extensionOffline },
       alertsEnabled: this.alerts.enabled,
       generatedAt: now.toISOString(),
     };
