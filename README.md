@@ -10,6 +10,8 @@ Kiểm thử X bằng Chrome đã cài trên máy Windows 10: [WINDOWS_X_LOGIN.m
 
 **Đăng diễn đàn bằng tiện ích Chrome (XenForo, Discourse, phpBB): [BROWSER_EXTENSION_CHROME.md](BROWSER_EXTENSION_CHROME.md).**
 
+**Hướng dẫn test thực tế chi tiết trên máy Windows: [HUONG_DAN_TEST_THUC_TE.md](HUONG_DAN_TEST_THUC_TE.md).**
+
 **Hướng dẫn dựng và test từng bước: [TESTING.md](TESTING.md).** Sau khi dựng, `pnpm smoke:stack` kiểm tra nhanh API, hạ tầng, đăng nhập, OAuth và việc cần xử lý.
 
 ## Trạng thái MVP
