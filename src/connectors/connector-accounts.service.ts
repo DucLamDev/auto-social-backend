@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { AccountStatus, CredentialStatus, PlatformMode } from '@prisma/client';
 import { CredentialsService } from '../credentials/credentials.service';
+import { isMetaProvider, META_MIN_TOKEN_AGE_MS, MetaTokenService } from '../credentials/meta-token.service';
 import { PrismaService } from '../database/prisma.service';
 import { ConnectorAccount } from './core/connector.types';
 import { ConnectorRegistryService } from './core/connector-registry.service';
 import { ConnectorError } from './core/connector-error';
-import { ErrorCode } from '../common/exceptions/application.exception';
+import { effectiveConnectorKey } from './extension/extension-delivery';
+import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -36,6 +38,7 @@ export class ConnectorAccountsService {
     private readonly prisma: PrismaService,
     private readonly credentials: CredentialsService,
     private readonly registry: ConnectorRegistryService,
+    private readonly meta: MetaTokenService,
   ) {}
 
   async load(id: string): Promise<{
@@ -83,7 +86,7 @@ export class ConnectorAccountsService {
       include: {
         platform: { select: { slug: true, connectorKey: true, enabled: true, mode: true } },
         credential: { select: { id: true, status: true, expiresAt: true } },
-        oauthToken: { select: { id: true } },
+        oauthToken: { select: { id: true, updatedAt: true } },
       },
     });
     let credentialValues: Record<string, unknown> = {};
@@ -98,14 +101,50 @@ export class ConnectorAccountsService {
       }
     } else if (source.oauthToken) {
       let token = await this.credentials.resolveOAuth(id);
+      const connectorKey = source.platform.connectorKey;
+      // The hourly maintenance job normally renews Meta tokens weeks ahead;
+      // this catches a token that reached its last day while that job was down.
+      if (
+        isMetaProvider(connectorKey)
+        && token.expiresAt
+        && token.expiresAt.getTime() > Date.now()
+        && token.expiresAt.getTime() <= Date.now() + 24 * 60 * 60_000
+        && Date.now() - source.oauthToken.updatedAt.getTime() >= META_MIN_TOKEN_AGE_MS
+      ) {
+        try {
+          const renewed = await this.meta.refresh(connectorKey, token.accessToken);
+          await this.credentials.upsertOAuthTokens({
+            platformAccountId: id,
+            accessToken: renewed.accessToken,
+            scopes: token.scopes,
+            tokenType: renewed.tokenType ?? 'bearer',
+            expiresAt: renewed.expiresAt,
+          });
+          token = await this.credentials.resolveOAuth(id);
+        } catch {
+          // The current token is still valid; publish with it and let maintenance retry.
+        }
+      }
       if (token.expiresAt && token.expiresAt.getTime() <= Date.now() + 60_000) {
-        if (source.platform.connectorKey === 'blogger' && token.refreshToken) {
+        if ((connectorKey === 'blogger' || connectorKey === 'tumblr') && token.refreshToken) {
           try {
-            await this.credentials.refreshGoogleOAuth(id, token.refreshToken);
+            if (connectorKey === 'tumblr') await this.credentials.refreshTumblrOAuth(id, token.refreshToken);
+            else await this.credentials.refreshGoogleOAuth(id, token.refreshToken);
             token = await this.credentials.resolveOAuth(id);
-          } catch {
-            await this.prisma.platformAccount.update({ where: { id }, data: { status: AccountStatus.RECONNECT_REQUIRED } });
-            throw new ConnectorError(ErrorCode.PLATFORM_TOKEN_EXPIRED, 'Google token refresh failed; reconnect the account', false);
+          } catch (error) {
+            // Only a refresh the provider answered and refused means the grant
+            // is gone; a network failure is retried without asking for a reconnect.
+            if (!(error instanceof ApplicationException)) {
+              throw new ConnectorError(ErrorCode.PLATFORM_API_ERROR, 'OAuth token refresh is temporarily unavailable', true);
+            }
+            // Tumblr rotates refresh tokens: a parallel job may have just used
+            // ours. If it stored a fresh token, carry on with that one.
+            const latest = await this.credentials.resolveOAuth(id);
+            if (!latest.expiresAt || latest.expiresAt.getTime() <= Date.now() + 60_000) {
+              await this.prisma.platformAccount.update({ where: { id }, data: { status: AccountStatus.RECONNECT_REQUIRED } });
+              throw new ConnectorError(ErrorCode.PLATFORM_TOKEN_EXPIRED, 'OAuth token refresh was rejected; reconnect the account', false);
+            }
+            token = latest;
           }
         } else {
           await this.prisma.platformAccount.update({ where: { id }, data: { status: AccountStatus.RECONNECT_REQUIRED } });
@@ -116,7 +155,7 @@ export class ConnectorAccountsService {
     }
     return {
       platform: source.platform.slug,
-      connectorKey: source.platform.connectorKey,
+      connectorKey: effectiveConnectorKey(source.platform.connectorKey, source.settings),
       platformEnabled: source.platform.enabled,
       platformMode: source.platform.mode,
       enabled: source.enabled,

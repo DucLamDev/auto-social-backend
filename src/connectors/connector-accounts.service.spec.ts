@@ -1,5 +1,6 @@
 import { AccountStatus, CredentialStatus, PlatformMode } from '@prisma/client';
 import { CredentialsService } from '../credentials/credentials.service';
+import { MetaTokenService } from '../credentials/meta-token.service';
 import { PrismaService } from '../database/prisma.service';
 import { ConnectorAccountsService } from './connector-accounts.service';
 import { ConnectorError } from './core/connector-error';
@@ -38,6 +39,7 @@ describe('ConnectorAccountsService', () => {
       prisma,
       {} as CredentialsService,
       registry,
+      {} as MetaTokenService,
     );
 
     await expect(service.test('account-1')).resolves.toMatchObject({
@@ -84,7 +86,7 @@ describe('ConnectorAccountsService', () => {
         testConnection: jest.fn().mockRejectedValue(failure),
       }),
     } as unknown as ConnectorRegistryService;
-    const service = new ConnectorAccountsService(prisma, {} as CredentialsService, registry);
+    const service = new ConnectorAccountsService(prisma, {} as CredentialsService, registry, {} as MetaTokenService);
 
     await expect(service.test('account-browser')).rejects.toBe(failure);
     expect(update).toHaveBeenCalledWith({
@@ -122,7 +124,7 @@ describe('ConnectorAccountsService', () => {
     const registry = {
       get: jest.fn().mockReturnValue({ testConnection: jest.fn().mockRejectedValue(failure) }),
     } as unknown as ConnectorRegistryService;
-    const service = new ConnectorAccountsService(prisma, {} as CredentialsService, registry);
+    const service = new ConnectorAccountsService(prisma, {} as CredentialsService, registry, {} as MetaTokenService);
 
     await expect(service.test('account-browser')).rejects.toBe(failure);
     expect(update).toHaveBeenCalledWith({
@@ -168,6 +170,7 @@ describe('ConnectorAccountsService', () => {
       prisma,
       { resolve } as unknown as CredentialsService,
       {} as ConnectorRegistryService,
+      {} as MetaTokenService,
     );
 
     await expect(service.loadForBrowserLoginCapture('account-browser')).resolves.toMatchObject({
@@ -207,6 +210,7 @@ describe('ConnectorAccountsService', () => {
       prisma,
       { resolve } as unknown as CredentialsService,
       {} as ConnectorRegistryService,
+      {} as MetaTokenService,
     );
 
     await expect(service.loadForBrowserLoginCapture('account-browser'))

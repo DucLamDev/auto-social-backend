@@ -188,12 +188,35 @@ export class CredentialsService {
   }
 
   async refreshGoogleOAuth(platformAccountId: string, refreshToken: string): Promise<void> {
-    const clientId = this.config.get<string>('GOOGLE_CLIENT_ID');
-    const clientSecret = this.config.get<string>('GOOGLE_CLIENT_SECRET');
+    await this.refreshOAuth(platformAccountId, refreshToken, {
+      label: 'Google',
+      tokenEndpoint: 'https://oauth2.googleapis.com/token',
+      clientIdEnv: 'GOOGLE_CLIENT_ID',
+      clientSecretEnv: 'GOOGLE_CLIENT_SECRET',
+    });
+  }
+
+  /** Tumblr access tokens last ~42 minutes and every refresh returns a new refresh token. */
+  async refreshTumblrOAuth(platformAccountId: string, refreshToken: string): Promise<void> {
+    await this.refreshOAuth(platformAccountId, refreshToken, {
+      label: 'Tumblr',
+      tokenEndpoint: 'https://api.tumblr.com/v2/oauth2/token',
+      clientIdEnv: 'TUMBLR_CLIENT_ID',
+      clientSecretEnv: 'TUMBLR_CLIENT_SECRET',
+    });
+  }
+
+  private async refreshOAuth(
+    platformAccountId: string,
+    refreshToken: string,
+    provider: { label: string; tokenEndpoint: string; clientIdEnv: string; clientSecretEnv: string },
+  ): Promise<void> {
+    const clientId = this.config.get<string>(provider.clientIdEnv);
+    const clientSecret = this.config.get<string>(provider.clientSecretEnv);
     if (!clientId || !clientSecret) {
-      throw new ApplicationException(ErrorCode.PLATFORM_TOKEN_EXPIRED, 'Google OAuth client is not configured for token refresh', HttpStatus.UNAUTHORIZED);
+      throw new ApplicationException(ErrorCode.PLATFORM_TOKEN_EXPIRED, `${provider.label} OAuth client is not configured for token refresh`, HttpStatus.UNAUTHORIZED);
     }
-    const response = await fetch('https://oauth2.googleapis.com/token', {
+    const response = await fetch(provider.tokenEndpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
       body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }),
@@ -201,7 +224,7 @@ export class CredentialsService {
     });
     const payload = (await response.json()) as { access_token?: string; expires_in?: number; scope?: string; token_type?: string; refresh_token?: string };
     if (!response.ok || !payload.access_token) {
-      throw new ApplicationException(ErrorCode.PLATFORM_TOKEN_EXPIRED, 'Google refresh token was rejected; reconnect the account', HttpStatus.UNAUTHORIZED);
+      throw new ApplicationException(ErrorCode.PLATFORM_TOKEN_EXPIRED, `${provider.label} refresh token was rejected; reconnect the account`, HttpStatus.UNAUTHORIZED);
     }
     const current = await this.prisma.oAuthToken.findUniqueOrThrow({ where: { platformAccountId } });
     await this.upsertOAuthTokens({

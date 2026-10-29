@@ -139,6 +139,7 @@ model User {
   platformAccounts PlatformAccount[]
   auditLogs        AuditLog[]            @relation("AuditActor")
   oauthStates      OAuthState[]
+  extensionDevices ExtensionDevice[]
 
   @@map("users")
 }
@@ -551,4 +552,21 @@ model OAuthState {
 
   @@index([provider, status, expiresAt])
   @@map("oauth_states")
+}
+
+/// A paired VPSTTT Chrome extension. Only the SHA-256 of its bearer token is
+/// stored; the token itself is shown once when the device is created.
+model ExtensionDevice {
+  id         String    @id @default(uuid()) @db.Uuid
+  ownerId    String    @db.Uuid
+  name       String
+  tokenHash  String    @unique
+  lastSeenAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  owner      User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, revokedAt])
+  @@map("extension_devices")
 }

@@ -5,14 +5,17 @@ import { ConnectorError } from '../core/connector-error';
 import { HttpConnectorBase } from '../core/http-connector.base';
 import { ConnectionTestResult, ConnectorAccount, PostPayload, PublishResult } from '../core/connector.types';
 import { SocialPublisher } from '../core/social-publisher.interface';
+import { ContainerPollOptions, isUncertainMetaPublishFailure, uncertainMetaPublishResult, waitForMetaContainer } from '../core/meta-container';
 
-interface ThreadsResponse { id: string; permalink?: string; username?: string }
+interface ThreadsResponse { id: string; permalink?: string; username?: string; status?: string }
 
 @Injectable()
 export class ThreadsConnector extends HttpConnectorBase implements SocialPublisher {
   readonly platform = 'threads';
   readonly mode = PlatformMode.OFFICIAL_API;
   readonly capability = { text: true, image: true, video: false, article: false, delete: false, schedule: false, analytics: false, maxText: 500 };
+  /** Meta suggests about 30 seconds for media processing; text containers are usually ready at once. */
+  protected containerPoll: ContainerPollOptions = { intervalMs: 3_000, maxPolls: 20 };
 
   validate(post: PostPayload): Promise<void> {
     if (!post.body.trim()) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, 'Threads text is required', false);
@@ -32,12 +35,29 @@ export class ThreadsConnector extends HttpConnectorBase implements SocialPublish
     const { data: container } = await this.request<ThreadsResponse>(`${this.base(account)}/${encodeURIComponent(userId)}/threads`, {
       method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: params,
     });
+    await waitForMetaContainer(async () => {
+      const { data: state } = await this.request<ThreadsResponse>(
+        `${this.base(account)}/${encodeURIComponent(container.id)}?fields=status&access_token=${encodeURIComponent(token)}`,
+        {},
+      );
+      return state.status;
+    }, this.containerPoll);
     const publish = new URLSearchParams({ access_token: token, creation_id: container.id });
-    const { data } = await this.request<ThreadsResponse>(`${this.base(account)}/${encodeURIComponent(userId)}/threads_publish`, {
-      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: publish,
-    });
-    const detail = await this.request<ThreadsResponse>(`${this.base(account)}/${encodeURIComponent(data.id)}?fields=id,permalink&access_token=${encodeURIComponent(token)}`, {});
-    return { externalId: data.id, url: detail.data.permalink, status: 'PUBLISHED', metadata: { containerId: container.id } };
+    let data: ThreadsResponse;
+    try {
+      data = (await this.request<ThreadsResponse>(`${this.base(account)}/${encodeURIComponent(userId)}/threads_publish`, {
+        method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: publish,
+      })).data;
+    } catch (error) {
+      if (isUncertainMetaPublishFailure(error)) return uncertainMetaPublishResult(container.id, error);
+      throw error;
+    }
+    // The post is live once threads_publish returns; a failed permalink lookup
+    // must not surface as a retryable error, or the job would post it twice.
+    const permalink = await this.request<ThreadsResponse>(`${this.base(account)}/${encodeURIComponent(data.id)}?fields=id,permalink&access_token=${encodeURIComponent(token)}`, {})
+      .then(({ data: detail }) => detail.permalink)
+      .catch(() => undefined);
+    return { externalId: data.id, url: permalink, status: 'PUBLISHED', metadata: { containerId: container.id } };
   }
 
   async testConnection(account: ConnectorAccount): Promise<ConnectionTestResult> {
@@ -49,6 +69,6 @@ export class ThreadsConnector extends HttpConnectorBase implements SocialPublish
   private base(account: ConnectorAccount): string {
     const version = this.requiredString(account.settings, 'apiVersion');
     if (!/^v\d+\.\d+$/.test(version)) throw new ConnectorError(ErrorCode.PLATFORM_AUTH_FAILED, 'Threads apiVersion must look like v1.0', false);
-    return `https://graph.threads.net/${version}`;
+    return `https://graph.threads.com/${version}`;
   }
 }

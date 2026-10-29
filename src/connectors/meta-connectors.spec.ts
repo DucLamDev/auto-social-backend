@@ -39,6 +39,7 @@ describe('Meta connector HTTP contracts', () => {
     expect(() => connector.validate({ ...post, media: [] })).toThrow('requires image');
     const fetchMock = jest.spyOn(global, 'fetch')
       .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'FINISHED', id: 'container-1' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'post-1' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'post-1', permalink: 'https://instagram.com/p/post-1' }));
 
@@ -48,10 +49,11 @@ describe('Meta connector HTTP contracts', () => {
       status: 'PUBLISHED',
       metadata: { containerId: 'container-1' },
     });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchUrl(fetchMock.mock.calls[0]![0])).toContain('/user-1/media');
-    expect(fetchUrl(fetchMock.mock.calls[1]![0])).toContain('/user-1/media_publish');
-    expect(fetchUrl(fetchMock.mock.calls[2]![0])).toContain('/post-1?fields=id,permalink');
+    expect(fetchUrl(fetchMock.mock.calls[1]![0])).toContain('/container-1?fields=status_code');
+    expect(fetchUrl(fetchMock.mock.calls[2]![0])).toContain('/user-1/media_publish');
+    expect(fetchUrl(fetchMock.mock.calls[3]![0])).toContain('/post-1?fields=id,permalink');
   });
 
   it('maps Instagram 429 to a retryable rate-limit error', async () => {
@@ -72,6 +74,7 @@ describe('Meta connector HTTP contracts', () => {
     expect(() => connector.validate({ ...post, body: '' })).toThrow('Threads text is required');
     const fetchMock = jest.spyOn(global, 'fetch')
       .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'FINISHED', id: 'container-1' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'thread-1' }))
       .mockResolvedValueOnce(jsonResponse({ id: 'thread-1', permalink: 'https://threads.net/@user/post/thread-1' }));
 
@@ -79,9 +82,40 @@ describe('Meta connector HTTP contracts', () => {
       externalId: 'thread-1',
       status: 'PUBLISHED',
     });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchUrl(fetchMock.mock.calls[0]![0])).toContain('/user-1/threads');
-    expect(fetchUrl(fetchMock.mock.calls[1]![0])).toContain('/user-1/threads_publish');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchUrl(fetchMock.mock.calls[0]![0])).toMatch(/^https:\/\/graph\.threads\.com\/v1\.0\/user-1\/threads/);
+    expect(fetchUrl(fetchMock.mock.calls[1]![0])).toContain('/container-1?fields=status');
+    expect(fetchUrl(fetchMock.mock.calls[2]![0])).toContain('/user-1/threads_publish');
+  });
+
+  it('waits for a Threads container that is still processing before publishing', async () => {
+    const connector = new ThreadsConnector();
+    (connector as unknown as { containerPoll: { intervalMs: number; maxPolls: number } }).containerPoll = { intervalMs: 0, maxPolls: 3 };
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'IN_PROGRESS' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'FINISHED' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'thread-1' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'thread-1' }));
+    await expect(connector.publish(account('v1.0'), post)).resolves.toMatchObject({ externalId: 'thread-1' });
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('does not publish a container Meta failed to process, and retries one that never finishes', async () => {
+    const failed = new InstagramConnector();
+    jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'ERROR' }));
+    await expect(failed.publish(account('v24.0'), post)).rejects.toMatchObject({ code: ErrorCode.PLATFORM_MEDIA_INVALID, retryable: false });
+
+    jest.restoreAllMocks();
+    const slow = new InstagramConnector();
+    (slow as unknown as { containerPoll: { intervalMs: number; maxPolls: number } }).containerPoll = { intervalMs: 0, maxPolls: 2 };
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))
+      .mockImplementation(() => Promise.resolve(jsonResponse({ status_code: 'IN_PROGRESS' })));
+    await expect(slow.publish(account('v24.0'), post)).rejects.toMatchObject({ code: ErrorCode.PUBLISH_TIMEOUT, retryable: true });
+    expect(fetchUrl(fetchMock.mock.calls.at(-1)![0])).not.toContain('media_publish');
   });
 
   it('maps Threads 401 to a non-retryable expired-token error', async () => {
@@ -89,6 +123,50 @@ describe('Meta connector HTTP contracts', () => {
     await expect(new ThreadsConnector().publish(account('v1.0'), post)).rejects.toMatchObject({
       code: ErrorCode.PLATFORM_TOKEN_EXPIRED,
       retryable: false,
+    });
+  });
+
+  it('reports a published post as PUBLISHED even when the permalink lookup fails', async () => {
+    jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-1' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'FINISHED' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'thread-1' }))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'temporary' } }, 500));
+    await expect(new ThreadsConnector().publish(account('v1.0'), post)).resolves.toEqual({
+      externalId: 'thread-1',
+      url: undefined,
+      status: 'PUBLISHED',
+      metadata: { containerId: 'container-1' },
+    });
+
+    jest.restoreAllMocks();
+    jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-2' }))
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'FINISHED' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'post-2' }))
+      .mockRejectedValueOnce(new TypeError('fetch failed'));
+    await expect(new InstagramConnector().publish(account('v24.0'), post)).resolves.toMatchObject({ externalId: 'post-2', status: 'PUBLISHED' });
+  });
+
+  it('stops for reconciliation instead of retrying when the publish call itself times out', async () => {
+    jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-9' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'FINISHED' }))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'upstream' } }, 503));
+    await expect(new ThreadsConnector().publish(account('v1.0'), post)).resolves.toEqual({
+      externalId: 'pending:container-9',
+      status: 'NEEDS_ACTION',
+      metadata: { reconciliationRequired: true, submissionUncertain: true, containerId: 'container-9', originalErrorCode: ErrorCode.PLATFORM_API_ERROR },
+    });
+
+    jest.restoreAllMocks();
+    jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ id: 'container-10' }))
+      .mockResolvedValueOnce(jsonResponse({ status_code: 'FINISHED' }))
+      .mockRejectedValueOnce(Object.assign(new Error('timeout'), { name: 'TimeoutError' }));
+    await expect(new InstagramConnector().publish(account('v24.0'), post)).resolves.toMatchObject({
+      status: 'NEEDS_ACTION',
+      metadata: { originalErrorCode: ErrorCode.PUBLISH_TIMEOUT },
     });
   });
 });

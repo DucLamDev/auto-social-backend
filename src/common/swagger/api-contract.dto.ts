@@ -410,6 +410,48 @@ export class OAuthStartContractDto {
   @ApiProperty({ format: 'uri' }) authorizationUrl!: string;
 }
 
+export class AttentionAccountContractDto {
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ enum: ['CONNECTED', 'EXPIRED', 'RECONNECT_REQUIRED', 'DISABLED', 'ERROR'] }) status!: string;
+  @ApiProperty() platform!: string;
+  @ApiProperty() platformName!: string;
+  @ApiProperty({ type: String, format: 'date-time', nullable: true }) expiresAt!: string | null;
+  @ApiProperty({ description: 'The system renews this token without the user signing in again' }) autoRefresh!: boolean;
+}
+
+export class AttentionAccountsContractDto {
+  @ApiProperty({ type: [AttentionAccountContractDto] }) problems!: AttentionAccountContractDto[];
+  @ApiProperty({ type: [AttentionAccountContractDto] }) expiringSoon!: AttentionAccountContractDto[];
+}
+
+export class AttentionJobsContractDto {
+  @ApiProperty() needsAction!: number;
+  @ApiProperty() failed!: number;
+  @ApiProperty() possibleDuplicate!: number;
+  @ApiProperty() retrying!: number;
+  @ApiProperty({ description: 'Posts queued for the Chrome extension (not operator work)' }) waitingExtension!: number;
+}
+
+export class AttentionExtensionContractDto {
+  @ApiProperty({ description: 'Paired Chrome extensions seen in the last 3 minutes' }) devicesOnline!: number;
+  @ApiProperty({ description: 'Posts are waiting but no Chrome extension is running' }) offline!: boolean;
+}
+
+export class AccountHealthContractDto {
+  @ApiProperty({ description: 'Items an operator should act on' }) total!: number;
+  @ApiProperty({ type: AttentionAccountsContractDto }) accounts!: AttentionAccountsContractDto;
+  @ApiProperty({ type: AttentionJobsContractDto }) jobs!: AttentionJobsContractDto;
+  @ApiProperty({ type: AttentionExtensionContractDto }) extension!: AttentionExtensionContractDto;
+  @ApiProperty() alertsEnabled!: boolean;
+  @ApiProperty({ format: 'date-time' }) generatedAt!: string;
+}
+
+export class MaintenanceRunContractDto {
+  @ApiProperty({ example: { refreshed: 1, failed: 0, skipped: 2 } }) tokens!: Record<string, number>;
+  @ApiProperty({ example: { checked: 3, failed: 0 } }) connections!: Record<string, number>;
+}
+
 export class HealthContractDto {
   @ApiProperty({ enum: ['ok'] }) status!: 'ok';
   @ApiProperty() service!: string;

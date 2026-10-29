@@ -10,9 +10,11 @@ import { LinkedInConnector } from './linkedin/linkedin.connector';
 import { ManualConnector } from './manual/manual.connector';
 import { MastodonConnector } from './mastodon/mastodon.connector';
 import { ThreadsConnector } from './threads/threads.connector';
+import { TumblrConnector } from './tumblr/tumblr.connector';
 import { WordPressConnector } from './wordpress/wordpress.connector';
 import { XConnector } from './x/x.connector';
 import { BrowserAssistedConnector } from './browser/browser-assisted.connector';
+import { ExtensionConnector } from './extension/extension.connector';
 
 @Injectable()
 export class ConnectorsBootstrapService implements OnModuleInit {
@@ -29,6 +31,7 @@ export class ConnectorsBootstrapService implements OnModuleInit {
     private readonly discord: DiscordConnector,
     private readonly bluesky: BlueskyConnector,
     private readonly mastodon: MastodonConnector,
+    private readonly tumblr: TumblrConnector,
     private readonly browserAssisted: BrowserAssistedConnector,
   ) {}
 
@@ -45,8 +48,10 @@ export class ConnectorsBootstrapService implements OnModuleInit {
       this.discord,
       this.bluesky,
       this.mastodon,
+      this.tumblr,
       this.browserAssisted,
       new ManualConnector('manual'),
+      new ExtensionConnector(),
     ].forEach((connector) => this.registry.register(connector));
   }
 }

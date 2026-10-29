@@ -176,6 +176,9 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
     throw new Error('LOG_LEVEL must be error, warn, info, debug, or verbose');
   }
 
+  if (env === 'production' && raw.INLINE_PUBLISH_WORKER === 'true') {
+    throw new Error('INLINE_PUBLISH_WORKER is a development/demo mode and cannot run in production');
+  }
   if (env === 'production') {
     for (const key of REQUIRED_IN_PRODUCTION) {
       if (typeof raw[key] !== 'string' || raw[key].length === 0) {
@@ -202,6 +205,16 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   }
   if (typeof raw.LINKEDIN_API_VERSION === 'string' && raw.LINKEDIN_API_VERSION && !/^\d{6}$/.test(raw.LINKEDIN_API_VERSION)) {
     throw new Error('LINKEDIN_API_VERSION must use YYYYMM');
+  }
+  for (const key of ['INSTAGRAM_API_VERSION', 'THREADS_API_VERSION'] as const) {
+    const value = raw[key];
+    if (typeof value === 'string' && value.trim() && !/^v\d+\.\d+$/.test(value.trim())) {
+      throw new Error(`${key} must look like v24.0`);
+    }
+  }
+  if (typeof raw.ALERT_WEBHOOK_URL === 'string' && raw.ALERT_WEBHOOK_URL.trim()) {
+    const alertUrl = parseHttpUrl(raw.ALERT_WEBHOOK_URL.trim(), 'ALERT_WEBHOOK_URL');
+    if (env === 'production' && alertUrl.protocol !== 'https:') throw new Error('ALERT_WEBHOOK_URL must use https in production');
   }
   return {
     ...raw,

@@ -1,3 +1,4 @@
+import { EXTENSION_CONNECTOR_KEY, effectiveConnectorKey } from '../connectors/extension/extension-delivery';
 import { Injectable, Logger } from '@nestjs/common';
 import {
   AccountStatus,
@@ -199,6 +200,7 @@ export function assertPublishAccountReady(account: {
 }
 
 export function assertFreshPublishAuthorization(loaded: {
+  connectorKey?: string;
   enabled: boolean;
   status: AccountStatus;
   platformEnabled: boolean;
@@ -210,7 +212,8 @@ export function assertFreshPublishAuthorization(loaded: {
     status: loaded.status,
     platform: { enabled: loaded.platformEnabled },
   });
-  if (loaded.platformMode !== PlatformMode.BROWSER_ASSISTED) return;
+  // Extension delivery uses the operator's own signed-in Chrome; there is no stored session to check.
+  if (loaded.platformMode !== PlatformMode.BROWSER_ASSISTED || loaded.connectorKey === EXTENSION_CONNECTOR_KEY) return;
   if (!hasUsableBrowserStorageState(loaded.account.credentials)) {
     throw new ConnectorError(
       ErrorCode.PLATFORM_AUTH_FAILED,
@@ -452,7 +455,7 @@ export class PublishingService {
       let connectorReturnedResult = false;
       try {
         assertPublishAccountReady(job.platformAccount);
-        const connectorKey = job.platformAccount.platform.connectorKey || platform;
+        const connectorKey = effectiveConnectorKey(job.platformAccount.platform.connectorKey || platform, job.platformAccount.settings);
         const connector = this.registry.get(connectorKey);
         const variant = job.target.contentVariant;
         assertVariantApproved(variant.status);

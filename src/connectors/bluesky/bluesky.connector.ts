@@ -8,6 +8,7 @@ import { SocialPublisher } from '../core/social-publisher.interface';
 
 interface BlueskyRecord { uri: string; cid: string }
 interface BlueskyProfile { did: string; handle: string; displayName?: string }
+interface BlueskySession { accessJwt: string; did: string; handle?: string }
 
 @Injectable()
 export class BlueskyConnector extends HttpConnectorBase implements SocialPublisher {
@@ -23,8 +24,7 @@ export class BlueskyConnector extends HttpConnectorBase implements SocialPublish
 
   async publish(account: ConnectorAccount, post: PostPayload): Promise<PublishResult> {
     await this.validate(post);
-    const token = this.requiredString(account.credentials, 'accessJwt');
-    const did = account.externalId ?? this.requiredString(account.credentials, 'did');
+    const { token, did } = await this.session(account);
     const { data } = await this.requestDynamic<BlueskyRecord>(`${this.base(account)}/xrpc/com.atproto.repo.createRecord`, {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ repo: did, collection: 'app.bsky.feed.post', record: { $type: 'app.bsky.feed.post', text: post.body, createdAt: new Date().toISOString() } }),
@@ -34,10 +34,31 @@ export class BlueskyConnector extends HttpConnectorBase implements SocialPublish
   }
 
   async testConnection(account: ConnectorAccount): Promise<ConnectionTestResult> {
-    const token = this.requiredString(account.credentials, 'accessJwt');
-    const did = account.externalId ?? this.requiredString(account.credentials, 'did');
+    const { token, did } = await this.session(account);
     const { data } = await this.requestDynamic<BlueskyProfile>(`${this.base(account)}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`, { headers: { authorization: `Bearer ${token}` } });
     return { ok: true, accountName: data.displayName ?? data.handle, details: { externalId: data.did } };
+  }
+
+  /**
+   * An App Password (Settings → Privacy and security → App passwords) never
+   * expires, so a fresh 2-hour session is created per call. A pasted access JWT
+   * is still accepted for existing accounts but lapses after about two hours.
+   */
+  private async session(account: ConnectorAccount): Promise<{ token: string; did: string }> {
+    const appPassword = account.credentials.appPassword;
+    if (typeof appPassword === 'string' && appPassword.trim()) {
+      const identifier = this.requiredString(account.credentials, 'identifier');
+      const { data } = await this.requestDynamic<BlueskySession>(`${this.base(account)}/xrpc/com.atproto.server.createSession`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ identifier: identifier.trim().replace(/^@/, ''), password: appPassword.trim() }),
+      });
+      return { token: data.accessJwt, did: data.did };
+    }
+    return {
+      token: this.requiredString(account.credentials, 'accessJwt'),
+      did: account.externalId ?? this.requiredString(account.credentials, 'did'),
+    };
   }
 
   private base(account: ConnectorAccount): string {

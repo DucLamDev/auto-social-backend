@@ -13,6 +13,10 @@ export class ConnectorRegistryService {
     this.connectors.set(key, connector);
   }
 
+  has(platform: string): boolean {
+    return this.connectors.has(platform.toLowerCase());
+  }
+
   get(platform: string): SocialPublisher {
     const connector = this.connectors.get(platform.toLowerCase());
     if (!connector) {

@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Get, Param, Query, Res } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Logger, Param, Query, Res } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '@prisma/client';
@@ -8,13 +8,21 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { OAuthService } from './oauth.service';
+import { MetaTokenService } from '../credentials/meta-token.service';
+import { ApplicationException } from '../common/exceptions/application.exception';
 import { ApiOkEnvelope, OAuthProviderContractDto, OAuthStartContractDto } from '../common/swagger/api-contract.dto';
 
 @ApiTags('oauth')
 @ApiBearerAuth()
 @Controller('oauth')
 export class OAuthController {
-  constructor(private readonly oauth: OAuthService, private readonly config: ConfigService) {}
+  private readonly logger = new Logger(OAuthController.name);
+
+  constructor(
+    private readonly oauth: OAuthService,
+    private readonly config: ConfigService,
+    private readonly meta: MetaTokenService,
+  ) {}
 
   @Get('providers')
   @ApiOkEnvelope(OAuthProviderContractDto, true)
@@ -25,8 +33,9 @@ export class OAuthController {
     return [
       { provider: 'linkedin', platform: 'linkedin', status: linkedinReady ? 'READY' : 'CREDENTIAL_REQUIRED', callback: '/api/v1/oauth/linkedin/callback' },
       { provider: 'google', platform: 'blogger', status: googleReady ? 'READY' : 'CREDENTIAL_REQUIRED', callback: '/api/v1/oauth/google/callback' },
-      { provider: 'instagram', status: 'API_REVIEW_REQUIRED' },
-      { provider: 'threads', status: 'API_REVIEW_REQUIRED' },
+      { provider: 'tumblr', platform: 'tumblr', status: this.configured('TUMBLR_CLIENT_ID', 'TUMBLR_CLIENT_SECRET') ? 'READY' : 'CREDENTIAL_REQUIRED', callback: '/api/v1/oauth/tumblr/callback' },
+      { provider: 'instagram', platform: 'instagram', status: this.meta.isConfigured('instagram') ? 'READY' : 'CREDENTIAL_REQUIRED', callback: '/api/v1/oauth/instagram/callback' },
+      { provider: 'threads', platform: 'threads', status: this.meta.isConfigured('threads') ? 'READY' : 'CREDENTIAL_REQUIRED', callback: '/api/v1/oauth/threads/callback' },
       { provider: 'x', status: 'API_RESEARCH_REQUIRED' },
       { provider: 'reddit', status: 'MANUAL' },
       { provider: 'tiktok', status: 'API_REVIEW_REQUIRED' },
@@ -43,7 +52,7 @@ export class OAuthController {
   @Public()
   @Get(':provider/callback')
   @ApiOperation({ security: [] })
-  @ApiResponse({ status: 303, description: 'OAuth completed; redirects to the frontend accounts page' })
+  @ApiResponse({ status: 303, description: 'OAuth finished; redirects to the frontend accounts page with oauth=success or oauth=error' })
   async callback(
     @Param('provider') provider: string,
     @Query('state') state: string,
@@ -51,10 +60,27 @@ export class OAuthController {
     @Query('error') error: string | undefined,
     @Res() response: Response,
   ): Promise<void> {
-    if (error || !state || !code) throw new BadRequestException('OAuth authorization was denied or callback parameters are missing');
-    const result = await this.oauth.callback(provider, state, code);
+    // The browser lands here directly from the provider, so failures must lead
+    // back to the UI instead of rendering a raw JSON error on the API origin.
+    if (error || !state || !code) {
+      this.redirect(response, { oauth: 'error', provider, reason: error === 'access_denied' ? 'denied' : 'invalid_callback' });
+      return;
+    }
+    try {
+      const result = await this.oauth.callback(provider, state, code);
+      this.redirect(response, { oauth: 'success', provider: result.provider, accounts: String(result.accountIds.length) });
+    } catch (failure) {
+      const reason = failure instanceof ApplicationException
+        ? failure.code
+        : failure instanceof BadRequestException ? 'INVALID_STATE' : 'UNEXPECTED';
+      this.logger.warn(`OAuth callback failed for ${provider}: ${reason}`);
+      this.redirect(response, { oauth: 'error', provider, reason });
+    }
+  }
+
+  private redirect(response: Response, query: Record<string, string>): void {
     const frontend = (this.config.get<string>('FRONTEND_URL', 'http://localhost:3000').split(',')[0] ?? 'http://localhost:3000').replace(/\/$/, '');
-    response.redirect(303, `${frontend}/accounts?oauth=success&provider=${encodeURIComponent(result.provider)}`);
+    response.redirect(303, `${frontend}/accounts?${new URLSearchParams(query).toString()}`);
   }
 
   private configured(...keys: string[]): boolean {

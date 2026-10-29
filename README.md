@@ -8,6 +8,12 @@ login; đăng bài dùng connector/publisher tương ứng khi có credential v�
 
 Kiểm thử X bằng Chrome đã cài trên máy Windows 10: [WINDOWS_X_LOGIN.md](WINDOWS_X_LOGIN.md).
 
+**Đăng diễn đàn bằng tiện ích Chrome (XenForo, Discourse, phpBB): [BROWSER_EXTENSION_CHROME.md](BROWSER_EXTENSION_CHROME.md).**
+
+**Hướng dẫn test thực tế chi tiết trên máy Windows: [HUONG_DAN_TEST_THUC_TE.md](HUONG_DAN_TEST_THUC_TE.md).**
+
+**Hướng dẫn dựng và test từng bước: [TESTING.md](TESTING.md).** Sau khi dựng, `pnpm smoke:stack` kiểm tra nhanh API, hạ tầng, đăng nhập, OAuth và việc cần xử lý.
+
 ## Trạng thái MVP
 
 - NestJS 11, TypeScript strict, PostgreSQL/Prisma, RabbitMQ, Redis, MinIO/S3.
@@ -18,9 +24,10 @@ Kiểm thử X bằng Chrome đã cài trên máy Windows 10: [WINDOWS_X_LOGIN.m
 - AI đa provider (`openai | deepseek | gemini`) với structured output và kiểm tra schema; prompt SEO/theo ngữ cảnh từng destination được lưu trong database.
 - Campaign → target → publish job; scheduler, retry 30s/120s/600s, DLQ, per-job lock, cross-job fingerprint lock (`account + content hash`), rate limit và idempotency key.
 - Catalog có **65 destination duy nhất**, gom trong 8 nhóm `SOCIAL | BLOGGING | COMMUNITY | FORUM | DEVELOPER | MEDIA | COMMERCE | EVENT`. API `GET /api/v1/platforms` hỗ trợ phân trang, tìm kiếm và lọc theo nhóm/chế độ/mức hỗ trợ/trạng thái bật.
-- Connector tự động MVP: Instagram (một ảnh), Threads (text/một ảnh), X (text), LinkedIn (text), WordPress (article), Blogger (article), dev.to (article), Discourse (topic text/article), Discord (text), Bluesky (text), Mastodon (text). Nhiều instance cùng engine dùng lại connector Discourse hoặc Mastodon bằng base URL riêng.
+- Connector tự động MVP: Instagram (một ảnh), Threads (text/một ảnh), X (text), LinkedIn (text), WordPress (article), Blogger (article), dev.to (article), Discourse (topic text/article), Discord (text), Bluesky (text, App Password), Mastodon (text), Tumblr (text, OAuth2 tự làm mới). Nhiều instance cùng engine dùng lại connector Discourse hoặc Mastodon bằng base URL riêng.
 - Medium, Reddit, TikTok và các destination không có create API phù hợp chạy bàn giao `MANUAL/NEEDS_ACTION`: AI vẫn tạo nội dung và giữ media để người dùng copy/mở editor/xác nhận kết quả. Hệ thống không bypass CAPTCHA, 2FA, anti-bot hay chính sách nền tảng.
-- OAuth hoàn chỉnh hiện có cho LinkedIn và Google→Blogger. Provider khác hiển thị rõ `API_REVIEW_REQUIRED`, `API_RESEARCH_REQUIRED` hoặc `MANUAL`.
+- OAuth hoàn chỉnh cho LinkedIn, Google→Blogger, Instagram (Instagram Login), Threads và Tumblr: bấm **Kết nối** một lần, token Instagram/Threads/Blogger/Tumblr được tự gia hạn. Provider khác hiển thị rõ `API_REVIEW_REQUIRED`, `API_RESEARCH_REQUIRED` hoặc `MANUAL`.
+- `src/account-health`: cron gia hạn token Meta, kiểm tra kết nối hằng ngày, cảnh báo qua `ALERT_WEBHOOK_URL`; `GET /api/v1/account-health` cấp dữ liệu cho bảng **Cần xử lý**.
 
 Các connector chưa được coi là “đã kiểm chứng production” cho đến khi chạy integration test bằng app/account thật. Xem [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md).
 
@@ -129,6 +136,8 @@ corepack pnpm openapi:export
 | `src/campaigns` | Chọn content, variant và nhiều account | Tạo target/job với idempotency key ổn định |
 | `src/queue`, `src/scheduler`, `src/workers`, `src/publishing` | Dispatch, lock, rate-limit, retry và gọi connector | Scheduler chỉ enqueue; worker mới publish |
 | `src/media`, `src/storage` | Kiểm MIME/magic bytes, chuẩn hóa extension và upload asset vào S3/MinIO | Content và Variant có thể tham chiếu media; worker hợp nhất/dedupe hai nguồn, URL public phải cấu hình đúng |
+| `src/account-health` | Gia hạn token Meta, kiểm tra kết nối định kỳ, tổng hợp việc cần xử lý, cảnh báo webhook | Chạy trong process API (cron + khoá Redis); dùng `ConnectorAccountsService` và `MetaTokenService` |
+| `src/extension-agent`, `src/connectors/extension`, `browser-extension/` | Tiện ích Chrome: ghép nối thiết bị, nhận bài, báo kết quả; bộ chỉ dẫn form theo loại diễn đàn | Tài khoản bật `delivery=extension` đi qua `ExtensionConnector`; tiện ích gọi `/api/v1/extension/agent/*` |
 | `src/audit`, `src/logs` | Audit metadata mutation và màn hình log | Chỉ ghi actor/action/entity/request/IP; không sao chép body, token hay credential |
 | `src/settings`, `src/health` | Setting admin, health/readiness | Readiness kiểm tra PostgreSQL, Redis và RabbitMQ; secret setting được AES-GCM |
 | `prisma` | Schema, migration, seed role/platform/prompt | Là source of truth của persistence |

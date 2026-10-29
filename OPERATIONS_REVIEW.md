@@ -4,6 +4,13 @@
 > `file:line` đã được đối chiếu với code; mục ghi *(cần kiểm chứng)* là suy luận chưa chạy thử.
 > Hướng dẫn lấy thông tin cấu hình từng nền tảng: [SOCIAL_API_SETUP_GUIDE.md](SOCIAL_API_SETUP_GUIDE.md).
 
+> **Cập nhật 21/10/2026 (bản 1.1.0):** đã xử lý T1 (Bluesky App Password), T3 (Meta OAuth + tự gia hạn
+> Instagram/Threads), T4 (cron kiểm tra kết nối hằng ngày, nhắc token sắp hết hạn), T5 (lỗi mạng khi refresh không còn
+> bắt kết nối lại), T6 (lỗi OAuth quay về UI), T7 (công tắc Đăng ngay / Lưu nháp cho Blogger, Tumblr), một phần O1/Q2
+> (cảnh báo qua `ALERT_WEBHOOK_URL`, bảng **Cần xử lý**, chuông đếm số) và Q1 cho Instagram/Threads/Tumblr (timeout ở
+> bước đăng → `NEEDS_ACTION` đối soát; lỗi đọc permalink sau khi đã đăng không còn gây thử lại). Thêm connector Tumblr.
+> Còn mở: T2 (X), Q1 cho các connector khác, DLQ consumer, graceful shutdown, tạm giữ job khi account mất kết nối.
+
 ## 1. Kết luận nhanh
 
 Phần lõi (chống trùng bằng khoá Redis, đối soát job treo, mã hoá credential, chặn SSRF) làm chắc. Hệ thống **chưa

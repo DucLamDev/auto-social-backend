@@ -14,3 +14,4 @@ auth*.csv
 profiles/
 logs/screenshots/
 logs/bot-publish/
+browser-extension/dist-ext/

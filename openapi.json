@@ -6252,7 +6252,7 @@
         ],
         "responses": {
           "303": {
-            "description": "OAuth completed; redirects to the frontend accounts page"
+            "description": "OAuth finished; redirects to the frontend accounts page with oauth=success or oauth=error"
           },
           "default": {
             "description": "Standard application error envelope",
@@ -6494,6 +6494,828 @@
         },
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/api/v1/account-health": {
+      "get": {
+        "operationId": "AccountHealth_attention",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AccountHealthContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Accounts needing reconnection, tokens expiring soon and publish jobs needing an operator",
+        "tags": [
+          "account-health"
+        ]
+      }
+    },
+    "/api/v1/account-health/check": {
+      "post": {
+        "operationId": "AccountHealth_check",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/MaintenanceRunContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Refresh due Meta tokens and test every connected account of the current user now",
+        "tags": [
+          "account-health"
+        ]
+      }
+    },
+    "/api/v1/extension/devices": {
+      "get": {
+        "operationId": "Extension_devices",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "extension"
+        ]
+      },
+      "post": {
+        "operationId": "Extension_createDevice",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExtensionDeviceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a pairing token for one Chrome; the token is shown only in this response",
+        "tags": [
+          "extension"
+        ]
+      }
+    },
+    "/api/v1/extension/devices/{id}": {
+      "delete": {
+        "operationId": "Extension_revokeDevice",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "extension"
+        ]
+      }
+    },
+    "/api/v1/extension/accounts/{id}": {
+      "put": {
+        "operationId": "Extension_configureAccount",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtensionDeliveryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Turn Chrome extension delivery on/off for a forum account",
+        "tags": [
+          "extension"
+        ]
+      }
+    },
+    "/api/v1/extension/jobs/{id}/requeue": {
+      "post": {
+        "operationId": "Extension_requeue",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Operator confirmed nothing was posted: give the job back to the extension",
+        "tags": [
+          "extension"
+        ]
+      }
+    },
+    "/api/v1/extension/agent/heartbeat": {
+      "post": {
+        "operationId": "ExtensionAgent_heartbeat",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "extension-agent"
+        ]
+      }
+    },
+    "/api/v1/extension/agent/claim": {
+      "post": {
+        "operationId": "ExtensionAgent_claim",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "extension-agent"
+        ]
+      }
+    },
+    "/api/v1/extension/agent/tasks/{id}/result": {
+      "post": {
+        "operationId": "ExtensionAgent_report",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtensionTaskResultDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "extension-agent"
         ]
       }
     }
@@ -8707,6 +9529,253 @@
           "redis",
           "rabbitmq",
           "timestamp"
+        ]
+      },
+      "AttentionAccountContractDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CONNECTED",
+              "EXPIRED",
+              "RECONNECT_REQUIRED",
+              "DISABLED",
+              "ERROR"
+            ]
+          },
+          "platform": {
+            "type": "string"
+          },
+          "platformName": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "autoRefresh": {
+            "type": "boolean",
+            "description": "The system renews this token without the user signing in again"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status",
+          "platform",
+          "platformName",
+          "expiresAt",
+          "autoRefresh"
+        ]
+      },
+      "AttentionAccountsContractDto": {
+        "type": "object",
+        "properties": {
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionAccountContractDto"
+            }
+          },
+          "expiringSoon": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttentionAccountContractDto"
+            }
+          }
+        },
+        "required": [
+          "problems",
+          "expiringSoon"
+        ]
+      },
+      "AttentionJobsContractDto": {
+        "type": "object",
+        "properties": {
+          "needsAction": {
+            "type": "number"
+          },
+          "failed": {
+            "type": "number"
+          },
+          "possibleDuplicate": {
+            "type": "number"
+          },
+          "retrying": {
+            "type": "number"
+          },
+          "waitingExtension": {
+            "type": "number",
+            "description": "Posts queued for the Chrome extension (not operator work)"
+          }
+        },
+        "required": [
+          "needsAction",
+          "failed",
+          "possibleDuplicate",
+          "retrying",
+          "waitingExtension"
+        ]
+      },
+      "AttentionExtensionContractDto": {
+        "type": "object",
+        "properties": {
+          "devicesOnline": {
+            "type": "number",
+            "description": "Paired Chrome extensions seen in the last 3 minutes"
+          },
+          "offline": {
+            "type": "boolean",
+            "description": "Posts are waiting but no Chrome extension is running"
+          }
+        },
+        "required": [
+          "devicesOnline",
+          "offline"
+        ]
+      },
+      "AccountHealthContractDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "description": "Items an operator should act on"
+          },
+          "accounts": {
+            "$ref": "#/components/schemas/AttentionAccountsContractDto"
+          },
+          "jobs": {
+            "$ref": "#/components/schemas/AttentionJobsContractDto"
+          },
+          "extension": {
+            "$ref": "#/components/schemas/AttentionExtensionContractDto"
+          },
+          "alertsEnabled": {
+            "type": "boolean"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "total",
+          "accounts",
+          "jobs",
+          "extension",
+          "alertsEnabled",
+          "generatedAt"
+        ]
+      },
+      "MaintenanceRunContractDto": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "type": "object",
+            "example": {
+              "refreshed": 1,
+              "failed": 0,
+              "skipped": 2
+            }
+          },
+          "connections": {
+            "type": "object",
+            "example": {
+              "checked": 3,
+              "failed": 0
+            }
+          }
+        },
+        "required": [
+          "tokens",
+          "connections"
+        ]
+      },
+      "CreateExtensionDeviceDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Chrome văn phòng"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "ExtensionDeliveryDto": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "true: publish through the paired Chrome extension"
+          },
+          "engine": {
+            "type": "string",
+            "enum": [
+              "xenforo",
+              "discourse",
+              "phpbb"
+            ]
+          },
+          "targetUrl": {
+            "type": "string",
+            "example": "https://voz.vn/f/chuyen-tro-linh-tinh.17/post-thread"
+          },
+          "autoSubmit": {
+            "type": "boolean",
+            "description": "false: fill the form and wait for the operator to click Post"
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "ExtensionTaskResultDto": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "PUBLISHED",
+              "NEEDS_ACTION",
+              "FAILED"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "description": "Thread URL once the post exists"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "CAPTCHA_REQUIRED",
+              "WAITING_USER",
+              "SUBMIT_UNCONFIRMED",
+              "SUBMIT_REJECTED",
+              "LOGIN_REQUIRED",
+              "EDITOR_NOT_FOUND",
+              "PERMISSION_REQUIRED",
+              "PAGE_LOAD_FAILED",
+              "CANCELLED"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Short text shown to the operator (forum error banner, etc.)"
+          }
+        },
+        "required": [
+          "outcome"
         ]
       }
     }
