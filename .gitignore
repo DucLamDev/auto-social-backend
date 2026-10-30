@@ -15,3 +15,7 @@ profiles/
 logs/screenshots/
 logs/bot-publish/
 browser-extension/dist-ext/
+reports/account-import.json
+reports/login-check-results.json
+reports/extension-connections.json
+scripts/__pycache__/

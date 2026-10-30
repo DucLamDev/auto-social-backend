@@ -1,0 +1,61 @@
+// Checks the local settings UI. Browser save requests are mocked so runtime keys are never replaced.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { parseEnv } = require('node:util');
+const { chromium } = require('playwright');
+const root = path.resolve(__dirname, '..');
+const env = parseEnv(fs.readFileSync(path.join(root, '.env'), 'utf8'));
+(async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1500, height: 1080 } });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.name));
+    await page.goto('http://localhost:3000/login');
+    await page.locator('[name=email]').fill(env.SEED_ADMIN_EMAIL);
+    await page.locator('[name=password]').fill(env.SEED_ADMIN_PASSWORD);
+    await page.locator('button[type=submit]').click();
+    await page.waitForURL((url) => !url.pathname.includes('/login'));
+    const token = await page.evaluate(() => sessionStorage.getItem('sp_access_token'));
+    const headers = { Authorization: `Bearer ${token}` };
+    const endpoint = 'http://localhost:3001/api/v1/ai/gemini-keys';
+    const response = await page.request.get(endpoint, { headers });
+    assert.equal(response.status(), 200);
+    const body = await response.json();
+    assert.equal(body.data.slots.length, 10);
+    assert.equal(JSON.stringify(body).includes('encrypted'), false);
+    for (const slot of body.data.slots) assert.deepEqual(Object.keys(slot).sort(), ['active', 'configured', 'retryAt', 'slot']);
+    const invalid = await page.request.put(endpoint, { headers, data: { revision: body.data.revision, changes: Array.from({ length: 11 }, (_, i) => ({ slot: i + 1, clear: true })) } });
+    assert.equal(invalid.status(), 400);
+    const reserved = await page.request.put('http://localhost:3001/api/v1/settings/ai.gemini.keys', { headers, data: { value: {}, secret: false } });
+    assert.equal(reserved.status(), 400);
+    const unauthenticated = await browser.newContext();
+    assert.equal((await unauthenticated.request.get(endpoint)).status(), 401);
+    await unauthenticated.close();
+    await page.goto('http://localhost:3000/settings');
+    await page.getByLabel('Gemini API key 10', { exact: true }).waitFor();
+    assert.equal(await page.locator('#gemini-keys input[type=password]').count(), 10);
+    for (const input of await page.locator('#gemini-keys input').all()) assert.equal(await input.inputValue(), '');
+    const review = path.resolve(root, '../ui-review');
+    fs.mkdirSync(review, { recursive: true });
+    await page.screenshot({ path: path.join(review, 'gemini-keys-desktop.png'), fullPage: true });
+    let saveChecked = false;
+    await page.route('**/api/v1/ai/gemini-keys', async (route) => {
+      if (route.request().method() !== 'PUT') return route.continue();
+      assert.deepEqual(route.request().postDataJSON(), { revision: body.data.revision, changes: [{ slot: 10, apiKey: 'test-only-gemini-key-ten' }] });
+      saveChecked = true;
+      await route.fulfill({ json: body });
+    });
+    await page.getByLabel('Gemini API key 10', { exact: true }).fill('test-only-gemini-key-ten');
+    await page.getByRole('button', { name: 'Lưu API key Gemini', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#gemini-key-10').value === '');
+    assert.equal(saveChecked, true);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => document.querySelector('main').getBoundingClientRect().left < 1 && document.querySelector('aside').getBoundingClientRect().right < 1);
+    await page.screenshot({ path: path.join(review, 'gemini-keys-mobile.png'), fullPage: true });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ passed: true, checks: ['live masked API', 'ten-key limit', 'reserved setting guard', 'unauthenticated denied', 'ten password inputs', 'save payload and input clearing', 'mobile layout'], providerRequests: 0 }));
+  } finally { await browser.close(); }
+})().catch((error) => { console.error(error instanceof assert.AssertionError ? 'Gemini UI assertion failed' : `Gemini UI smoke failed: ${error.name}`); process.exitCode = 1; });

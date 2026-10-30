@@ -21,7 +21,7 @@ import { CampaignsService } from './campaigns.service';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
 
 const AUTOMATION_STALE_AFTER_MS = 20 * 60 * 1000;
-const MAX_PLATFORMS_PER_AUTOMATION = 12;
+const MAX_PLATFORMS_PER_AUTOMATION = 50;
 const AUTOMATION_PLATFORM_MODES = new Set<PlatformMode>([
   PlatformMode.OFFICIAL_API,
   PlatformMode.COMPATIBLE_API,
@@ -323,6 +323,9 @@ export class CampaignAutomationService {
     }
     const browserNotReady: string[] = [];
     for (const account of found) {
+      if (isExtensionDelivery(account.settings) && (account.settings as Record<string, unknown>).extensionAutoSubmit === false) {
+        throw new BadRequestException('Enable automatic submission for every selected Chrome account before one-click publishing');
+      }
       if (account.platform.mode !== PlatformMode.BROWSER_ASSISTED || isExtensionDelivery(account.settings)) continue;
       const settings = account.settings !== null
         && typeof account.settings === 'object'

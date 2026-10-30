@@ -91,6 +91,17 @@ export function accountTotpEnvironmentKey(accountId: string): string {
   return `BROWSER_TOTP_SECRET_${accountId.replace(/-/g, '_').toUpperCase()}`;
 }
 
+/** Return only the current code; keep the owner-provided seed on the server. */
+export async function freshTotp(value: string): Promise<{ code: string; expiresAt: number }> {
+  const config = parseConfig(value);
+  generateTotp(value); // validate before waiting
+  const period = config.period * 1000;
+  const remaining = period - (Date.now() % period);
+  if (remaining < 5000) await delay(remaining + 100);
+  const now = Date.now();
+  return { code: generateTotp(value, now), expiresAt: now - (now % period) + period };
+}
+
 /** The env name is derived from the account UUID, so account JSON cannot reference another account's secret. */
 export function createAccountTotpProvider(
   accountId: string,

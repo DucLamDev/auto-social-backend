@@ -6,6 +6,25 @@ import { PublishJobsService } from './publish-jobs.service';
 import { WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
 
 describe('PublishJobsService', () => {
+  it('filters moderation before pagination, retains owner isolation and exposes only a safe destination', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { id: 'pending', platformAccount: { id: 'account', settings: { extensionEngine: 'discourse', extensionTargetUrl: 'https://forum.example/community/new-topic?body=private', apiKey: 'private' } } },
+      { id: 'bad-link', platformAccount: { id: 'account-2', settings: { baseUrl: 'https://user:password@forum.example/' } } },
+    ]);
+    const count = jest.fn().mockResolvedValue(2);
+    const prisma = { publishJob: { findMany, count }, $transaction: (operations: Promise<unknown>[]) => Promise.all(operations) } as unknown as PrismaService;
+    const service = new PublishJobsService(prisma, {} as PublishQueueService, {} as CampaignStatusService);
+    const result = await service.list('owner-1', { page: 2, limit: 1, reviewState: 'MODERATION', search: 'launch' });
+    const options = findMany.mock.calls[0][0];
+    expect(options).toMatchObject({ skip: 1, take: 1, where: { target: { campaign: { ownerId: 'owner-1' } }, AND: [{ status: 'NEEDS_ACTION' }, { OR: expect.arrayContaining([{ lastErrorCode: 'EXTENSION_MODERATION_PENDING' }]) as unknown }] } });
+    expect(count).toHaveBeenCalledWith({ where: options.where });
+    expect(result.items).toEqual([
+      { id: 'pending', platformAccount: { id: 'account' }, reviewUrl: 'https://forum.example/community/my/activity/pending', reviewUrlKind: 'pending_queue' },
+      { id: 'bad-link', platformAccount: { id: 'account-2' } },
+    ]);
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+
   it('returns a complete manual handoff using the platform default URL and source media', async () => {
     const prisma = {
       publishJob: {
@@ -55,6 +74,7 @@ describe('PublishJobsService', () => {
       status: PublishJobStatus.NEEDS_ACTION,
       platform: 'medium',
       accountName: 'My Medium publication',
+      moderationPending: false,
       title: 'Launch title',
       body: 'Launch body',
       summary: 'Short summary',
@@ -70,6 +90,35 @@ describe('PublishJobsService', () => {
       suggestedExternalPostId: undefined,
       openUrl: 'https://medium.com/new-story',
     });
+    expect(prisma.publishJob.findFirstOrThrow).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'job-manual', target: { campaign: { ownerId: 'owner-1' } } },
+    }));
+  });
+
+  it('exposes stored content and the signed-in users review queue without exposing account secrets', async () => {
+    const record = {
+      id: 'job-pending', status: PublishJobStatus.NEEDS_ACTION, lastErrorCode: 'EXTENSION_MODERATION_PENDING',
+      platformAccount: {
+        name: 'NGINX team', settings: { extensionEngine: 'discourse', extensionTargetUrl: 'https://community.nginx.org/c/23?private=value', apiKey: 'private-secret' },
+        platform: { slug: 'nginx', name: 'NGINX Community', defaultSettings: {} },
+      },
+      target: { contentVariant: {
+        title: 'Stored title', body: 'First line\n\nSecond line', hashtags: ['web-server'], updatedAt: new Date('2026-10-30T07:00:00Z'),
+        media: [], content: { canonicalUrl: null, media: [] },
+      } },
+      attempts: [{ responseMetadata: { moderationQueue: true } }],
+    };
+    const findFirstOrThrow = jest.fn().mockResolvedValue(record);
+    const service = new PublishJobsService({ publishJob: { findFirstOrThrow } } as unknown as PrismaService, {} as PublishQueueService, {} as CampaignStatusService);
+    const payload = await service.manualPayload('owner-1', record.id);
+    expect(payload).toMatchObject({
+      title: 'Stored title', body: 'First line\n\nSecond line', moderationPending: true,
+      reviewUrl: 'https://community.nginx.org/my/activity/pending', reviewUrlKind: 'pending_queue', contentUpdatedAt: record.target.contentVariant.updatedAt,
+    });
+    expect(JSON.stringify(payload)).not.toContain('private-secret');
+    expect(findFirstOrThrow).toHaveBeenCalledWith(expect.objectContaining({ where: { id: record.id, target: { campaign: { ownerId: 'owner-1' } } } }));
+    findFirstOrThrow.mockResolvedValueOnce({ ...record, status: PublishJobStatus.PUBLISHED });
+    expect((await service.manualPayload('owner-1', record.id)).moderationPending).toBe(false);
   });
 
   it('calculates exact dashboard counters without truncating the job list', async () => {
@@ -92,7 +141,7 @@ describe('PublishJobsService', () => {
   });
 
   it('applies job filters and pagination before loading rows', async () => {
-    const findMany = jest.fn().mockResolvedValue([{ id: 'job-1' }]);
+    const findMany = jest.fn().mockResolvedValue([{ id: 'job-1', platformAccount: { name: 'Account', settings: {} } }]);
     const count = jest.fn().mockResolvedValue(6);
     const prisma = {
       publishJob: { findMany, count },
@@ -112,7 +161,7 @@ describe('PublishJobsService', () => {
       from: '2026-10-01T00:00:00.000Z',
       to: '2026-10-08T23:59:59.999Z',
     })).resolves.toEqual({
-      items: [{ id: 'job-1' }],
+      items: [{ id: 'job-1', platformAccount: { name: 'Account' } }],
       pagination: { page: 2, limit: 5, total: 6, totalPages: 2 },
     });
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({

@@ -17,7 +17,7 @@ export class CredentialsService {
   async upsert(
     platformAccountId: string,
     payload: Record<string, unknown>,
-    expiresAt?: Date,
+    expiresAt?: Date | null,
     transaction?: Prisma.TransactionClient,
   ): Promise<void> {
     const encryptedPayload = this.encryption.encrypt(payload);

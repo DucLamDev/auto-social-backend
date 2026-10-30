@@ -70,7 +70,9 @@ GEMINI_MODEL=gemini-3.5-flash
 GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite
 ```
 
-`AI_DEFAULT_PROVIDER` chỉ nhận `openai`, `deepseek` hoặc `gemini`. Studio và luồng **Tạo tự động** cho phép chọn provider cho từng lần sinh nội dung; nếu request không chỉ định, backend dùng provider mặc định. Giao diện chỉ nhận trạng thái đã cấu hình và tên model từ `GET /api/v1/ai/providers`, không nhận API key. Provider chưa có key sẽ bị vô hiệu hóa trong danh sách chọn; vì vậy Gemini chỉ dùng được sau khi đặt `GEMINI_API_KEY` và khởi động lại API/worker. Các biến `*_MODEL` do backend kiểm soát, người dùng không gửi model tùy ý từ trình duyệt.
+`AI_DEFAULT_PROVIDER` chỉ nhận `openai`, `deepseek` hoặc `gemini`. Studio và luồng **Tạo tự động** cho phép chọn provider cho từng lần sinh nội dung; nếu request không chỉ định, backend dùng provider mặc định. Giao diện chỉ nhận trạng thái đã cấu hình và tên model từ `GET /api/v1/ai/providers`, không nhận API key đã lưu. Provider chưa có key sẽ bị vô hiệu hóa trong danh sách chọn. Các biến `*_MODEL` do backend kiểm soát, người dùng không gửi model tùy ý từ trình duyệt.
+
+ADMIN có thể vào **Cài đặt → API key Gemini** để lưu tối đa 10 key, áp dụng ngay cho lần tạo nội dung tiếp theo. Key cũ trong `GEMINI_API_KEY` được giữ ở ô 1 cho đến khi lưu cấu hình trên web; các ô để trống giữ nguyên key đã lưu, nút Xóa loại bỏ key khi lưu. Backend mã hóa danh sách trong `SystemSetting`, chỉ trả trạng thái từng ô qua `GET /api/v1/ai/gemini-keys`; cập nhật bằng `PUT` cùng đường dẫn. Khi gặp quota/giới hạn (429 hoặc 402), hệ thống chuyển sang key tiếp theo, nhớ key thành công và tạm bỏ qua key vừa lỗi ít nhất 60 giây (tôn trọng `Retry-After` dài hơn). Mỗi yêu cầu thử mỗi key tối đa một lần; nếu tất cả bị giới hạn thì trả lỗi rõ ràng. Các key cùng Google Cloud project dùng chung quota: https://ai.google.dev/gemini-api/docs/rate-limits.
 
 ### Luồng một lần nhập
 

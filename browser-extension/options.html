@@ -4,7 +4,7 @@
 <body>
 <main class="page">
   <h1>VPSTTT Social Publisher</h1>
-  <p class="muted">Tiện ích nhận bài đã duyệt từ hệ thống và đăng lên diễn đàn bằng chính Chrome này. Bạn cần đăng nhập sẵn các diễn đàn trong Chrome; tiện ích không lưu mật khẩu.</p>
+  <p class="muted">Tiện ích nhận bài đã duyệt từ hệ thống và đăng lên nền tảng bằng chính Chrome này. Bạn cần đăng nhập sẵn các nền tảng trong Chrome; tiện ích không lưu mật khẩu.</p>
 
   <h2>1. Ghép nối với hệ thống</h2>
   <form id="pair">
@@ -15,14 +15,14 @@
     <div class="row"><button class="primary" type="submit">Lưu &amp; kiểm tra</button><span id="pairStatus" class="muted"></span></div>
   </form>
 
-  <h2>2. Cấp quyền cho các diễn đàn</h2>
+  <h2>2. Cấp quyền cho các nền tảng</h2>
   <p class="muted">Chrome chỉ cho tiện ích mở và điền form trên các trang bạn cho phép.</p>
-  <div id="origins" class="card muted">Ghép nối xong sẽ hiện danh sách diễn đàn.</div>
-  <div class="row"><button id="grant" type="button" disabled>Cấp quyền diễn đàn</button><span id="grantStatus" class="muted"></span></div>
+  <div id="origins" class="card muted">Ghép nối xong sẽ hiện danh sách nền tảng.</div>
+  <div class="row"><button id="grant" type="button" disabled>Cấp quyền nền tảng</button><span id="grantStatus" class="muted"></span></div>
 
   <h2>3. Chạy</h2>
   <div class="row"><button id="pause" type="button">Tạm dừng</button><span id="pauseStatus" class="muted"></span></div>
-  <p class="muted">Giữ Chrome mở và đã đăng nhập diễn đàn. Tiện ích kiểm tra bài mới mỗi 30 giây, mỗi lần đăng một bài trong một tab nền.</p>
+  <p class="muted">Sau khi ghép nối, bạn tạo bài, duyệt và khởi chạy chiến dịch trên web. Giữ Chrome mở và đã đăng nhập nền tảng; tiện ích tự nhận bài khoảng mỗi 30 giây, mở tab và đăng khi bật Tự bấm Đăng. Không cần mở popup hoặc bấm Kiểm tra ngay cho mỗi bài.</p>
 </main>
 <script type="module" src="options.js"></script>
 </body>

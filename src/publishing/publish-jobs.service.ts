@@ -15,6 +15,7 @@ import { paginatedData } from '../common/interceptors/api-response.interceptor';
 import { PublishJobMetricsQueryDto } from './dto/publish-job-metrics-query.dto';
 import { WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
 import { collectPublishMedia } from './publishing.service';
+import { reviewDestination } from './review-destination';
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -47,6 +48,15 @@ export class PublishJobsService {
     const where: Prisma.PublishJobWhereInput = {
       target: { campaign: { ownerId } },
       ...(query.status ? { status: query.status } : {}),
+      ...(query.reviewState === 'MODERATION' ? {
+        AND: [
+          { status: PublishJobStatus.NEEDS_ACTION },
+          { OR: [
+            { lastErrorCode: 'EXTENSION_MODERATION_PENDING' },
+            { attempts: { some: { responseMetadata: { path: ['moderationQueue'], equals: true } } } },
+          ] },
+        ],
+      } : {}),
       ...(query.from || query.to ? {
         scheduledAt: {
           ...(query.from ? { gte: new Date(query.from) } : {}),
@@ -72,6 +82,7 @@ export class PublishJobsService {
             name: true,
             enabled: true,
             status: true,
+            settings: true,
             platform: { select: { slug: true, name: true } },
           },
         },
@@ -85,7 +96,11 @@ export class PublishJobsService {
     }),
       this.prisma.publishJob.count({ where }),
     ]);
-    return paginatedData(items, {
+    const publicItems = items.map(item => {
+      const { settings, ...account } = item.platformAccount;
+      return { ...item, platformAccount: account, ...reviewDestination(asRecord(settings)) };
+    });
+    return paginatedData(publicItems, {
       page: query.page,
       limit: query.limit,
       total,
@@ -354,7 +369,12 @@ export class PublishJobsService {
       jobId: job.id,
       status: job.status,
       platform: job.platformAccount.platform.slug,
+      platformName: job.platformAccount.platform.name,
       accountName: job.platformAccount.name,
+      moderationPending: job.status === PublishJobStatus.NEEDS_ACTION
+        && (job.lastErrorCode === 'EXTENSION_MODERATION_PENDING' || result.moderationQueue === true),
+      contentUpdatedAt: job.target.contentVariant.updatedAt,
+      ...reviewDestination(settings),
       title: job.target.contentVariant.title,
       body: job.target.contentVariant.body,
       summary: job.target.contentVariant.summary,

@@ -33,6 +33,7 @@ export class SettingsController {
   @Put(':key')
   @ApiOkEnvelope(SystemSettingContractDto)
   async upsert(@Param('key') key: string, @Body() dto: UpdateSettingDto) {
+    if (key === 'ai.gemini.keys') throw new BadRequestException('Use the Gemini API key settings form.');
     if (!/^[a-zA-Z0-9_.-]{1,100}$/.test(key)) throw new BadRequestException('Invalid setting key');
     const existing = await this.prisma.systemSetting.findUnique({ where: { key }, select: { secret: true } });
     const effectiveSecret = dto.secret ?? existing?.secret ?? false;

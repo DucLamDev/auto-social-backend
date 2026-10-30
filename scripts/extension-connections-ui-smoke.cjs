@@ -1,0 +1,63 @@
+// Checks the local dashboard; never publishes or changes any social account.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { parseEnv } = require('node:util');
+const { chromium } = require('playwright');
+const env = parseEnv(fs.readFileSync(path.resolve(__dirname, '../.env'), 'utf8'));
+
+(async () => {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto('http://localhost:3000/login');
+    await page.locator('[name=email]').fill(env.SEED_ADMIN_EMAIL);
+    await page.locator('[name=password]').fill(env.SEED_ADMIN_PASSWORD);
+    await page.locator('button[type=submit]').click();
+    await page.waitForURL(url => !url.pathname.includes('/login'));
+    await page.goto('http://localhost:3000/accounts');
+    await page.getByRole('option', { name: '42 tài khoản đã chọn', exact: true }).waitFor({ state: 'attached' });
+    const search = page.getByPlaceholder('Tìm tài khoản…');
+    const filter = page.getByLabel('Lọc trạng thái kết nối');
+    await search.fill('Product Hunt');
+    const product = page.locator('tbody tr').filter({ hasText: 'Product Hunt' });
+    await product.getByText('Đã đăng nhập', { exact: true }).waitFor();
+    await product.getByRole('button', { name: 'Hướng dẫn kết nối' }).click();
+    let dialog = page.getByRole('dialog');
+    await dialog.getByText(/Chưa có luồng đăng tự động/).waitFor();
+    assert.equal(await dialog.getByRole('link', { name: 'Hồ sơ đã cấu hình' }).getAttribute('href'), 'https://www.producthunt.com/@vpstttcompany');
+    assert.equal(await dialog.getByRole('button', { name: 'Cấu hình đăng bài' }).count(), 0);
+    const review = path.resolve(__dirname, '../../ui-review');
+    fs.mkdirSync(review, { recursive: true });
+    await page.screenshot({ path: path.join(review, 'producthunt-connection-help.png'), fullPage: true });
+    await dialog.getByRole('button', { name: 'Đóng', exact: true }).click();
+    await search.fill('DirectAdmin');
+    await filter.selectOption('connected');
+    await page.locator('tbody tr').filter({ hasText: 'DirectAdmin' }).getByText('Đã kết nối', { exact: true }).waitFor();
+    await filter.selectOption('needs_action');
+    await page.getByText('Chưa có tài khoản', { exact: true }).waitFor();
+    await search.fill('CloudPanel');
+    const restricted = page.locator('tbody tr').filter({ hasText: 'CloudPanel' });
+    await restricted.getByText('Cần thao tác', { exact: true }).waitFor();
+    await restricted.getByText(/trả 403/).waitFor();
+    await restricted.getByRole('button', { name: 'Hướng dẫn kết nối' }).click();
+    dialog = page.getByRole('dialog');
+    await dialog.getByRole('status').filter({ hasText: 'không có quyền tạo bài' }).waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => document.querySelector('main').getBoundingClientRect().left < 1 && document.querySelector('aside').getBoundingClientRect().right < 1);
+    assert.ok(await dialog.evaluate(node => node.getBoundingClientRect().width <= window.innerWidth));
+    await page.screenshot({ path: path.join(review, 'connection-help-mobile.png') });
+    await dialog.getByRole('button', { name: 'Đóng', exact: true }).click();
+    await filter.selectOption('');
+    await search.fill('Quora');
+    const quora = page.locator('tbody tr').filter({ hasText: 'Quora' });
+    await quora.getByText('Đã kết nối', { exact: true }).waitFor();
+    await quora.getByRole('button', { name: 'Hướng dẫn kết nối' }).click();
+    await page.getByRole('dialog').getByText('Đã xác nhận phiên Chrome; đã có cấu hình đăng bằng tiện ích.', { exact: true }).waitFor();
+    await page.getByRole('dialog').getByRole('button', { name: 'Cấu hình đăng bài' }).waitFor();
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ passed: true, checks: ['42 selected accounts', 'Product Hunt own profile and honest publishing capability', 'DirectAdmin connected', 'connection filters', 'CloudPanel permission restriction', 'manual connection guide', 'mobile modal', 'Quora connected', 'no publishing request'], screenshots: review }));
+  } finally { await browser.close(); }
+})().catch(error => { console.error(error instanceof assert.AssertionError ? error.message : `Connection UI check failed: ${error.name}: ${error.message.split('\n')[0]}`); process.exitCode = 1; });

@@ -18,6 +18,22 @@ function browserRecipes(): BrowserRecipeRegistry {
 }
 
 describe('PlatformAccountsService credential updates', () => {
+  it('creates a Chrome flow for a browser platform without requiring a Playwright path or session', async () => {
+    const recipes = browserRecipes();
+    const getRecipe = jest.spyOn(recipes, 'get');
+    const create = jest.fn().mockResolvedValue({ id: 'account-1' });
+    const prisma = {
+      platform: { findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'voz', mode: PlatformMode.BROWSER_ASSISTED, defaultSettings: { browserRecipe: 'voz-xenforo', forumPath: '', extensionEngine: 'xenforo' } }) },
+      platformAccount: { create, findFirstOrThrow: jest.fn().mockResolvedValue({ id: 'account-1', platform: { mode: PlatformMode.MANUAL } }) },
+    } as unknown as PrismaService;
+    const upsert = jest.fn();
+    const credentials = { upsert } as unknown as CredentialsService;
+    await new PlatformAccountsService(prisma, credentials, recipes).create('owner', { platformSlug: 'voz-forums', name: 'VOZ Chrome', settings: { delivery: 'extension' } });
+    expect(getRecipe).not.toHaveBeenCalled();
+    const saved = (create.mock.calls[0] as [{ data: Record<string, unknown> }])[0];
+    expect(saved.data).toMatchObject({ status: AccountStatus.RECONNECT_REQUIRED, settings: { delivery: 'extension', extensionEngine: 'xenforo' } });
+    expect(upsert).not.toHaveBeenCalled();
+  });
   it('merges safe catalog defaults into a newly created account', async () => {
     const created = { id: 'account-1' };
     const safeAccount = { id: 'account-1', settings: { manualUrl: 'https://medium.com/new-story', locale: 'vi' } };

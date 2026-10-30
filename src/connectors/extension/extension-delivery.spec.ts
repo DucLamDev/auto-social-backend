@@ -10,7 +10,7 @@ describe('extension delivery settings', () => {
   });
 
   it('accepts per-engine target pages and rejects the rest', () => {
-    expect(parseExtensionDeliverySettings(xenforo)).toEqual({ engine: 'xenforo', targetUrl: xenforo.extensionTargetUrl, autoSubmit: true });
+    expect(parseExtensionDeliverySettings(xenforo)).toEqual({ engine: 'xenforo', targetUrl: xenforo.extensionTargetUrl, autoSubmit: true, tags: [], category: '', flair: '' });
     expect(parseExtensionDeliverySettings({ ...xenforo, extensionEngine: 'phpbb', extensionTargetUrl: 'https://forum.example.com/posting.php?mode=post&f=7' }).engine).toBe('phpbb');
     expect(() => parseExtensionDeliverySettings({ ...xenforo, extensionTargetUrl: 'https://voz.vn/f/x.17/' })).toThrow('post-thread');
     expect(() => parseExtensionDeliverySettings({ ...xenforo, extensionTargetUrl: 'http://voz.vn/f/x.17/post-thread' })).toThrow('https');

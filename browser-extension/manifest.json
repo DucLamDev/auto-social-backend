@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "VPSTTT Social Publisher",
-  "version": "1.0.0",
-  "description": "Tự đăng bài AI đã duyệt lên diễn đàn bằng chính Chrome đang đăng nhập của bạn (XenForo, Discourse, phpBB).",
+  "version": "1.6.3",
+  "description": "Nhận bài đã duyệt từ web và tự đăng lên các nền tảng, diễn đàn bằng Chrome đang đăng nhập của bạn.",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "alarms", "tabs", "scripting"],
+  "permissions": ["storage", "alarms", "tabs", "scripting", "webNavigation"],
   "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_popup": "popup.html", "default_title": "VPSTTT Social Publisher" },

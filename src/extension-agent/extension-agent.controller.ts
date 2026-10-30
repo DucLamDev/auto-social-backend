@@ -1,11 +1,12 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
-import { CreateExtensionDeviceDto, ExtensionDeliveryDto, ExtensionTaskResultDto } from './extension-agent.dto';
+import { ClaimExtensionTaskDto, CreateExtensionDeviceDto, ExtensionDeliveryDto, ExtensionTaskResultDto, ExtensionSessionDto, ExtensionAuthStepDto } from './extension-agent.dto';
+import { ExtensionAccountSessionService } from './extension-account-session.service';
 import { AuthenticatedDevice, ExtensionAgentService } from './extension-agent.service';
 import { CurrentDevice, ExtensionDeviceGuard } from './extension-device.guard';
 
@@ -14,7 +15,14 @@ import { CurrentDevice, ExtensionDeviceGuard } from './extension-device.guard';
 @ApiBearerAuth()
 @Controller('extension')
 export class ExtensionController {
-  constructor(private readonly agent: ExtensionAgentService) {}
+  constructor(private readonly agent: ExtensionAgentService, private readonly sessions: ExtensionAccountSessionService) {}
+
+  @Put('accounts/:id/session')
+  @Roles(RoleName.ADMIN)
+  @Header('Cache-Control', 'no-store')
+  configureSession(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ExtensionSessionDto) {
+    return this.sessions.configure(user.id, id, dto);
+  }
 
   @Get('devices')
   devices(@CurrentUser() user: AuthenticatedUser) {
@@ -56,7 +64,14 @@ export class ExtensionController {
 @UseGuards(ExtensionDeviceGuard)
 @Controller('extension/agent')
 export class ExtensionAgentController {
-  constructor(private readonly agent: ExtensionAgentService) {}
+  constructor(private readonly agent: ExtensionAgentService, private readonly sessions: ExtensionAccountSessionService) {}
+
+  @Post('tasks/:id/auth')
+  @HttpCode(HttpStatus.OK)
+  @Header('Cache-Control', 'no-store')
+  authStep(@CurrentDevice() device: AuthenticatedDevice, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ExtensionAuthStepDto) {
+    return this.sessions.authStep(device, id, dto);
+  }
 
   @Post('heartbeat')
   @HttpCode(HttpStatus.OK)
@@ -66,8 +81,13 @@ export class ExtensionAgentController {
 
   @Post('claim')
   @HttpCode(HttpStatus.OK)
-  async claim(@CurrentDevice() device: AuthenticatedDevice) {
-    return { task: await this.agent.claim(device) };
+  async claim(@CurrentDevice() device: AuthenticatedDevice, @Body() dto: ClaimExtensionTaskDto) {
+    return { task: await this.agent.claim(device, dto.excludeOrigins, dto.supportedEngines, dto.authProtocol) };
+  }
+
+  @Get('tasks/:id/media/:assetId')
+  media(@CurrentDevice() device: AuthenticatedDevice, @Param('id', ParseUUIDPipe) id: string, @Param('assetId', ParseUUIDPipe) assetId: string) {
+    return this.agent.taskMedia(device, id, assetId);
   }
 
   @Post('tasks/:id/result')

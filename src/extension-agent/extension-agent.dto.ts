@@ -1,9 +1,29 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsOptional, IsString, IsUrl, Length, MaxLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsOptional, IsString, IsUrl, IsUUID, Length, MaxLength } from 'class-validator';
+import { EXTENSION_ENGINES, ExtensionEngine } from '../connectors/extension/extension-delivery';
 
-export const EXTENSION_NEEDS_ACTION_REASONS = ['CAPTCHA_REQUIRED', 'WAITING_USER', 'SUBMIT_UNCONFIRMED', 'SUBMIT_REJECTED'] as const;
+export class ClaimExtensionTaskDto {
+  @IsOptional()
+  @IsIn([1])
+  authProtocol?: number;
+  @ApiPropertyOptional({ type: [String], description: 'Origins already running a flow in this Chrome' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsUrl({ require_protocol: true, require_tld: false, protocols: ['http', 'https'] }, { each: true })
+  @MaxLength(2048, { each: true })
+  excludeOrigins?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(30)
+  @IsIn(EXTENSION_ENGINES, { each: true })
+  supportedEngines?: ExtensionEngine[];
+}
+
+export const EXTENSION_NEEDS_ACTION_REASONS = ['CAPTCHA_REQUIRED', 'WAITING_USER', 'SUBMIT_UNCONFIRMED', 'SUBMIT_REJECTED', 'MODERATION_PENDING', 'AUTH_REQUIRED', 'ACCOUNT_MISMATCH'] as const;
 /** Reasons the extension reports only when nothing was submitted, so a retry cannot duplicate the post. */
-export const EXTENSION_FAILED_REASONS = ['LOGIN_REQUIRED', 'EDITOR_NOT_FOUND', 'PERMISSION_REQUIRED', 'PAGE_LOAD_FAILED', 'CANCELLED'] as const;
+export const EXTENSION_FAILED_REASONS = ['LOGIN_REQUIRED', 'EDITOR_NOT_FOUND', 'PERMISSION_REQUIRED', 'PAGE_LOAD_FAILED', 'CANCELLED', 'MEDIA_REQUIRED', 'PLATFORM_UNAVAILABLE'] as const;
 
 export class CreateExtensionDeviceDto {
   @ApiProperty({ example: 'Chrome văn phòng' })
@@ -40,10 +60,10 @@ export class ExtensionDeliveryDto {
   @IsBoolean()
   enabled!: boolean;
 
-  @ApiPropertyOptional({ enum: ['xenforo', 'discourse', 'phpbb'] })
+  @ApiPropertyOptional({ enum: EXTENSION_ENGINES })
   @IsOptional()
-  @IsIn(['xenforo', 'discourse', 'phpbb'])
-  engine?: 'xenforo' | 'discourse' | 'phpbb';
+  @IsIn(EXTENSION_ENGINES)
+  engine?: ExtensionEngine;
 
   @ApiPropertyOptional({ example: 'https://voz.vn/f/chuyen-tro-linh-tinh.17/post-thread' })
   @IsOptional()
@@ -55,4 +75,77 @@ export class ExtensionDeliveryDto {
   @IsOptional()
   @IsBoolean()
   autoSubmit?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MaxLength(80, { each: true })
+  tags?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  flair?: string;
+}
+
+export class ExtensionSessionDto {
+  @IsIn(['password', 'google'])
+  provider!: 'password' | 'google';
+  @IsUUID()
+  deviceId!: string;
+
+  @IsString()
+  @Length(1, 200)
+  expectedUsername!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  profileUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  identitySelector?: string;
+
+  @IsBoolean()
+  autoLogin!: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  loginUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  loginUsername?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  password?: string;
+
+  @IsBoolean()
+  autoTotp!: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048)
+  totpSecret?: string;
+}
+
+export class ExtensionAuthStepDto {
+  @IsIn(['identifier', 'password', 'totp'])
+  step!: 'identifier' | 'password' | 'totp';
+
+  @IsString()
+  @MaxLength(2048)
+  pageUrl!: string;
 }

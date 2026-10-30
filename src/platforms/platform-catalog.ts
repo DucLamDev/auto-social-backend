@@ -1,5 +1,6 @@
 import { PlatformAvailability, PlatformMode } from '@prisma/client';
 import { ConnectorCapability } from '../connectors/core/connector-capability';
+import { extensionFlowDefaults } from '../connectors/extension/extension-flows';
 import {
   REVIEWED_BROWSER_RECIPE_MANIFEST,
   reviewedBrowserRecipeForPlatform,
@@ -260,7 +261,10 @@ const definitions: CatalogDefinition[] = [
   { slug: 'discourse', name: 'Discourse', groupKey: 'FORUM', connectorKey: 'discourse', mode: PlatformMode.COMPATIBLE_API, availability: PlatformAvailability.CREDENTIAL_REQUIRED, docsUrl: 'https://docs.discourse.org/', promptHint: 'Respect the selected site category and tag rules, provide context, and invite constructive discussion without cross-post spam.' },
 ];
 
-export const PLATFORM_CATALOG: readonly PlatformCatalogEntry[] = definitions.map(definePlatform);
+export const PLATFORM_CATALOG: readonly PlatformCatalogEntry[] = definitions.map((definition) => {
+  const platform = definePlatform(definition);
+  return { ...platform, defaultSettings: { ...platform.defaultSettings, ...extensionFlowDefaults(platform.slug) } };
+});
 
 export function assertPlatformCatalog(): void {
   const slugs = new Set<string>();

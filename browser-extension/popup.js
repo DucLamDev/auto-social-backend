@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
-const OUTCOME = { PUBLISHED: ['Đã đăng', 'ok'], NEEDS_ACTION: ['Cần bạn thao tác', 'warn'], FAILED: ['Chưa đăng được', 'bad'], REPORT_FAILED: ['Không báo được về hệ thống', 'bad'] };
+const OUTCOME = { RECEIVED: ['Đã nhận tác vụ từ web', 'ok'], AUTHENTICATED: ['Đăng nhập thành công', 'ok'], PUBLISHED: ['Đã đăng', 'ok'], NEEDS_ACTION: ['Cần xử lý', 'warn'], FAILED: ['Chưa hoàn tất', 'bad'], REPORT_FAILED: ['Không báo được về hệ thống', 'bad'] };
+$('version').textContent = `Phiên bản ${chrome.runtime.getManifest().version}`;
 
 function render(state) {
   const stateLine = $('state');
@@ -19,7 +20,7 @@ function render(state) {
     stateLine.textContent = 'Đang chạy';
     stateLine.className = 'status ok';
     const beat = state.lastHeartbeat;
-    $('detail').textContent = beat ? `${beat.device?.name ?? ''} · ${beat.waiting ?? 0} bài đang chờ · ${beat.origins?.length ?? 0} diễn đàn` : '';
+    $('detail').textContent = beat ? `${beat.device?.name ?? ''} · ${beat.waiting ?? 0} bài đang chờ · ${beat.origins?.length ?? 0} nền tảng` : '';
   }
   $('pause').textContent = state.paused ? 'Tiếp tục' : 'Tạm dừng';
 
@@ -27,17 +28,17 @@ function render(state) {
   const tasks = state.tasks ?? [];
   current.hidden = tasks.length === 0;
   current.replaceChildren(...tasks.map((task) => {
-    const phase = { loading: 'Đang mở và điền form', submitted: 'Đã bấm Đăng, chờ xác nhận', waitingUser: 'Chờ bạn thao tác trong tab' }[task.phase] ?? task.phase;
+    const phase = { loading: 'Đã nhận bài, đang mở form', authenticating: 'Đang xác thực đúng tài khoản / TOTP', waitingAuth: 'Cần kiểm tra đăng nhập trên web', filling: 'Đang điền bài và chọn tag', submitted: 'Đã bấm Đăng, chờ xác nhận', waitingUser: 'Chờ bạn thao tác trong tab' }[task.phase] ?? task.phase;
     const line = document.createElement('p');
     line.className = task.phase === 'waitingUser' ? 'warn' : '';
-    line.textContent = `${task.job.account.platform} · ${task.job.account.name}: ${phase}`;
+    line.textContent = `${task.job.account.platform} · ${task.job.account.name}: ${phase} · ${task.job.post?.title ?? ''}`;
     return line;
   }));
 
   const history = state.history ?? [];
   if (history.length) {
     $('log').replaceChildren(...history.slice(0, 6).map((entry) => {
-      const [label, tone] = OUTCOME[entry.outcome] ?? [entry.outcome, 'muted'];
+      const [label, tone] = entry.reason === 'MODERATION_PENDING' ? ['Chờ diễn đàn duyệt', 'warn'] : OUTCOME[entry.outcome] ?? [entry.outcome, 'muted'];
       const item = document.createElement('li');
       const head = document.createElement('span');
       head.className = tone;

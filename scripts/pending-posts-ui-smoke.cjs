@@ -1,0 +1,91 @@
+// Read-only live verification. Does not submit or approve any social post.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { parseEnv } = require('node:util');
+const { chromium } = require('playwright');
+const env = parseEnv(fs.readFileSync(path.resolve(__dirname, '../.env'), 'utf8'));
+
+(async () => {
+  const browser = await chromium.launch();
+  try {
+    const context = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto('http://localhost:3000/login');
+    await page.locator('[name=email]').fill(env.SEED_ADMIN_EMAIL);
+    await page.locator('[name=password]').fill(env.SEED_ADMIN_PASSWORD);
+    await page.locator('button[type=submit]').click();
+    await page.waitForURL(url => !url.pathname.includes('/login'));
+    const token = await page.evaluate(() => sessionStorage.getItem('sp_access_token'));
+    const api = 'http://localhost:3001/api/v1/publish-jobs';
+    const headers = { Authorization: `Bearer ${token}` };
+    const response = await context.request.get(`${api}?reviewState=MODERATION&limit=50`, { headers });
+    assert.equal(response.status(), 200);
+    const actual = await response.json();
+    assert.ok(actual.data.length >= 7, 'Expected existing accepted forum posts');
+    for (const row of actual.data) {
+      assert.equal(row.status, 'NEEDS_ACTION');
+      assert.ok(row.lastErrorCode === 'EXTENSION_MODERATION_PENDING' || row.attempts.some(a => a.responseMetadata?.moderationQueue));
+      assert.equal(row.platformAccount.settings, undefined);
+      if (row.reviewUrl) { const url = new URL(row.reviewUrl); assert.equal(url.protocol, 'https:'); assert.equal(url.search, ''); }
+      assert.equal(row.reviewUrlKind, 'pending_queue');
+      assert.ok(row.reviewUrl.endsWith('/my/activity/pending'));
+      const contentResponse = await context.request.get(`${api}/${row.id}/manual-payload`, { headers });
+      assert.equal(contentResponse.status(), 200);
+      const content = (await contentResponse.json()).data;
+      assert.equal(content.moderationPending, true);
+      assert.equal(content.reviewUrl, row.reviewUrl);
+      assert.equal(content.title, row.target.contentVariant.title);
+      assert.ok(content.body.length > 0);
+      assert.equal(content.settings, undefined);
+    }
+    assert.equal((await context.request.get(`${api}?reviewState=BAD`, { headers })).status(), 400);
+    assert.equal((await context.request.get(`${api}?reviewState=MODERATION`)).status(), 401);
+    assert.equal((await context.request.get(`${api}/${actual.data[0].id}/manual-payload`)).status(), 401);
+    assert.equal((await context.request.get(`${api}/00000000-0000-4000-8000-000000000000/manual-payload`, { headers })).status(), 404);
+    const loaded = page.waitForResponse(r => r.url().includes('reviewState=MODERATION') && r.status() === 200);
+    await page.goto('http://localhost:3000/pending-posts');
+    await loaded;
+    await page.getByRole('heading', { name: 'Bài chờ duyệt', exact: true }).waitFor();
+    await page.getByText('Đã gửi · chờ duyệt', { exact: true }).first().waitFor();
+    assert.equal(await page.locator('tbody tr').count(), actual.data.length);
+    assert.equal(await page.getByRole('link', { name: 'Xem nội dung', exact: true }).count(), actual.data.length);
+    assert.equal(await page.getByRole('button', { name: /Retry|Giao lại/ }).count(), 0);
+    const review = path.resolve(__dirname, '../../ui-review');
+    fs.mkdirSync(review, { recursive: true });
+    await page.evaluate(() => Promise.all(document.getAnimations().filter(a => Number.isFinite(a.effect?.getTiming().iterations)).map(a => a.finished.catch(() => {}))));
+    await page.screenshot({ path: path.join(review, 'pending-posts-live.png'), fullPage: true });
+    const search = page.getByPlaceholder('Tìm theo nội dung, tài khoản…');
+    await search.fill('Caddy');
+    await page.waitForFunction(() => document.querySelectorAll('tbody tr').length === 1 && document.querySelector('tbody')?.textContent.includes('Caddy'));
+    assert.equal(await page.getByRole('link', { name: 'Xem hàng đợi trên diễn đàn' }).getAttribute('href'), 'https://caddy.community/my/activity/pending');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => document.querySelector('main').getBoundingClientRect().left < 1 && document.querySelector('aside').getBoundingClientRect().right < 1);
+    await page.screenshot({ path: path.join(review, 'pending-posts-mobile.png'), fullPage: true });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+    await page.getByRole('link', { name: 'Xem nội dung', exact: true }).click();
+    const caddy = actual.data.find(row => row.platformAccount.name.includes('Caddy'));
+    await page.waitForURL(`http://localhost:3000/pending-posts/${caddy.id}`);
+    await page.getByRole('heading', { name: caddy.target.contentVariant.title, exact: true }).waitFor();
+    assert.ok((await page.getByTestId('post-body').textContent()).length > 100);
+    assert.equal(await page.getByRole('link', { name: 'Xem hàng đợi trên diễn đàn' }).getAttribute('href'), caddy.reviewUrl);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+    await page.screenshot({ path: path.join(review, 'pending-post-content-mobile.png'), fullPage: true });
+    await page.reload();
+    await page.getByTestId('post-body').waitFor();
+    await page.setViewportSize({ width: 1500, height: 1000 });
+    await page.screenshot({ path: path.join(review, 'pending-post-content-live.png'), fullPage: true });
+    await page.goto('http://localhost:3000/api-guide');
+    await page.getByRole('heading', { name: 'Hướng dẫn API', exact: true }).waitFor();
+    assert.equal(await page.locator('details').count(), 12);
+    await page.getByPlaceholder('Tìm nền tảng, API key, OAuth…').fill('Mastodon');
+    assert.equal(await page.locator('details').count(), 1);
+    await page.getByText(/read:accounts/).waitFor();
+    assert.equal(await page.getByRole('link', { name: 'Tài liệu chính thức' }).getAttribute('href'), 'https://docs.joinmastodon.org/client/token/');
+    await page.screenshot({ path: path.join(review, 'api-guide-live.png'), fullPage: true });
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ passed: true, pending: actual.meta.total, checks: ['live authenticated moderation queue', 'all pending content endpoints', 'unauthorized and missing content', 'filter validation', 'no credentials returned', 'search', 'provider pending links', 'local content links and bookmark reload', 'no resend action', 'mobile layout', '12 API guides'], screenshots: review }));
+  } finally { await browser.close(); }
+})().catch(error => { console.error(error instanceof assert.AssertionError ? error.message : `UI check failed: ${error.name}`); process.exitCode = 1; });

@@ -1,22 +1,27 @@
 import { BadRequestException } from '@nestjs/common';
+import { SOCIAL_EXTENSION_ENGINES, SOCIAL_EXTENSION_RECIPES } from './social-recipes';
 
 /**
  * "Extension delivery" lets an account publish through the operator's own
  * Chrome: the VPSTTT Chrome extension claims the job, fills the forum's
  * new-thread form in a tab that is already signed in, submits it and reports
- * the thread URL. No password, cookie or browser profile reaches the backend.
+ * the thread URL. Cookies stay in Chrome; optional owner-supplied login secrets
+ * are held separately in the encrypted credential store.
  */
 export const EXTENSION_CONNECTOR_KEY = 'extension';
 
-export const EXTENSION_ENGINES = ['xenforo', 'discourse', 'phpbb'] as const;
+export const EXTENSION_ENGINES = ['xenforo', 'discourse', 'phpbb', ...SOCIAL_EXTENSION_ENGINES] as const;
 export type ExtensionEngine = (typeof EXTENSION_ENGINES)[number];
 
-export const EXTENSION_SETTING_KEYS = ['delivery', 'extensionEngine', 'extensionTargetUrl', 'extensionAutoSubmit'] as const;
+export const EXTENSION_SETTING_KEYS = ['delivery', 'extensionEngine', 'extensionTargetUrl', 'extensionAutoSubmit', 'extensionTags', 'extensionCategory', 'extensionFlair'] as const;
 
 export interface ExtensionDeliverySettings {
   engine: ExtensionEngine;
   targetUrl: string;
   autoSubmit: boolean;
+  tags?: string[];
+  category?: string;
+  flair?: string;
 }
 
 /**
@@ -26,6 +31,11 @@ export interface ExtensionDeliverySettings {
  */
 export interface ExtensionRecipe {
   engine: ExtensionEngine;
+  workflow?: 'social';
+  requiredMedia?: 'image' | 'document';
+  publishedTitleSelectors?: string[];
+  publishedBodySelectors?: string[];
+  publishedLinkSelectors?: string[];
   /** Page must show one of these before the runner touches anything. */
   readySelectors: string[];
   titleSelectors: string[];
@@ -53,6 +63,7 @@ const CAPTCHA_SELECTORS = [
 ];
 
 export const EXTENSION_RECIPES: Record<ExtensionEngine, ExtensionRecipe> = {
+  ...SOCIAL_EXTENSION_RECIPES,
   // XenForo 2 (voz.vn, forums.cpanel.net, forum.directadmin.com…): /forums/x.1/post-thread or /f/x.1/post-thread.
   xenforo: {
     engine: 'xenforo',
@@ -148,7 +159,17 @@ export function parseExtensionDeliverySettings(input: unknown): ExtensionDeliver
   if (typeof settings.extensionAutoSubmit !== 'boolean') {
     throw new BadRequestException('extensionAutoSubmit must be true or false');
   }
-  return { engine: engine as ExtensionEngine, targetUrl: url.toString(), autoSubmit: settings.extensionAutoSubmit };
+  const tags = settings.extensionTags ?? [];
+  if (!Array.isArray(tags) || tags.length > 10 || tags.some(tag => typeof tag !== 'string' || !tag.trim() || tag.length > 80)) {
+    throw new BadRequestException('extensionTags must contain at most 10 tag names (80 characters each)');
+  }
+  const category = settings.extensionCategory ?? '';
+  const flair = settings.extensionFlair ?? '';
+  if (typeof category !== 'string' || category.length > 160 || typeof flair !== 'string' || flair.length > 160) {
+    throw new BadRequestException('Category and flair must be text of at most 160 characters');
+  }
+  return { engine: engine as ExtensionEngine, targetUrl: url.toString(), autoSubmit: settings.extensionAutoSubmit,
+    tags: [...new Set((tags as string[]).map(tag => tag.trim()))], category: category.trim(), flair: flair.trim() };
 }
 
 /** URL the extension opens; Discourse always goes to /new-topic so the composer opens. */

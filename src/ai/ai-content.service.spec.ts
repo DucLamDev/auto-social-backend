@@ -4,6 +4,7 @@ import { ApplicationException, ErrorCode } from '../common/exceptions/applicatio
 import { PrismaService } from '../database/prisma.service';
 import { AiProvider } from './ai-provider';
 import { AiContentService } from './ai-content.service';
+import { GeminiKeyPoolService } from './gemini-key-pool.service';
 
 type ConfigValue = string | number | undefined;
 
@@ -36,6 +37,15 @@ function isolatedConfig(overrides: Record<string, ConfigValue> = {}): ConfigServ
 function installClient(service: AiContentService, provider: AiProvider, client: unknown): void {
   const target = service as unknown as { clients: Partial<Record<AiProvider, unknown>> };
   target.clients[provider] = client;
+  if (provider === 'gemini') (service as unknown as { createGeminiClient: () => unknown }).createGeminiClient = () => client;
+}
+
+function createService(prisma: PrismaService, config: ConfigService): AiContentService {
+  const service = new AiContentService(prisma, config, {
+    configured: () => Promise.resolve(Boolean(config.get<string>('GEMINI_API_KEY') || (service as unknown as { clients: Record<string, unknown> }).clients.gemini)),
+    run: <T>(request: (key: string) => Promise<T>) => request('unit-test-gemini-key'),
+  } as unknown as GeminiKeyPoolService);
+  return service;
 }
 
 function skipGeminiRetryDelay(service: AiContentService): jest.Mock<Promise<void>, [number]> {
@@ -87,7 +97,7 @@ describe('AiContentService structured parsing and provider routing', () => {
   });
 
   it('accepts schema-compliant model output', () => {
-    const service = new AiContentService({} as PrismaService, isolatedConfig());
+    const service = createService({} as PrismaService, isolatedConfig());
     const result = service.parseOutput(JSON.stringify({
       platform: 'linkedin',
       title: 'A title',
@@ -104,19 +114,19 @@ describe('AiContentService structured parsing and provider routing', () => {
   });
 
   it('rejects invalid JSON and invalid schema output', () => {
-    const service = new AiContentService({} as PrismaService, isolatedConfig());
+    const service = createService({} as PrismaService, isolatedConfig());
     expect(() => service.parseOutput('{bad')).toThrow('AI returned invalid JSON');
     expect(() => service.parseOutput(JSON.stringify({ platform: 'x' }))).toThrow('required schema');
   });
 
-  it('reports only safe provider metadata and honors the configured default', () => {
-    const service = new AiContentService(
+  it('reports only safe provider metadata and honors the configured default', async () => {
+    const service = createService(
       {} as PrismaService,
       isolatedConfig({ AI_DEFAULT_PROVIDER: 'deepseek' }),
     );
     installClient(service, 'deepseek', { chat: { completions: {} } });
 
-    expect(service.providers()).toEqual([
+    expect(await service.providers()).toEqual([
       {
         id: 'openai', label: 'OpenAI', model: 'openai-test-model', configured: false, isDefault: false,
       },
@@ -128,16 +138,16 @@ describe('AiContentService structured parsing and provider routing', () => {
       },
     ]);
     expect(service.resolveProvider()).toBe('deepseek');
-    expect(Object.keys(service.providers()[0] ?? {})).not.toContain('apiKey');
+    expect(Object.keys((await service.providers())[0] ?? {})).not.toContain('apiKey');
   });
 
-  it('uses the stable Gemini default model when no model override is configured', () => {
-    const service = new AiContentService(
+  it('uses the stable Gemini default model when no model override is configured', async () => {
+    const service = createService(
       {} as PrismaService,
       isolatedConfig({ GEMINI_MODEL: '' }),
     );
 
-    expect(service.providers()).toContainEqual(expect.objectContaining({
+    expect(await service.providers()).toContainEqual(expect.objectContaining({
       id: 'gemini',
       model: 'gemini-3.5-flash',
     }));
@@ -145,7 +155,7 @@ describe('AiContentService structured parsing and provider routing', () => {
 
   it('fails readiness before querying platforms when the selected provider is missing', async () => {
     const findMany = jest.fn();
-    const unconfigured = new AiContentService(
+    const unconfigured = createService(
       { platform: { findMany } } as unknown as PrismaService,
       isolatedConfig(),
     );
@@ -155,7 +165,7 @@ describe('AiContentService structured parsing and provider routing', () => {
   });
 
   it('fails readiness when a selected platform has no active prompt', async () => {
-    const configured = new AiContentService(
+    const configured = createService(
       {
         platform: {
           findMany: jest.fn().mockResolvedValue([{ slug: 'devto', prompts: [] }]),
@@ -175,7 +185,7 @@ describe('AiContentService structured parsing and provider routing', () => {
       recommended: true, reason: 'Concise', media: { type: 'none', altText: '' },
     });
     const create = jest.fn<Promise<{ output_text: string }>, [Request]>().mockResolvedValue({ output_text: output });
-    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    const configured = createService({} as PrismaService, isolatedConfig());
     installClient(configured, 'openai', { responses: { create } });
 
     await callModel(configured, 'openai', 'x', 'Ground all claims.', '{{body}}', {
@@ -197,7 +207,7 @@ describe('AiContentService structured parsing and provider routing', () => {
       media: { type: 'none', altText: '' },
     });
     const create = jest.fn().mockResolvedValue({ choices: [{ message: { content: output } }] });
-    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    const configured = createService({} as PrismaService, isolatedConfig());
     installClient(configured, 'deepseek', { chat: { completions: { create } } });
 
     const result = await callModel(configured, 'deepseek', 'devto', 'Stay grounded.', '{{body}}', {
@@ -225,7 +235,7 @@ describe('AiContentService structured parsing and provider routing', () => {
       media: { type: 'image', altText: 'Diagram' },
     };
     const parse = jest.fn().mockResolvedValue({ choices: [{ message: { parsed, content: null } }] });
-    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    const configured = createService({} as PrismaService, isolatedConfig());
     installClient(configured, 'gemini', { chat: { completions: { parse } } });
 
     const result = await callModel(configured, 'gemini', 'linkedin', 'Stay grounded.', '{{body}}', {
@@ -249,7 +259,7 @@ describe('AiContentService structured parsing and provider routing', () => {
     const parse = jest.fn()
       .mockRejectedValueOnce({ status: 503, message: 'raw-upstream-body' })
       .mockResolvedValueOnce({ choices: [{ message: { parsed, content: null } }] });
-    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    const configured = createService({} as PrismaService, isolatedConfig());
     const delay = skipGeminiRetryDelay(configured);
     installClient(configured, 'gemini', { chat: { completions: { parse } } });
 
@@ -270,10 +280,10 @@ describe('AiContentService structured parsing and provider routing', () => {
       media: { type: 'none', altText: '' },
     };
     const parse = jest.fn()
-      .mockRejectedValueOnce({ status: 429, message: 'raw-primary-limit' })
+      .mockRejectedValueOnce({ status: 503, message: 'raw-primary-limit' })
       .mockRejectedValueOnce({ status: 503, message: 'raw-primary-outage' })
       .mockResolvedValueOnce({ choices: [{ message: { parsed, content: null } }] });
-    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    const configured = createService({} as PrismaService, isolatedConfig());
     const delay = skipGeminiRetryDelay(configured);
     installClient(configured, 'gemini', { chat: { completions: { parse } } });
 
@@ -295,7 +305,7 @@ describe('AiContentService structured parsing and provider routing', () => {
       message: rawUpstreamDetail,
       error: { message: rawUpstreamDetail, account: rawUpstreamDetail },
     });
-    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    const configured = createService({} as PrismaService, isolatedConfig());
     installClient(configured, 'deepseek', { chat: { completions: { create } } });
 
     const error = await captureApplicationError(callModel(
@@ -323,7 +333,7 @@ describe('AiContentService structured parsing and provider routing', () => {
       message: rawUpstreamDetail,
       error: { message: rawUpstreamDetail },
     });
-    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    const configured = createService({} as PrismaService, isolatedConfig());
     skipGeminiRetryDelay(configured);
     installClient(configured, 'gemini', { chat: { completions: { parse } } });
 
@@ -354,7 +364,7 @@ describe('AiContentService structured parsing and provider routing', () => {
         message: rawUpstreamDetail,
         error: { message: rawUpstreamDetail },
       });
-      const configured = new AiContentService({} as PrismaService, isolatedConfig());
+      const configured = createService({} as PrismaService, isolatedConfig());
       installClient(configured, 'openai', { responses: { create } });
 
       const error = await captureApplicationError(callModel(
@@ -389,7 +399,7 @@ describe('AiContentService structured parsing and provider routing', () => {
     },
   ])('maps timeout and 5xx failures safely', async ({ providerError, expectedStatus, expectedMessage }) => {
     const create = jest.fn().mockRejectedValue(providerError);
-    const configured = new AiContentService({} as PrismaService, isolatedConfig());
+    const configured = createService({} as PrismaService, isolatedConfig());
     installClient(configured, 'openai', { responses: { create } });
 
     const error = await captureApplicationError(callModel(
@@ -426,7 +436,7 @@ describe('AiContentService structured parsing and provider routing', () => {
         create: jest.fn(),
       },
     };
-    const configured = new AiContentService(prisma as unknown as PrismaService, isolatedConfig());
+    const configured = createService(prisma as unknown as PrismaService, isolatedConfig());
     const create = jest.fn().mockRejectedValue(new Error('provider down'));
     installClient(configured, 'openai', { responses: { create } });
 
@@ -461,7 +471,7 @@ describe('AiContentService structured parsing and provider routing', () => {
       },
       $transaction: transaction,
     };
-    const configured = new AiContentService(prisma as unknown as PrismaService, isolatedConfig());
+    const configured = createService(prisma as unknown as PrismaService, isolatedConfig());
     const valid = JSON.stringify({
       platform: 'x', title: null, body: 'Hello', summary: null, hashtags: [], cta: null,
       recommended: true, reason: 'Concise', media: { type: 'none', altText: '' },
@@ -497,7 +507,7 @@ describe('AiContentService structured parsing and provider routing', () => {
       },
       $transaction: transaction,
     };
-    const configured = new AiContentService(prisma as unknown as PrismaService, isolatedConfig());
+    const configured = createService(prisma as unknown as PrismaService, isolatedConfig());
     const create = jest.fn();
     installClient(configured, 'openai', { responses: { create } });
 

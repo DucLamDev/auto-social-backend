@@ -184,13 +184,18 @@ export class PlatformAccountsService {
   }
 
   async create(ownerId: string, dto: CreatePlatformAccountDto) {
+    if (dto.settings && 'extensionSession' in dto.settings) throw new BadRequestException('Configure the Chrome session through the extension session endpoint');
     const platform = await this.prisma.platform.findUniqueOrThrow({ where: { slug: dto.platformSlug } });
     const defaultSettings = platform.defaultSettings !== null
       && typeof platform.defaultSettings === 'object'
       && !Array.isArray(platform.defaultSettings)
       ? platform.defaultSettings as Record<string, unknown>
       : {};
-    const browserSettings = platform.mode === PlatformMode.BROWSER_ASSISTED
+    const extensionDelivery = dto.settings?.delivery === 'extension';
+    if (extensionDelivery && platform.mode === PlatformMode.OFFICIAL_API) {
+      throw new BadRequestException('This platform uses its official API');
+    }
+    const browserSettings = platform.mode === PlatformMode.BROWSER_ASSISTED && !extensionDelivery
       ? this.browserSettings(platform.defaultSettings, dto.settings ?? {})
       : undefined;
     if (platform.mode === PlatformMode.BROWSER_ASSISTED && dto.credential) {
@@ -211,7 +216,7 @@ export class PlatformAccountsService {
         status:
           !enabled
             ? AccountStatus.DISABLED
-            : platform.mode === PlatformMode.MANUAL
+            : platform.mode === PlatformMode.MANUAL && !extensionDelivery
             ? AccountStatus.CONNECTED
             : AccountStatus.RECONNECT_REQUIRED,
       },
@@ -227,6 +232,7 @@ export class PlatformAccountsService {
     credential: Record<string, unknown>,
     settings?: Record<string, unknown>,
   ) {
+    if (settings && 'extensionSession' in settings) throw new BadRequestException('Configure the Chrome session through the extension session endpoint');
     await this.prisma.$transaction(async (transaction) => {
       const account = await transaction.platformAccount.findFirstOrThrow({
         where: { id, ownerId },
@@ -366,6 +372,7 @@ export class PlatformAccountsService {
           enabled: false,
           status: AccountStatus.DISABLED,
           lastTestedAt: null,
+          ...(asSettings(account.settings).extensionAutoConnect === true ? { settings: { ...asSettings(account.settings), extensionAutoConnect: false } as Prisma.InputJsonObject } : {}),
         },
       });
       return this.get(ownerId, id);

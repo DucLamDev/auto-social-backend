@@ -6,11 +6,30 @@ function originPattern(url) {
 }
 
 async function load() {
+  // The operator may open settings while an unpacked update is already on disk.
+  // Refresh the worker as well, instead of showing new UI with an old scheduler.
+  try {
+    const installed = await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' }).then(response => response.json());
+    if (installed.version !== chrome.runtime.getManifest().version) { chrome.runtime.reload(); return; }
+  } catch { /* Normal heartbeat below reports any actual connection problem. */ }
   const { apiUrl = '', token = '', paused = false, lastHeartbeat } = await chrome.storage.local.get(['apiUrl', 'token', 'paused', 'lastHeartbeat']);
   $('apiUrl').value = apiUrl;
   $('token').value = token;
   renderPause(paused);
   if (lastHeartbeat) await renderOrigins(lastHeartbeat);
+  if (apiUrl && token) {
+    try {
+      const beat = await heartbeat(apiUrl.replace(/\/$/, ''), token);
+      await chrome.storage.local.set({ lastHeartbeat: { at: new Date().toISOString(), ...beat }, lastError: null });
+      await renderOrigins(beat);
+      $('pairStatus').textContent = `Đã kết nối: ${beat.device.name}.`;
+      $('pairStatus').className = 'ok';
+      void chrome.runtime.sendMessage({ type: 'tick-now' });
+    } catch (error) {
+      $('pairStatus').textContent = String(error.message ?? error);
+      $('pairStatus').className = 'bad';
+    }
+  }
 }
 
 function renderPause(paused) {
@@ -22,7 +41,7 @@ async function renderOrigins(beat) {
   origins = beat.origins ?? [];
   const box = $('origins');
   if (!origins.length) {
-    box.textContent = 'Chưa có tài khoản diễn đàn nào bật "Đăng bằng tiện ích Chrome".';
+    box.textContent = 'Chưa có tài khoản nào bật "Đăng bằng tiện ích Chrome".';
     $('grant').disabled = true;
     return;
   }
@@ -34,7 +53,7 @@ async function renderOrigins(beat) {
     return line;
   }));
   $('grant').disabled = granted.every(Boolean);
-  $('grantStatus').textContent = granted.every(Boolean) ? 'Đã đủ quyền.' : `${granted.filter((value) => !value).length} diễn đàn chưa cấp quyền.`;
+  $('grantStatus').textContent = granted.every(Boolean) ? 'Đã đủ quyền.' : `${granted.filter((value) => !value).length} nền tảng chưa cấp quyền.`;
 }
 
 async function heartbeat(apiUrl, token) {
@@ -42,6 +61,7 @@ async function heartbeat(apiUrl, token) {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: '{}',
+    signal: AbortSignal.timeout(15_000),
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload?.success) throw new Error(response.status === 401 ? 'Mã ghép nối sai hoặc đã bị thu hồi' : payload?.error?.message ?? `HTTP ${response.status}`);
@@ -75,6 +95,7 @@ $('grant').addEventListener('click', async () => {
   $('grantStatus').textContent = allowed ? 'Đã cấp quyền.' : 'Bạn đã từ chối cấp quyền.';
   const { lastHeartbeat } = await chrome.storage.local.get('lastHeartbeat');
   if (lastHeartbeat) await renderOrigins(lastHeartbeat);
+  if (allowed) void chrome.runtime.sendMessage({ type: 'tick-now' });
 });
 
 $('pause').addEventListener('click', async () => {

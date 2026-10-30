@@ -239,6 +239,7 @@ model PlatformAccount {
   campaignTargets CampaignTarget[]
   publishJobs     PublishJob[]
   publishedPosts  PublishedPost[]
+  extensionLoginChecks ExtensionLoginCheck[]
 
   @@unique([platformId, externalId])
   @@index([platformId, enabled, status])
@@ -464,6 +465,10 @@ model PublishJob {
   lastErrorCode     String?
   lastErrorMessage  String?
   lockedAt          DateTime?
+  extensionClaimDeviceId String? @db.Uuid
+  extensionPasswordIssuedAt DateTime?
+  extensionTotpIssuedAt DateTime?
+  extensionClaimDevice ExtensionDevice? @relation(fields: [extensionClaimDeviceId], references: [id], onDelete: SetNull)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   target            CampaignTarget   @relation(fields: [campaignTargetId], references: [id], onDelete: Cascade)
@@ -566,7 +571,32 @@ model ExtensionDevice {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
   owner      User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  claimedJobs PublishJob[]
+  loginChecks ExtensionLoginCheck[]
 
   @@index([ownerId, revokedAt])
   @@map("extension_devices")
+}
+
+/// Authentication-only work. These rows can never become publish jobs.
+model ExtensionLoginCheck {
+  id String @id @default(uuid()) @db.Uuid
+  batchId String @db.Uuid
+  platformAccountId String @db.Uuid
+  deviceId String @db.Uuid
+  status String @default("QUEUED")
+  verifyOnly Boolean @default(false)
+  message String?
+  detectedUsername String?
+  passwordIssuedAt DateTime?
+  totpIssuedAt DateTime?
+  startedAt DateTime?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+  account PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
+  device ExtensionDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, status, createdAt])
+  @@index([platformAccountId, createdAt])
+  @@map("extension_login_checks")
 }

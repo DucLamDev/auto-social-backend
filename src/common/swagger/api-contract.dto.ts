@@ -231,6 +231,8 @@ export class AiProviderContractDto {
 }
 
 export class PublishJobContractDto {
+  @ApiPropertyOptional({ type: String, format: 'uri', description: 'Review queue or platform destination; not an individual post permalink' }) reviewUrl?: string;
+  @ApiPropertyOptional({ enum: ['pending_queue', 'platform'] }) reviewUrlKind?: 'pending_queue' | 'platform';
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ enum: PublishJobStatus }) status!: PublishJobStatus;
   @ApiProperty({ format: 'uuid' }) platformAccountId!: string;
@@ -259,7 +261,12 @@ export class ManualPayloadContractDto {
   @ApiProperty({ format: 'uuid' }) jobId!: string;
   @ApiProperty({ enum: PublishJobStatus }) status!: PublishJobStatus;
   @ApiProperty() platform!: string;
+  @ApiPropertyOptional() platformName?: string;
   @ApiProperty() accountName!: string;
+  @ApiProperty() moderationPending!: boolean;
+  @ApiPropertyOptional({ format: 'date-time', description: 'Timestamp of the current stored variant, not an immutable submission snapshot' }) contentUpdatedAt?: string;
+  @ApiPropertyOptional({ format: 'uri' }) reviewUrl?: string;
+  @ApiPropertyOptional({ enum: ['pending_queue', 'platform'] }) reviewUrlKind?: 'pending_queue' | 'platform';
   @ApiPropertyOptional({ type: String, nullable: true }) title?: string | null;
   @ApiProperty() body!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) summary?: string | null;

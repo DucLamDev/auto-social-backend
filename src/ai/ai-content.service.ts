@@ -6,6 +6,7 @@ import { zodResponseFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
+import { GeminiKeyPoolService } from './gemini-key-pool.service';
 import {
   AI_PROVIDER_IDS,
   AI_PROVIDER_LABELS,
@@ -118,6 +119,7 @@ export class AiContentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly geminiKeys: GeminiKeyPoolService,
   ) {
     const configuredDefault = config.get<string>('AI_DEFAULT_PROVIDER', 'openai').trim().toLowerCase();
     this.defaultProvider = isAiProvider(configuredDefault) ? configuredDefault : 'openai';
@@ -139,29 +141,24 @@ export class AiContentService {
       config.get<number>('OPENAI_TIMEOUT_MS', 60_000),
     );
     for (const provider of AI_PROVIDER_IDS) {
+      if (provider === 'gemini') continue;
       const apiKey = config.get<string>(PROVIDER_API_KEY_ENV[provider])?.trim();
       if (!apiKey) continue;
       this.clients[provider] = new OpenAI({
         apiKey,
         timeout,
-        ...(provider === 'gemini' ? { maxRetries: 0 } : {}),
         ...(provider === 'deepseek' ? { baseURL: 'https://api.deepseek.com' } : {}),
-        ...(provider === 'gemini'
-          ? {
-              baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-              defaultHeaders: { 'x-goog-api-client': 'social-publisher-oai/0.1.0' },
-            }
-          : {}),
       });
     }
   }
 
-  providers(): AiProviderDescriptor[] {
+  async providers(): Promise<AiProviderDescriptor[]> {
+    const geminiConfigured = await this.geminiKeys.configured();
     return AI_PROVIDER_IDS.map((provider) => ({
       id: provider,
       label: AI_PROVIDER_LABELS[provider],
       model: this.models[provider],
-      configured: Boolean(this.clients[provider]),
+      configured: provider === 'gemini' ? geminiConfigured : Boolean(this.clients[provider]),
       isDefault: provider === this.defaultProvider,
     }));
   }
@@ -180,7 +177,7 @@ export class AiContentService {
 
   async assertReady(platformSlugs: string[], requestedProvider?: AiProvider): Promise<void> {
     const provider = this.resolveProvider(requestedProvider);
-    this.clientFor(provider);
+    await this.assertConfigured(provider);
     const uniqueSlugs = [...new Set(platformSlugs)];
     const platforms = await this.prisma.platform.findMany({
       where: { slug: { in: uniqueSlugs }, enabled: true },
@@ -213,7 +210,7 @@ export class AiContentService {
     requestedProvider?: AiProvider,
   ) {
     const provider = this.resolveProvider(requestedProvider);
-    this.clientFor(provider);
+    await this.assertConfigured(provider);
     const content = await this.prisma.content.findFirstOrThrow({ where: { id: contentId, ownerId } });
     const platforms = await this.prisma.platform.findMany({
       where: { slug: { in: platformSlugs }, enabled: true },
@@ -231,12 +228,16 @@ export class AiContentService {
       throw new ApplicationException(ErrorCode.CONFLICT, 'Content changed while generation was starting', HttpStatus.CONFLICT);
     }
     try {
-      const generatedByPlatform = await Promise.all(platforms.map(async (platform) => {
+      const generatedByPlatform: Array<{ platform: (typeof platforms)[number]; generated: GeneratedVariant }> = [];
+      // Bound provider concurrency for large multi-platform campaigns.
+      for (let offset = 0; offset < platforms.length; offset += 4) {
+        generatedByPlatform.push(...await Promise.all(platforms.slice(offset, offset + 4).map(async (platform) => {
         const prompt = platform.prompts[0];
         if (!prompt) throw new ApplicationException(ErrorCode.RESOURCE_NOT_FOUND, `No active prompt for ${platform.slug}`, HttpStatus.NOT_FOUND);
         const generated = await this.callModel(provider, platform.slug, prompt.systemPrompt, prompt.userTemplate, content);
         return { platform, generated };
-      }));
+        })));
+      }
       return await this.prisma.$transaction(async (transaction) => {
         const results = [];
         for (const { platform, generated } of generatedByPlatform) {
@@ -300,6 +301,7 @@ export class AiContentService {
       .replaceAll('{{body}}', content.body.slice(0, 100_000))
       .replaceAll('{{summary}}', content.summary ?? '')
       .replaceAll('{{canonicalUrl}}', content.canonicalUrl ?? '');
+    if (provider === 'gemini') return this.callGemini(systemPrompt, input);
     const client = this.clientFor(provider);
     const model = this.models[provider];
     if (provider === 'openai') {
@@ -315,31 +317,6 @@ export class AiContentService {
       return this.parseOutput(response.output_text);
     }
 
-    const messages = [
-      { role: 'system' as const, content: systemPrompt },
-      { role: 'user' as const, content: input },
-    ];
-    if (provider === 'gemini') {
-      const response = await this.requestFromGemini((selectedModel) => (
-        client.chat.completions.parse({
-          model: selectedModel,
-          messages,
-          response_format: zodResponseFormat(VariantSchema, 'content_variant'),
-        })
-      ));
-      const parsed = response.choices[0]?.message.parsed;
-      if (!parsed) return this.parseOutput(response.choices[0]?.message.content ?? '');
-      const result = VariantSchema.safeParse(parsed);
-      if (!result.success) {
-        throw new ApplicationException(
-          ErrorCode.PLATFORM_API_ERROR,
-          'AI output did not match the required schema',
-          HttpStatus.BAD_GATEWAY,
-          result.error.flatten(),
-        );
-      }
-      return result.data;
-    }
 
     const response = await this.requestFromProvider(provider, () => (
       client.chat.completions.create({
@@ -365,6 +342,7 @@ export class AiContentService {
         return await request(this.models.gemini);
       } catch (error) {
         lastError = error;
+        if ([429, 402].includes(this.readNumericErrorProperty(error, 'status') ?? 0)) throw error;
         if (!this.isRetryableGeminiError(error)) {
           throw this.normalizeProviderError('gemini', error);
         }
@@ -379,10 +357,39 @@ export class AiContentService {
         return await request(this.geminiFallbackModel);
       } catch (error) {
         lastError = error;
+        if ([429, 402].includes(this.readNumericErrorProperty(error, 'status') ?? 0)) throw error;
       }
     }
 
     throw this.normalizeProviderError('gemini', lastError);
+  }
+
+  private createGeminiClient(apiKey: string): OpenAI {
+    return new OpenAI({ apiKey, maxRetries: 0,
+      timeout: this.config.get<number>('AI_TIMEOUT_MS', this.config.get<number>('OPENAI_TIMEOUT_MS', 60_000)),
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+      defaultHeaders: { 'x-goog-api-client': 'social-publisher-oai/0.1.0' },
+    });
+  }
+
+  private async callGemini(systemPrompt: string, input: string): Promise<GeneratedVariant> {
+    const response = await this.requestFromProvider('gemini', () => this.geminiKeys.run((apiKey) => {
+      const client = this.createGeminiClient(apiKey);
+      return this.requestFromGemini((model) => client.chat.completions.parse({ model,
+        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: input }],
+        response_format: zodResponseFormat(VariantSchema, 'content_variant'),
+      }));
+    }));
+    const parsed = response.choices[0]?.message.parsed;
+    if (!parsed) return this.parseOutput(response.choices[0]?.message.content ?? '');
+    const result = VariantSchema.safeParse(parsed);
+    if (!result.success) throw new ApplicationException(ErrorCode.PLATFORM_API_ERROR, 'AI output did not match the required schema', HttpStatus.BAD_GATEWAY, result.error.flatten());
+    return result.data;
+  }
+
+  private async assertConfigured(provider: AiProvider): Promise<void> {
+    if (provider !== 'gemini') { this.clientFor(provider); return; }
+    if (!await this.geminiKeys.configured()) throw new ApplicationException(ErrorCode.INFRASTRUCTURE_UNAVAILABLE, 'GEMINI_API_KEY is not configured', HttpStatus.SERVICE_UNAVAILABLE);
   }
 
   private async requestFromProvider<T>(provider: AiProvider, request: () => Promise<T>): Promise<T> {
