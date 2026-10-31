@@ -309,6 +309,7 @@ export class ConnectionTestContractDto {
 export class ApiImportRowContractDto {
   @ApiProperty({ description: 'Row number in the uploaded file' }) row!: number;
   @ApiProperty() platform!: string;
+  @ApiPropertyOptional({ description: 'Catalog slug when the platform was recognised' }) slug?: string;
   @ApiProperty() name!: string;
   @ApiProperty({ enum: ['CONNECTED', 'CHECK_FAILED', 'OAUTH_REQUIRED', 'INVALID_ROW', 'NOT_SUPPORTED', 'ACCOUNT_BUSY', 'DUPLICATE_ROW'] }) status!: string;
   @ApiProperty({ description: 'Operator-facing reason; never contains the secret' }) message!: string;

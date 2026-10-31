@@ -24,6 +24,8 @@ const BUSY_JOB_STATUSES = [PublishJobStatus.SCHEDULED, PublishJobStatus.QUEUED, 
 export interface ApiImportResultRow {
   row: number;
   platform: string;
+  /** Catalog slug when the platform was recognised; the web uses it for the Connect button. */
+  slug?: string;
   name: string;
   status: ApiImportStatus;
   message: string;
@@ -117,17 +119,17 @@ export class ApiAccountImportService {
       }
       const mapped = mapApiImportRow(row, platform);
       if (mapped.kind === 'skip') {
-        results.push({ ...base, name: base.name || platform.name, platform: platform.name, status: mapped.status, message: mapped.message });
+        results.push({ ...base, name: base.name || platform.name, platform: platform.name, slug: platform.slug, status: mapped.status, message: mapped.message });
         continue;
       }
       const identity = `${platform.id}|${mapped.identity}`;
       const duplicateOf = firstRow.get(identity);
       if (duplicateOf !== undefined) {
-        results.push({ ...base, name: mapped.name, platform: platform.name, status: 'DUPLICATE_ROW', message: `Trùng tài khoản ở dòng ${duplicateOf}; dòng này bị bỏ qua.` });
+        results.push({ ...base, name: mapped.name, platform: platform.name, slug: platform.slug, status: 'DUPLICATE_ROW', message: `Trùng tài khoản ở dòng ${duplicateOf}; dòng này bị bỏ qua.` });
         continue;
       }
       firstRow.set(identity, base.row);
-      results.push({ ...base, name: mapped.name, platform: platform.name, status: 'CHECK_FAILED', message: 'Chưa kiểm tra.' });
+      results.push({ ...base, name: mapped.name, platform: platform.name, slug: platform.slug, status: 'CHECK_FAILED', message: 'Chưa kiểm tra.' });
       planned.push({ index: results.length - 1, row, platform, mapped });
     }
     const saved = planned.length ? await this.save(ownerId, planned, results) : [];

@@ -73,7 +73,7 @@ describe('ApiAccountImportService', () => {
     });
     expect(result).toEqual({
       total: 1, connected: 1, needsAttention: 0,
-      rows: [{ row: 2, platform: 'dev.to', name: 'dev.to · alice', status: 'CONNECTED', accountId: 'new-account', message: 'Đã kết nối (Alice).' }],
+      rows: [{ row: 2, platform: 'dev.to', slug: 'devto', name: 'dev.to · alice', status: 'CONNECTED', accountId: 'new-account', message: 'Đã kết nối (Alice).' }],
     });
     expect(JSON.stringify(result)).not.toContain(DEV_KEY);
   });

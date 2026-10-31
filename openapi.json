@@ -8874,6 +8874,10 @@
           "platform": {
             "type": "string"
           },
+          "slug": {
+            "type": "string",
+            "description": "Catalog slug when the platform was recognised"
+          },
           "name": {
             "type": "string"
           },
