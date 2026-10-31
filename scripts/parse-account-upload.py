@@ -74,7 +74,8 @@ def xlsx(data):
         return rows
 
 
-def parse(data, kind):
+def read_table(data, kind, keep_blank=False):
+    """keep_blank keeps empty rows so reported row numbers match the file."""
     if len(data) > 2 * 1024 * 1024:
         raise ValueError('File too large')
     if kind == 'xlsx':
@@ -83,10 +84,19 @@ def parse(data, kind):
         raw = data.decode('utf-8-sig')
         delimiter = '\t' if '\t' in raw.splitlines()[0] else ','
         table = list(csv.reader(io.StringIO(raw), delimiter=delimiter))
-    table = [row for row in table if any(c.strip() for c in row)]
-    if not table or len(table) > 501:
+    filled = [row for row in table if any(c.strip() for c in row)]
+    if not filled or len(filled) > 501:
         raise ValueError('Empty or too many rows')
-    columns = {key: next((i for i, name in enumerate(table[0]) if normal(name) in names), None) for key, names in HEADERS.items()}
+    return table if keep_blank else filled
+
+
+def find_columns(header, names_by_key):
+    return {key: next((i for i, name in enumerate(header) if normal(name) in names), None) for key, names in names_by_key.items()}
+
+
+def parse(data, kind):
+    table = read_table(data, kind)
+    columns = find_columns(table[0], HEADERS)
     if columns['profileUrl'] is None:
         columns['profileUrl'] = next((i for i, name in enumerate(table[0]) if normal(name).startswith('urlsocial')), None)
     if columns['platform'] is None or columns['loginUsername'] is None:
@@ -110,9 +120,45 @@ def parse(data, kind):
     return result
 
 
+# API configuration file: one destination per row; the secret cell holds the
+# API key, access token, App Password, webhook URL or Application Password.
+API_HEADERS = {
+    'platform': ['nentang', 'platform', 'socialnetwork', 'social', 'tensocial'],
+    'name': ['tenhienthi', 'name', 'displayname'],
+    'url': ['url', 'instanceurl', 'siteurl', 'forumurl', 'baseurl', 'urlinstance', 'urlsite', 'urldiendan'],
+    'username': ['usernamehandle', 'username', 'handle', 'apiusername', 'user', 'taikhoan'],
+    'secret': ['khoabimat', 'secret', 'apikey', 'token', 'accesstoken', 'apppassword', 'webhookurl', 'applicationpassword'],
+    'categoryId': ['categoryid', 'idchuyenmuc', 'chuyenmucid'],
+    'tags': ['tags', 'tag'],
+    'publishNow': ['dangngay', 'publishnow', 'publishimmediately'],
+    'visibility': ['chedohienthi', 'visibility'],
+}
+
+
+def parse_api(data, kind):
+    table = read_table(data, kind, keep_blank=True)
+    header_index = next(i for i, row in enumerate(table) if any(c.strip() for c in row))
+    columns = find_columns(table[header_index], API_HEADERS)
+    if columns['platform'] is None or columns['secret'] is None:
+        raise ValueError('Require platform and secret columns')
+    result = []
+    for number, cells in enumerate(table[header_index + 1:], header_index + 2):
+        values = {key: (cells[index] if index is not None and index < len(cells) else '').strip() for key, index in columns.items()}
+        if not any(values.values()):
+            continue
+        if any(len(v) > 4096 for v in values.values()):
+            raise ValueError('Cell too long')
+        values['source'] = f'upload:{number}'
+        result.append(values)
+    if not result:
+        raise ValueError('No rows')
+    return result
+
+
 if __name__ == '__main__':
     try:
-        sys.stdout.write(json.dumps(parse(sys.stdin.buffer.read(2 * 1024 * 1024 + 1), sys.argv[1]), ensure_ascii=True))
+        reader = parse_api if sys.argv[2:3] == ['api'] else parse
+        sys.stdout.write(json.dumps(reader(sys.stdin.buffer.read(2 * 1024 * 1024 + 1), sys.argv[1]), ensure_ascii=True))
     except Exception:
         sys.stderr.write('Invalid account file; no credential data logged')
         sys.exit(1)
