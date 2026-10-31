@@ -10,7 +10,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
-COPY prisma ./prisma
+COPY prisma/schema.prisma ./prisma/schema.prisma
 RUN pnpm prisma:generate
 
 FROM dependencies AS build
@@ -41,7 +41,7 @@ COPY --from=production-deps /app/node_modules ./node_modules
 RUN node node_modules/playwright/cli.js install --with-deps chromium \
     && chmod -R a+rX /ms-playwright
 COPY --from=build /app/dist ./dist
-COPY --from=production-deps /app/prisma ./prisma
+COPY prisma ./prisma
 # The production seed imports the canonical platform catalog from src. Keep
 # that small source tree available so `pnpm prisma:seed` works inside the API
 # container after migrations without duplicating catalog data.

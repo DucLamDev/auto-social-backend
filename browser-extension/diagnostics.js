@@ -26,7 +26,8 @@ async function inspect() {
       const pageOrigin = new URL(tab.url).origin;
       if (!await chrome.permissions.contains({ origins: [`${pageOrigin}/*`] })) { results.push({ tabId: tab.id, origin: pageOrigin, error: 'Redirected origin permission is missing' }); continue; }
       const prepareQuora = origin === 'https://www.quora.com' && new URL(location.href).searchParams.get('prepareQuora') === '1';
-      const [{ result }] = await Promise.race([chrome.scripting.executeScript({ target: { tabId: tab.id }, injectImmediately: true, args: [prepareQuora], func: async (prepareQuora) => {
+      const prepareMinds = origin === 'https://www.minds.com' && new URL(location.href).searchParams.get('prepareMinds') === '1';
+      const [{ result }] = await Promise.race([chrome.scripting.executeScript({ target: { tabId: tab.id }, injectImmediately: true, args: [prepareQuora, prepareMinds], func: async (prepareQuora, prepareMinds) => {
         const visible = n => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
         const safe = value => String(value || '').replace(/[\w.+-]+@[\w.-]+/g, '[email]').replace(/[A-Za-z0-9_-]{30,}/g, '[opaque]').slice(0, 100);
         const info = n => ({ tag: n.tagName, role: n.getAttribute('role'), label: safe(n.getAttribute('aria-label')), testid: n.getAttribute('data-testid'), class: safe(n.className), text: safe(n.innerText || n.getAttribute('aria-label') || n.getAttribute('alt')), path: n.href ? safe(new URL(n.href).pathname) : undefined });
@@ -39,6 +40,10 @@ async function inspect() {
           }
           const postTab = [...document.querySelectorAll('button,[role="tab"],[role="button"],.q-click-wrapper')].filter(visible).filter(n => n.textContent.trim() === 'Create Post');
           if (postTab.length === 1) { postTab[0].click(); await new Promise(resolve => setTimeout(resolve, 600)); }
+        }
+        if (prepareMinds && location.hostname === 'www.minds.com' && !document.querySelector('m-composer__modal')) {
+          const open = [...document.querySelectorAll('button')].filter(visible).filter(n => n.textContent.trim() === 'Create');
+          if (open.length === 1) { open[0].click(); await new Promise(resolve => setTimeout(resolve, 600)); }
         }
         const composer = document.querySelector('#reply-control, .reply-area[role="dialog"]');
         let forumCategories, ownPendingPosts;
@@ -122,6 +127,10 @@ async function inspect() {
     results.push({ tabId: tabs.at(-1).id, quoraDryRun: await checkQuoraComposer(tabs.at(-1).id) });
   }
   const { tasks = {} } = await chrome.storage.session.get('tasks');
+  if (origin === 'https://www.minds.com' && tabs.length && new URL(location.href).searchParams.get('dryRunMinds') === '1') {
+    const { checkMindsComposer } = await import('./minds-dry-run.js');
+    results.push({ mindsDryRun: await checkMindsComposer(tabs.at(-1).id) });
+  }
   const { paused, lastHeartbeat, loginChecksOnly = false } = await chrome.storage.local.get(['paused', 'lastHeartbeat', 'loginChecksOnly']);
   let workerResponding = false;
   try { workerResponding = !!await Promise.race([chrome.runtime.sendMessage({ type: 'state' }), new Promise(resolve => setTimeout(() => resolve(null), 2500))]); } catch { /* Report the missing worker without private error data. */ }

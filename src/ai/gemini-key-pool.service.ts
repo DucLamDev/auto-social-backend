@@ -87,7 +87,14 @@ export class GeminiKeyPoolService {
         await this.redis.setOnce(cooldownKey(key), String(Date.now() + seconds * 1000), seconds);
       }
     }
-    throw new ApplicationException(ErrorCode.PLATFORM_RATE_LIMITED, 'All configured Gemini API keys are quota-limited. Try again after the cooldown or update keys in Settings.', HttpStatus.TOO_MANY_REQUESTS);
+    const cooldowns = await Promise.all(keys.map(async (key) => Number(await this.redis.getValue(cooldownKey(key)))));
+    const earliestRetry = Math.min(...cooldowns.filter((until) => until > Date.now()));
+    throw new ApplicationException(
+      ErrorCode.PLATFORM_RATE_LIMITED,
+      'All configured Gemini API keys are quota-limited. Try again after the cooldown or update keys in Settings.',
+      HttpStatus.TOO_MANY_REQUESTS,
+      { configuredKeys: keys.length, retryAt: Number.isFinite(earliestRetry) ? new Date(earliestRetry).toISOString() : null },
+    );
   }
 }
 

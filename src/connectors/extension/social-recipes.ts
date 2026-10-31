@@ -1,6 +1,6 @@
 import type { ExtensionRecipe } from './extension-delivery';
 
-export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto'] as const;
+export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'] as const;
 export type SocialExtensionEngine = (typeof SOCIAL_EXTENSION_ENGINES)[number];
 
 function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>): ExtensionRecipe {
@@ -16,6 +16,41 @@ function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>)
 // Selectors are declarative data. All executable workflow steps ship in the
 // extension, and require a visible, unambiguous composer before any write.
 export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRecipe> = {
+  differ: recipe('differ', {
+    readySelectors: ['textarea[name="title"]'], titleSelectors: ['textarea[name="title"]'], bodySelectors: ['[contenteditable][aria-label="editable markdown"]'],
+    submitSelectors: ['button#post-submit-button'], successUrlPattern: '/p/[^/?#]+(?:[?#].*)?$', publishedTitleSelectors: ['h1'], publishedBodySelectors: ['article', '.prose'],
+  }),
+  dzone: recipe('dzone', {
+    readySelectors: ['textarea.article-title[name="title"]'], titleSelectors: ['textarea.article-title[name="title"]'], bodySelectors: ['.fr-element.fr-view[contenteditable]'],
+    submitSelectors: ['.dropdown-menu li[ng-click="s.save(true, false, false, true)"]'], successUrlPattern: '/articles/[^/?#]+(?:[?#].*)?$', publishedTitleSelectors: ['h1'], publishedBodySelectors: ['.article-content', '.content-body', 'article'],
+  }),
+  stackexchange: recipe('stackexchange', {
+    readySelectors: ['#title', '#post-title-input'], titleSelectors: ['#title', '#post-title-input'],
+    bodySelectors: ['textarea#wmd-input', '.js-editor.ProseMirror[contenteditable]'],
+    submitSelectors: ['#submit-button', 'button.js-submit-button'],
+    successUrlPattern: '/questions/\\d+/[^/?#]+(?:[?#].*)?$', publishedTitleSelectors: ['#question-header h1 a'], publishedBodySelectors: ['#question .s-prose'],
+  }),
+  lemmy: recipe('lemmy', {
+    readySelectors: ['textarea#post-title'], titleSelectors: ['textarea#post-title'], bodySelectors: ['textarea[id^="markdown-textarea-"]'],
+    submitSelectors: ['form button[type="submit"]'], successUrlPattern: '/post/\\d+(?:[?#].*)?$',
+    publishedTitleSelectors: ['.post-title'], publishedBodySelectors: ['.post-listing .md-div', '.post-listing .md'],
+  }),
+  discuit: recipe('discuit', {
+    readySelectors: ['textarea.page-new-post-title'], titleSelectors: ['textarea.page-new-post-title'], bodySelectors: ['textarea.page-new-post-body', '.page-new-post-body textarea'],
+    submitSelectors: ['.page-new-form button[type="submit"]'], successUrlPattern: '/[^/]+/post/[a-zA-Z0-9_-]+(?:[?#].*)?$',
+    publishedTitleSelectors: ['.post-title', '.post-page-title'], publishedBodySelectors: ['.post-body', '.post-page-body'],
+  }),
+  linkedin: recipe('linkedin', {
+    readySelectors: ['.tiptap.ProseMirror[contenteditable]', '[role="dialog"] .ql-editor[contenteditable="true"]'], bodySelectors: ['.tiptap.ProseMirror[contenteditable]', '[role="dialog"] .ql-editor[contenteditable="true"]'],
+    submitSelectors: ['[role="dialog"] button.share-actions__primary-action'], successUrlPattern: '/(?:feed/update/urn:li:activity:\\d+/?|posts/[^/?#]+)(?:[?#].*)?$',
+    publishedBodySelectors: ['.feed-shared-update-v2__description'], publishedLinkSelectors: ['a[href*="/feed/update/"]', 'a[href*="/posts/"]'],
+  }),
+  minds: recipe('minds', {
+    readySelectors: ['m-composer__textarea textarea'], bodySelectors: ['m-composer__textarea textarea.m-composerTextarea__message'],
+    submitSelectors: ['m-composer__modal m-composer__postbutton button'],
+    successUrlPattern: '/newsfeed/\\d+(?:[?#].*)?$',
+    publishedBodySelectors: ['m-activity__content', '.m-activityContent__message'], publishedLinkSelectors: ['a[href*="/newsfeed/"]'],
+  }),
   mastodon: recipe('mastodon', {
     readySelectors: ['textarea#composer-text', '.compose-form textarea'], bodySelectors: ['textarea#composer-text', '.compose-form textarea.autosuggest-textarea__textarea', '.compose-form textarea'],
     submitSelectors: ['.compose-form__publish-button-wrapper button', '.compose-form__publish button'],

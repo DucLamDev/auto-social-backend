@@ -586,6 +586,8 @@ model ExtensionLoginCheck {
   deviceId String @db.Uuid
   status String @default("QUEUED")
   verifyOnly Boolean @default(false)
+  method String @default("configured")
+  tryFallback Boolean @default(false)
   message String?
   detectedUsername String?
   passwordIssuedAt DateTime?

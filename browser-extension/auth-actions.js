@@ -22,7 +22,15 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
   if (all('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running').some(visible)) return challenge('Cần xử lý CAPTCHA trên trang đăng nhập.', google);
   const text = document.body?.innerText ?? '';
   if (location.hostname === 'www.blogger.com' && /\/onboarding\/?$/.test(location.pathname)) return challenge('Google đã đăng nhập, nhưng Blogger còn ở bước tạo hồ sơ/blog. Cần có blog đích trước khi đăng bài.');
+  if (location.hostname === 'huggingface.co' && location.pathname === '/email_confirmation') return challenge('Hugging Face yêu cầu xác minh email trước khi tạo bài. Mở email xác minh và kiểm tra quyền tạo blog của tài khoản.');
   if (/^error$/i.test(document.title.trim()) && !all('input,button,[role="button"]').some(visible)) return challenge('Nền tảng trả về trang Error, không có form đăng nhập. Chưa gửi thông tin đăng nhập.');
+  if (job.recipe.engine === 'discourse') {
+    const notice = all('#login-alert, .login-modal .alert-error, .login-page .alert-error, [role="alert"]').filter(visible).map(n => n.innerText).join(' ');
+    if (/incorrect username,? email or password|incorrect username or password|password is incorrect|không đúng tài khoản,? email hoặc mật khẩu/i.test(notice)) return challenge('Diễn đàn từ chối email/username hoặc mật khẩu đã lưu. Cần cập nhật thông tin đăng nhập; chưa thử lại.');
+    if (/activation email|activate your account|not activated/i.test(notice)) return challenge('Diễn đàn yêu cầu kích hoạt tài khoản bằng email trước khi đăng nhập.');
+    if (/hasn.t been approved|not yet approved|not approved/i.test(notice)) return challenge('Tài khoản đang chờ quản trị viên diễn đàn phê duyệt.');
+    if (/too many|rate limit|try again.*(?:minute|hour)/i.test(notice)) return challenge('Diễn đàn đang giới hạn lượt đăng nhập. Đã dừng để tránh thử lặp.');
+  }
   // Choose an offered authenticator method before handing a phone prompt back
   // to the operator. This does not bypass any challenge or invent a method.
   if (google && auth.autoTotp && !one(['#totpPin', 'input[name="totpPin"]'])) {
@@ -75,21 +83,31 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     } else if (job.recipe.engine === 'reddit') {
       try { const r = await fetch('/api/v1/me', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) }); if (r.ok) identity = (await r.json()).name; } catch { /* DOM fallback */ }
     }
-    if (location.hostname === 'differ.blog' && one(['.dropdown > .avatar[role="button"]'])) {
+    if (location.hostname === 'differ.blog') {
       try {
         const r = await fetch('/me', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) });
         if (r.ok) {
           const own = new DOMParser().parseFromString(await r.text(), 'text/html');
           const canonical = own.querySelector('link[rel="canonical"]')?.getAttribute('href');
-          const url = canonical ? new URL(canonical, location.origin) : null;
+          const ownAvatars = [...own.querySelectorAll('a.shrink-0.rounded-full.ring-2[href^="/@"]')];
+          const ownHeading = own.querySelector('a.text-base.font-bold.tracking-tight[href^="/@"]');
+          const ownPath = ownAvatars.length === 1 && ownHeading?.getAttribute('href') === ownAvatars[0].getAttribute('href') ? ownHeading.getAttribute('href') : null;
+          const url = canonical && /^\/@/.test(new URL(canonical, location.origin).pathname) ? new URL(canonical, location.origin) : ownPath ? new URL(ownPath, location.origin) : null;
           if (url?.origin === location.origin && /^\/@[^/]+\/?$/.test(url.pathname)) identity = decodeURIComponent(url.pathname.replace(/^\/@|\/$/g, ''));
         }
       } catch { /* Own account menu remains the fallback. */ }
     }
     const genericSelectors = ['a[data-testid="AppTabBar_Profile_Link"]', '.p-navgroup-link--user .p-navgroup-linkText', '#username_logged_in .username', '.s-topbar a.s-user-card[href*="/users/"]', 'a[aria-label="My profile"]', 'nav a[href*="/@"]', 'header a[href*="/@"]', 'nav a[href*="/profile/"]', '[data-testid="profile-link"]', 'a[data-testid="profile-link"]', '.profile-dropdown a[href*="/users/"]',
       ...(location.hostname === 'differ.blog' ? ['.dropdown:has(> .avatar) .dropdown-content a[href^="/@"]'] : []),
+      ...(location.hostname === 'dzone.com' ? ['header button.user-avatar', '.header button.user-avatar', 'button.user-avatar'] : []),
+      ...(location.hostname === 'lemmy.world' ? ['nav a[href^="/u/"]', '.navbar a[href^="/u/"]'] : []),
+      ...(location.hostname === 'discuit.org' ? ['.navbar-profile .navbar-name'] : []),
       ...(location.hostname === 'www.minds.com' ? ['.m-sidebarNavigation__list a[href]:has(img)'] : [])];
-    const selectors = auth.identitySelector ? [auth.identitySelector] : [...({
+    // Bookmarks and settings also link under /@username on Discuit. They are
+    // navigation items, not evidence of the identity currently signed in.
+    const selectors = auth.identitySelector ? [auth.identitySelector] : location.hostname === 'discuit.org'
+      ? ['.navbar-profile .navbar-name'] : job.recipe.engine === 'mastodon'
+        ? ['nav footer a[class*="accountLink"][href^="/@"]', '.navigation-bar .account__display-name', '.navigation-bar__profile', '.compose-panel .account__display-name'] : [...({
       discourse: ['#current-user a[data-user-card]', '#current-user img[title]'],
       xenforo: ['.p-navgroup-link--user .p-navgroup-linkText', '.p-navgroup-link--user'],
       phpbb: ['#username_logged_in .username', '#username_logged_in .username-coloured'],
@@ -114,6 +132,7 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     }
     if (marker) {
       const href = marker.href || marker.closest('a')?.href;
+      if (job.recipe.engine === 'mastodon' && href && /^\/@[^/]+\/?$/.test(new URL(href).pathname)) identity = decodeURIComponent(new URL(href).pathname.replace(/^\/@|\/$/g, ''));
       if (auth.profileUrl && href && new URL(href).href.replace(/\/$/, '') === new URL(auth.profileUrl).href.replace(/\/$/, '')) return response('authenticated');
       if (marker.matches('.s-topbar a.s-user-card') && href) {
         const current = new URL(href), expected = auth.profileUrl ? new URL(auth.profileUrl) : null;
@@ -126,6 +145,7 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
       }
       identity ??= marker.getAttribute('data-user-card') || marker.getAttribute('title') || (job.recipe.engine === 'tinhte' ? marker.getAttribute('alt') : '') || marker.innerText;
       if (location.hostname === 'www.minds.com' && marker.matches('.m-sidebarNavigation__list a[href]') && href) identity = new URL(href).pathname.replace(/^\/|\/$/g, '');
+      if (location.hostname === 'lemmy.world' && marker.closest('#dropdownUser') && href) identity = decodeURIComponent(new URL(href).pathname.replace(/^\/u\/|\/$/g, ''));
       if (job.recipe.engine === 'devto' && marker.matches('#crayons-header__menu__profile__link') && href) identity = new URL(href).pathname.replace(/^\/|\/$/g, '');
       if (job.recipe.engine === 'quora' && href) {
         const handle = /\/profile\/([^/]+)/.exec(new URL(href).pathname)?.[1];
@@ -158,6 +178,13 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
       if (auth.discoverIdentity && auth.provider === 'google' && !job.authIdentityVerified) return challenge('Social đang có phiên đăng nhập nhưng chưa xác nhận phiên đó thuộc Google đã cấu hình. Chưa gán account cũ cho Google mới.');
       if (auth.discoverIdentity && job.kind === 'LOGIN_CHECK') return { ...response('authenticated'), detectedUsername: identity.trim().slice(0, 200) };
       return { ...response(norm(identity) === norm(auth.expectedUsername) ? 'authenticated' : 'mismatch'), detectedUsername: identity.trim().slice(0, 200) };
+    }
+    if (location.hostname === 'lemmy.world') {
+      const menu = one(['#dropdownUser > button.dropdown-toggle']);
+      if (menu && !one(['#dropdownUser a[href^="/u/"]'])) {
+        if (action === 'accountMenu') { menu.click(); return response('submitted'); }
+        return response('accountMenu');
+      }
     }
     if (location.hostname === 'differ.blog') {
       const avatar = one(['.dropdown > .avatar[role="button"]']);
@@ -220,7 +247,7 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
   }
 
   const otp = one(['#totpPin', 'input[name="totpPin"]', 'input[name="second_factor_token"]', 'input[autocomplete="one-time-code"]', 'form[action*="two-step"] input[name="code"]']);
-  if (/incorrect password|wrong password|invalid (?:email or password|password|credentials|code)|incorrect code|mật khẩu không đúng|mã không đúng|sai mã|mã không hợp lệ|code incorrect|mot de passe incorrect/i.test(text)) {
+  if (/incorrect password|wrong password|username and password do not match|invalid (?:email or password|password|credentials|code)|incorrect code|mật khẩu không đúng|mã không đúng|sai mã|mã không hợp lệ|code incorrect|mot de passe incorrect/i.test(text)) {
     return challenge(otp ? 'Google hoặc nền tảng đã từ chối mã TOTP. Kiểm tra khóa 2FA trong cấu hình; chưa gửi lại mã.' : 'Thông tin đăng nhập bị từ chối; không tự thử lại.', google);
   }
   if (otp) {
@@ -230,7 +257,7 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     if (!payload?.code || Date.now() >= payload.expiresAt) return challenge('Mã TOTP đã hết hạn trước khi điền.');
   }
   const password = one(['#ctrl_pageLogin_password', 'input[type="password"]']);
-  const identifier = one(google ? ['#identifierId'] : ['#ctrl_pageLogin_login', 'input[data-testid="loginUsernameInput"]', 'input[autocomplete="username"]', 'input[name="login"]', 'input[name="username"]', 'input[name="email"]', 'input[type="email"]', '#login-account-name', 'input[name="text"]']);
+  const identifier = one(google ? ['#identifierId'] : ['#ctrl_pageLogin_login', 'input[data-testid="loginUsernameInput"]', 'input[autocomplete="username"]', 'input[name="login"]', 'input[name="username"]', 'input[name="email"]', 'input[type="email"]', '#login-account-name', 'input[name="text"]', 'form input[type="text"]']);
   let stage = otp ? 'totp' : password ? 'password' : identifier ? 'identifier' : null;
   if (stage) {
     if (auth.provider === 'google' && !google) {
@@ -263,8 +290,8 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     if (location.hostname === 'social.vivaldi.net' && location.pathname === '/auth/sign_in') {
       const sso = all('a[href]').filter(enabled).filter(node => norm(node.innerText) === 'vivaldi.net');
       if (sso.length === 1) {
-        if (action === 'openLogin') { sso[0].click(); return response('submitted'); }
-        return response('openLogin');
+        if (action === 'sso') { sso[0].click(); return response('submitted'); }
+        return response('sso');
       }
     }
     const openLogin = exact(['log in', 'login', 'sign in', 'đăng nhập'], node => {

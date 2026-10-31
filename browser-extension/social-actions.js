@@ -24,7 +24,7 @@ export async function fillSocialAndSubmit(job) {
     return null;
   };
   const button = labels => {
-    const dialogs = all('[role="dialog"], .modal.show, .compose-modal-component').filter(visible);
+    const dialogs = all('[role="dialog"], .modal.show, .compose-modal-component, m-composer__modal').filter(visible);
     const candidates = all('button, [role="button"], [role="tab"], input[type="submit"], a').filter(enabled);
     const matches = candidates.filter(node => labels.some(label => [node.innerText, node.getAttribute('aria-label'), node.value].some(text => normalize(text).toLowerCase() === label.toLowerCase())));
     const scoped = dialogs.length ? matches.filter(node => dialogs.at(-1).contains(node)) : [];
@@ -78,6 +78,11 @@ export async function fillSocialAndSubmit(job) {
   }
 
   const quoraPersonal = engine === 'quora' && new URL(job.openUrl).hostname === 'www.quora.com';
+  if (engine === 'linkedin' && !pick(bodySelectors)) {
+    const open = await wait(() => button(['Start a post', 'Start a post, try writing with AI', 'Bắt đầu bài đăng']));
+    if (!open) return fail('Không thấy Start a post của LinkedIn.');
+    open.click();
+  }
   const quoraAudienceMatches = () => !quoraPersonal || all('[role="dialog"] button').some(node => visible(node) && ['everyone', 'mọi người'].includes(normalize(node.innerText).toLowerCase()));
   if (engine === 'quora') {
     if (!pick(bodySelectors)) {
@@ -98,6 +103,18 @@ export async function fillSocialAndSubmit(job) {
     if (!quoraAudienceMatches()) return fail('Bài cá nhân Quora chưa ở chế độ Everyone. Kiểm tra đối tượng xem bài; chưa gửi bài.');
     const current = value(pick(bodySelectors)).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
     if (current && current !== normalize(expectedBody)) return fail('Quora đang có bản nháp khác trong khung soạn. Lưu hoặc đóng bản nháp đó trước khi chạy bài mới.');
+  }
+  const mindsChannelMatches = () => engine !== 'minds' || all('m-composer__modal *').some(node => visible(node) && !node.closest('m-composer__textarea') && normalize(node.innerText) === 'My Channel');
+  if (engine === 'minds') {
+    if (!pick(bodySelectors)) {
+      const open = await wait(() => button(['Create', 'Create your first post']));
+      if (!open) return fail('Không thấy nút Create của Minds.');
+      open.click();
+    }
+    if (!await wait(() => pick(bodySelectors), 8000)) return fail('Chưa mở được Compose trên Minds.');
+    if (!mindsChannelMatches()) return fail('Minds chưa chọn My Channel; chưa điền hoặc gửi bài.');
+    const current = value(pick(bodySelectors));
+    if (current && current !== normalize(expectedBody)) return fail('Minds đang có bản nháp khác. Chưa ghi đè bản nháp.');
   }
   if (engine === 'pixelfed' && !pick(['.compose-modal-component', '#composeModal', 'textarea[placeholder*="caption" i]'])) {
     const open = await wait(() => button(['New Post', 'Create new post', 'Compose', 'Create', 'New post', 'Đăng bài'])
@@ -135,6 +152,10 @@ export async function fillSocialAndSubmit(job) {
   const body = await wait(() => pick(bodySelectors), recipe.requiredMedia ? 45_000 : 20_000);
   let title = pick(recipe.titleSelectors);
   if (!body) return fail('Không nhận diện được trình soạn thảo của nền tảng; chưa bấm đăng.');
+  if (['stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'].includes(engine)) {
+    const current = value(body);
+    if (current && current !== normalize(expectedBody)) return fail('Trình soạn đang chứa bản nháp khác; chưa ghi đè nội dung.');
+  }
   if (recipe.titleSelectors.length && !title) return fail('Không xác định được ô tiêu đề duy nhất; chưa gửi bài.');
   if (title && !write(title, post.title)) return fail('Không điền được tiêu đề.');
   if (engine === 'medium' && title && body.contains(title)) {
@@ -145,6 +166,10 @@ export async function fillSocialAndSubmit(job) {
   } else if (!write(body, expectedBody)) return fail('Không điền được nội dung.');
   const summary = pick(['textarea[name="summary"]', 'input[name="summary"]', 'textarea[placeholder*="summary" i]']);
   if (summary) write(summary, post.summary || post.body.split('\n').find(line => line.trim())?.slice(0, 240) || post.title);
+  if (engine === 'dzone') {
+    const subtitle = pick(['textarea[name="subtitle"]']); if (subtitle) write(subtitle, post.summary || post.title);
+    const meta = pick(['#meta-description-textarea']); if (meta) write(meta, (post.summary || post.title).slice(0, 160));
+  }
   await sleep(500);
   const validContent = () => {
     title = pick(recipe.titleSelectors);
@@ -153,7 +178,7 @@ export async function fillSocialAndSubmit(job) {
       && (engine === 'medium' ? value(currentBody).includes(normalize(expectedBody)) : value(currentBody) === normalize(expectedBody));
   };
   if (!validContent()) return fail('Editor không giữ đúng tiêu đề/nội dung từ web; chưa gửi bài.');
-  const characterLimit = engine === 'bluesky' ? 300 : engine === 'mastodon' ? 500 : null;
+  const characterLimit = engine === 'bluesky' ? 300 : engine === 'mastodon' ? 500 : engine === 'linkedin' ? 3000 : null;
   if (characterLimit && [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(expectedBody)].length > characterLimit) return needs(`Nội dung vượt ${characterLimit} ký tự của kênh này. Cần tạo lại bản ngắn hơn trên web.`);
 
   const choose = async (name, selectors, openLabels) => {
@@ -177,15 +202,58 @@ export async function fillSocialAndSubmit(job) {
     row.click(); await sleep(300);
     const apply = button(['Apply', 'Add', 'Save', 'Áp dụng', 'Thêm']); apply?.click();
     await sleep(300);
-    return all('[aria-selected="true"], [aria-checked="true"], .selected, .tag, .chip, [data-testid*="flair"], button, [role="combobox"]').some(node => visible(node) && normalize(node.innerText).toLowerCase().includes(name.toLowerCase()));
+    return all('[aria-selected="true"], [aria-checked="true"], .selected, .tag, .chip, .rs__multi-value, [data-testid*="flair"], button, [role="combobox"]').some(node => visible(node) && normalize(node.innerText).toLowerCase().includes(name.toLowerCase()));
   };
-  if (!await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
+  if (['lemmy', 'discuit'].includes(engine)) {
+    if (!options.category) return needs('Cần chọn community đích trong cấu hình tài khoản trên web.');
+    if (engine === 'discuit') {
+      const input = pick(['.page-new-select input']);
+      if (!input || !write(input, options.category)) return needs('Không mở được bộ chọn community.');
+      const choice = await wait(() => all('.page-new-select-suggest-item').filter(visible).find(n => normalize(n.querySelector('.page-new-select-suggest-name')?.innerText ?? n.innerText).toLowerCase() === options.category.toLowerCase()), 5000);
+      if (!choice) return needs('Community Discuit đã cấu hình không có trong danh sách.');
+      choice.click(); await sleep(250);
+      if (value(input).toLowerCase() !== options.category.toLowerCase()) return needs('Chưa xác nhận community Discuit.');
+    } else {
+      const open = pick(['#post-community']);
+      if (!open) return needs('Không thấy bộ chọn community Lemmy.');
+      if (!normalize(open.innerText).toLowerCase().includes(options.category.toLowerCase())) {
+        open.click();
+        const search = await wait(() => pick(['#post-community + div input', '.dropdown-menu input', '[role="combobox"] input', 'input[role="combobox"]']), 2000);
+        if (search) write(search, options.category);
+        const row = await wait(() => all('[role="option"], .dropdown-item').filter(visible).find(n => normalize(n.innerText).toLowerCase() === options.category.toLowerCase()), 5000);
+        if (!row) return needs('Không thấy community Lemmy đã chọn.');
+        row.click(); await sleep(250);
+      }
+      if (!normalize(open.innerText).toLowerCase().includes(options.category.toLowerCase())) return needs('Chưa xác nhận community Lemmy.');
+    }
+  } else if (!await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
+  if (engine === 'stackexchange') {
+    if (!options.tags?.length) return needs('Câu hỏi cần ít nhất một tag. Điền tags trong cấu hình trên web.');
+    const tags = pick(['#tagnames']);
+    if (tags) write(tags, options.tags.join(' '));
+    else for (const tag of options.tags) {
+      if (!await choose(tag, ['input#filterInput[aria-label="tags"]'], [])) return needs(`Không chọn được tag ${tag} trên Stack Overflow.`);
+    }
+  }
   if (engine === 'reddit' && !await choose(options.flair, ['[role="dialog"] input[placeholder*="Search" i]', '[role="dialog"] input[type="search"]'], ['Add flair and tags', 'Add tags and flair', 'Add tags and flairs', 'Flair', 'Thêm flair'])) return needs('Không chọn được flair của subreddit.');
 
   // Stop before entering a publish confirmation if automatic submission is off.
   if (!job.autoSubmit) return { status: 'filled', beforeUrls };
   if (captcha()) return { status: 'captcha' };
   if (!validContent()) return needs('Nội dung thay đổi khi chọn chuyên mục/flair. Chưa bấm đăng.');
+  if (engine === 'stackexchange') {
+    const review = button(['Review your question']);
+    if (review) { review.click(); await sleep(500); }
+  }
+  if (engine === 'dzone') {
+    const moderation = '.dropdown-menu li[ng-click="s.save(true, false, false, true)"]';
+    if (!pick([moderation])) {
+      const toggles = all('button.dropdown-toggle').filter(enabled).filter(n => normalize(n.innerText) === 'More');
+      if (!toggles.length) return needs('Không thấy menu More để gửi bài DZone đi duyệt.');
+      toggles[toggles.length - 1].click();
+      if (!await wait(() => pick([moderation]), 2500)) return needs('DZone chưa cho phép Submit to Moderation; kiểm tra các trường bắt buộc.');
+    }
+  }
 
   if (engine === 'medium' || engine === 'substack') {
     const proceed = button(engine === 'medium' ? ['Publish', 'Xuất bản'] : ['Continue', 'Tiếp tục']);
@@ -209,12 +277,15 @@ export async function fillSocialAndSubmit(job) {
   }
   const plainTags = ['slideshare', 'devto'].includes(engine) ? pick(['#tag-input', 'input[name="tags"]:not([role="combobox"]):not([aria-autocomplete])']) : null;
   if (plainTags && options.tags?.length && (!write(plainTags, options.tags.join(', ')) || value(plainTags) !== normalize(options.tags.join(', ')))) return needs('Không điền được tags của SlideShare; chưa xuất bản.');
-  for (const tag of plainTags ? [] : options.tags ?? []) {
-    if (!await choose(tag, ['input[placeholder*="Add a topic" i]', 'input[placeholder*="Add tags" i]', 'input[placeholder*="Search tags" i]', 'input[name="tags"]'], ['Add tags', 'Topics', 'Tags'])) return needs(`Không chọn được tag “${tag}”; chưa bấm đăng.`);
+  for (const tag of plainTags || engine === 'stackexchange' ? [] : options.tags ?? []) {
+    if (!await choose(tag, [...(engine === 'differ' ? ['input.rs__input[role="combobox"]'] : []), 'input[placeholder*="Add a topic" i]', 'input[placeholder*="Add tags" i]', 'input[placeholder*="Search tags" i]', 'input[name="tags"]'], ['Add tags', 'Topics', 'Tags'])) return needs(`Không chọn được tag “${tag}”; chưa bấm đăng.`);
   }
   if (captcha()) return { status: 'captcha' };
   if (!quoraAudienceMatches()) return needs('Đối tượng xem bài Quora đã thay đổi; chưa bấm Post.');
   const finalLabels = {
+    differ: ['Publish'], dzone: ['Submit to Moderation'],
+    stackexchange: ['Post your question', 'Submit to Staging Ground'], lemmy: ['Create', 'Tạo'], discuit: ['Submit', 'Post'], linkedin: ['Post', 'Đăng', 'Đăng bài'],
+    minds: ['Post'],
     medium: ['Publish now', 'Xuất bản ngay'], substack: ['Publish', 'Publish now'], quora: ['Post', 'Đăng'],
     reddit: ['Post', 'Đăng'], slideshare: ['Publish'], 'aws-builder': ['Publish', 'Publish article'],
     tinhte: ['Đăng', 'Đăng bài', 'Đăng bài viết', 'Xuất bản'], pixelfed: ['Post', 'Share', 'Publish', 'Đăng'],
@@ -223,6 +294,7 @@ export async function fillSocialAndSubmit(job) {
   const submit = await wait(() => { const target = pick(recipe.submitSelectors); return target && enabled(target) ? target : button(finalLabels ?? []); }, 5000);
   if (!submit) return needs('Nút đăng chưa sẵn sàng. Kiểm tra các trường bắt buộc hoặc quyền của tài khoản.');
   if (!['medium', 'substack'].includes(engine) && !validContent()) return needs('Nội dung không còn khớp với bài trên web; chưa đăng.');
+  if (!mindsChannelMatches()) return needs('Nơi đăng Minds đã thay đổi; chưa gửi bài.');
   submit.click();
   if (engine === 'aws-builder') {
     const confirmation = await wait(() => all('[role="dialog"]').find(node => visible(node)
@@ -256,15 +328,23 @@ export async function readSocialPublishedPost(task) {
   };
   const titleRequired = (job.recipe.publishedTitleSelectors ?? []).length > 0;
   const titleMatches = !titleRequired || job.recipe.publishedTitleSelectors.some(selector => all(selector).some(node => visible(node) && words(node.innerText) === expectedTitle));
-  const matchingBodies = (job.recipe.publishedBodySelectors ?? []).flatMap(all).filter(node => visible(node) && words(node.innerText).includes(expectedBody));
-  if (titleMatches && matchingBodies.length && validUrl(location.href)) return validUrl(location.href);
+  const publishedBodySelectors = [...(job.recipe.publishedBodySelectors ?? []), ...(job.recipe.engine === 'pixelfed' ? ['.timeline-status-component .status-text .read-more-component'] : [])];
+  const matchingBodies = publishedBodySelectors.flatMap(all).filter(node => visible(node) && words(node.innerText).includes(expectedBody));
+  const matchesAuthor = url => {
+    if (job.recipe.engine !== 'pixelfed') return true;
+    const author = /^\/p\/([^/]+)\/\d+/.exec(new URL(url).pathname)?.[1];
+    const expectedAuthor = job.verifiedSessionUsername || job.auth?.expectedUsername;
+    return !!author && (!expectedAuthor || author.toLowerCase() === expectedAuthor.replace(/^@/, '').toLowerCase());
+  };
+  const matchingContent = job.recipe.engine === 'pixelfed' ? matchingBodies.filter(node => words(node.innerText) === words(body)) : matchingBodies;
+  if (titleMatches && matchingContent.length && validUrl(location.href) && matchesAuthor(location.href)) return validUrl(location.href);
   // Some social apps stay on the feed. Only accept a permalink inside the
   // matching post, never a global unrelated link or an existing pre-submit post.
-  if (!titleRequired) for (const node of matchingBodies) {
-    const article = node.closest('article, .status, .post, .feed-card, [data-post-id], [data-testid="post"]');
+  if (!titleRequired) for (const node of matchingContent) {
+    const article = node.closest('article, .status, .post, .feed-card, .timeline-status-component, m-activity, [data-post-id], [data-testid="post"]');
     if (!article) continue;
     for (const selector of job.recipe.publishedLinkSelectors ?? []) for (const link of article.querySelectorAll(selector)) {
-      const url = validUrl(link.href); if (url) return url;
+      const url = validUrl(link.href); if (url && matchesAuthor(url)) return url;
     }
   }
   // Mastodon's redesigned /publish page clears the composer without rendering

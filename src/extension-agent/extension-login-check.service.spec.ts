@@ -1,4 +1,27 @@
-import { ExtensionLoginCheckService } from './extension-login-check.service';
+import { ExtensionLoginCheckService, loginSession } from './extension-login-check.service';
+
+describe('separate login methods', () => {
+  const settings = { extensionSession: { deviceId: 'device', expectedUsername: 'brand', origin: 'https://social.test', provider: 'google', loginUsername: 'google@example.test', autoLogin: true },
+    extensionLoginMethods: { password: { available: true, username: 'social-user' }, google: { available: true, username: 'google@example.test' } } };
+  it('uses the social identity for password attempts without changing the Google config', () => {
+    expect(loginSession(settings, 'password')).toMatchObject({ provider: 'password', loginUsername: 'social-user', autoLogin: true });
+    expect(settings.extensionSession.loginUsername).toBe('google@example.test');
+  });
+  it('does not release Google credentials to a password attempt with no method secret', async () => {
+    const prisma = { extensionLoginCheck: { findFirst: jest.fn().mockResolvedValue({ id: 'check', platformAccountId: 'account', method: 'password', account: { settings } }) } };
+    const service = new ExtensionLoginCheckService(prisma as never, { resolve: jest.fn().mockResolvedValue({ extensionLogin: { username: 'google@example.test', password: 'not-a-social-password' } }) } as never);
+    await expect(service.authStep({ id: 'device' } as never, 'check', { step: 'password', pageUrl: 'https://social.test/login' })).rejects.toThrow('no matching credential');
+  });
+  it('queues Google only after a failed password attempt and keeps the first result', async () => {
+    const check = { id: 'check', deviceId: 'device', platformAccountId: 'account', batchId: 'batch', method: 'password', tryFallback: true, account: { settings } };
+    const tx = { extensionLoginCheck: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), create: jest.fn() } };
+    const prisma = { extensionLoginCheck: { findFirst: jest.fn().mockResolvedValue(check) }, $transaction: jest.fn(fn => fn(tx)) };
+    const service = new ExtensionLoginCheckService(prisma as never, {} as never);
+    await service.result({ id: 'device' } as never, 'check', { outcome: 'NEEDS_ACTION', message: 'Password not accepted' });
+    expect(tx.extensionLoginCheck.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'NEEDS_ACTION', message: 'Password not accepted' }) }));
+    expect(tx.extensionLoginCheck.create).toHaveBeenCalledWith({ data: expect.objectContaining({ method: 'google', batchId: 'batch', platformAccountId: 'account', tryFallback: false }) });
+  });
+});
 
 describe('login completion and automatic connection', () => {
   it('never supplies credentials for a session-only check', async () => {
@@ -18,7 +41,7 @@ describe('login completion and automatic connection', () => {
     const check = { id: 'check', verifyOnly: true, account: { id: 'account', name: 'Brand', settings, platform: { name: 'Social' } } };
     const tx = { $queryRaw: jest.fn(), extensionLoginCheck: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      findMany: jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([check]),
+      findMany: jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([check]),
     } };
     const prisma = { $transaction: jest.fn(fn => fn(tx)) };
     const service = new ExtensionLoginCheckService(prisma as never, {} as never);
@@ -30,7 +53,7 @@ describe('login completion and automatic connection', () => {
   function fixture(settings: Record<string, unknown>, enabled = false, verifyOnly = false) {
     const auth = { deviceId: 'device', expectedUsername: 'brand', loginUsername: 'owner@example.test', provider: 'google', allowIdentityByEmail: true, profileUrl: 'https://example.test/u/brand' };
     const check = { id: 'check', platformAccountId: 'account', verifyOnly, account: { enabled, settings: { ...settings, extensionSession: auth } } };
-    const tx = { extensionLoginCheck: { update: jest.fn() }, platformAccount: { update: jest.fn() } };
+    const tx = { extensionLoginCheck: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) }, platformAccount: { update: jest.fn() } };
     const prisma = { extensionLoginCheck: { findFirst: jest.fn().mockResolvedValue(check) }, $transaction: jest.fn(async fn => fn(tx)) };
     const service = new ExtensionLoginCheckService(prisma as never, {} as never);
     return { service, tx };
@@ -49,7 +72,7 @@ describe('login completion and automatic connection', () => {
   it('explains an unverified existing session without claiming credentials are missing', async () => {
     const { service, tx } = fixture({}, false, true);
     await service.result({ id: 'device', ownerId: 'owner' } as never, 'check', { outcome: 'NEEDS_ACTION', message: 'Chưa nhận diện được phiên sẵn có và tài khoản này chưa bật tự đăng nhập hoặc còn thiếu thông tin xác thực.' });
-    expect(tx.extensionLoginCheck.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ message: expect.stringContaining('phiên đăng nhập sẵn có') }) }));
+    expect(tx.extensionLoginCheck.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ message: expect.stringContaining('phiên đăng nhập sẵn có') }) }));
   });
   it.each([
     { delivery: 'extension', extensionAutoConnect: false },

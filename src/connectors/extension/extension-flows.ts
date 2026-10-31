@@ -41,6 +41,16 @@ const forumFlows: ExtensionFlow[] = definitions.map(([id, name, engine, forumUrl
 }));
 
 export const EXTENSION_FLOWS: readonly ExtensionFlow[] = [...forumFlows,
+  { id: 'differ', name: 'Differ', engine: 'differ', forumUrl: 'https://differ.blog', targetUrl: 'https://differ.blog/new-story', revision: 1, setupHint: 'Tạo story, điền tiêu đề/nội dung, chọn Keyword từ tags và Publish. Không ghi đè bản nháp khác.' },
+  { id: 'dzone', name: 'DZone', engine: 'dzone', forumUrl: 'https://dzone.com', targetUrl: 'https://dzone.com/content/article/post.html', revision: 1, setupHint: 'Điền bài, tl;dr và metadata rồi gửi biên tập duyệt. DZone có thể yêu cầu thêm chủ đề, ảnh và các trường của tác giả; kết quả chờ duyệt không phải đã xuất bản.' },
+  ...([['stack-overflow', 'Stack Overflow', 'https://stackoverflow.com'], ['server-fault', 'Server Fault', 'https://serverfault.com'], ['unix-linux-stackexchange', 'Unix & Linux', 'https://unix.stackexchange.com']] as const).map(([id, name, forumUrl]): ExtensionFlow => ({
+    id, name, forumUrl, engine: 'stackexchange', targetUrl: `${forumUrl}/questions/ask`, revision: 1,
+    setupHint: 'Câu hỏi kỹ thuật: tiêu đề, nội dung và ít nhất một tag có thật. Luồng đi qua Review your question rồi Post your question. Nếu Stack Overflow yêu cầu Staging Ground, bài được ghi là chờ duyệt.',
+  })),
+  { id: 'lemmy-world', name: 'Lemmy.world', engine: 'lemmy', forumUrl: 'https://lemmy.world', targetUrl: 'https://lemmy.world/create_post', revision: 1, setupHint: 'Chọn tên community trong ô Chuyên mục trên web. Tiện ích chọn đúng community, điền tiêu đề/nội dung và bấm Create.' },
+  { id: 'discuit', name: 'Discuit', engine: 'discuit', forumUrl: 'https://discuit.org', targetUrl: 'https://discuit.org/new', revision: 1, setupHint: 'Chọn community trong ô Chuyên mục trên web. Luồng tạo Text post và bấm Post sau khi xác nhận community.' },
+  { id: 'linkedin', name: 'LinkedIn', engine: 'linkedin', forumUrl: 'https://www.linkedin.com', targetUrl: 'https://www.linkedin.com/feed/', revision: 1, setupHint: 'Start a post → điền nội dung → Post trên hồ sơ cá nhân đã xác minh. Tối đa 3.000 ký tự.' },
+  { id: 'minds', name: 'Minds', engine: 'minds', forumUrl: 'https://www.minds.com', targetUrl: 'https://www.minds.com/newsfeed/subscriptions', revision: 1, setupHint: 'Create → Compose → My Channel → Post. Đăng nội dung lên kênh đang xác minh; không bật Boost hoặc đăng vào nhóm khác.' },
   { id: 'mastodon', name: 'Mastodon.social', engine: 'mastodon', forumUrl: 'https://mastodon.social', targetUrl: 'https://mastodon.social/publish', revision: 1, setupHint: 'Đăng nội dung lên hồ sơ Mastodon trong Chrome.' },
   { id: 'vivaldi-social', name: 'Vivaldi Social', engine: 'mastodon', forumUrl: 'https://social.vivaldi.net', targetUrl: 'https://social.vivaldi.net/publish', revision: 1, setupHint: 'Đăng nội dung lên hồ sơ Vivaldi Social trong Chrome.' },
   { id: 'bluesky', name: 'Bluesky', engine: 'bluesky', forumUrl: 'https://bsky.app', targetUrl: 'https://bsky.app/intent/compose', revision: 1, setupHint: 'Viết bài ngắn trên hồ sơ Bluesky đang đăng nhập.' },
@@ -109,6 +119,9 @@ export function validateExtensionFlow(slug: string, settings: ExtensionDeliveryS
     throw new BadRequestException('Reddit requires the submit page of a specific subreddit or profile');
   }
   const createPaths: Partial<Record<ExtensionEngine, string[]>> = {
+    differ: ['/new-story'], dzone: ['/content/article/post.html'],
+    stackexchange: ['/questions/ask'], lemmy: ['/create_post'], discuit: ['/new'], linkedin: ['/feed'],
+    minds: ['/newsfeed/subscriptions'],
     medium: ['/new-story'], slideshare: ['/upload'], 'aws-builder': ['/create/content'], pixelfed: ['/i/web', '/i/web/compose'],
     mastodon: ['/publish'], bluesky: ['/intent/compose'], tumblr: ['/new/text'], devto: ['/new'],
   };

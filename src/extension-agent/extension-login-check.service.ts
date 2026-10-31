@@ -6,6 +6,19 @@ import { freshTotp } from '../auth/totp-provider';
 import { object, sessionOf, sessionScope } from './extension-account-session.service';
 import type { AuthenticatedDevice } from './extension-agent.service';
 import { ExtensionAuthStepDto } from './extension-agent.dto';
+import { extensionFlowAudit } from '../connectors/extension/extension-flow-audit';
+
+// Each attempt has its own credential namespace. A Google password must never
+// be offered to a social login form when trying the alternative method.
+export function loginSession(settings: unknown, method = 'configured') {
+  const base = sessionOf(settings);
+  if (!base || method === 'configured') return base;
+  if (method !== 'password' && method !== 'google') return undefined;
+  const config = object(object(object(settings).extensionLoginMethods)[method]);
+  return { ...base, provider: method as 'password' | 'google', autoLogin: base.autoLogin && config.available === true,
+    autoTotp: config.autoTotp === true, loginUsername: String(config.username ?? ''),
+    loginUrl: String(config.loginUrl || base.loginUrl || base.origin) };
+}
 
 @Injectable()
 export class ExtensionLoginCheckService {
@@ -19,16 +32,21 @@ export class ExtensionLoginCheckService {
 
   async list(ownerId: string) {
     const accounts = await this.prisma.platformAccount.findMany({ where: { ownerId },
-      select: { id: true, name: true, settings: true, platform: { select: { name: true } },
-        extensionLoginChecks: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { name: 'asc' } });
+      select: { id: true, name: true, settings: true, platform: { select: { name: true, slug: true } },
+        extensionLoginChecks: { orderBy: { createdAt: 'desc' }, take: 50 } }, orderBy: { name: 'asc' } });
     return accounts.filter(a => object(object(a.settings).extensionImport).selected !== false && (object(a.settings).extensionImport || sessionOf(a.settings))).map(a => ({
       id: a.id, name: a.name, platform: a.platform.name, configured: Boolean(sessionOf(a.settings)), autoLogin: Boolean(sessionOf(a.settings)?.autoLogin),
       issues: object(object(a.settings).extensionImport).issues ?? [],
       deviceId: sessionOf(a.settings)?.deviceId, check: a.extensionLoginChecks[0] ?? null,
+      posting: extensionFlowAudit(a.platform.slug, a.settings),
+      attempts: ['password', 'google'].map(method => ({ method,
+        available: object(object(object(a.settings).extensionLoginMethods)[method]).available === true,
+        check: a.extensionLoginChecks.find(c => !c.verifyOnly && c.method === method) ?? null,
+      })),
     }));
   }
 
-  async queue(ownerId: string, accountIds?: string[], verifyOnly = false) {
+  async queue(ownerId: string, accountIds?: string[], verifyOnly = false, tryBoth = false) {
     const batchId = randomUUID();
     return this.prisma.$transaction(async tx => {
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${ownerId}, 7302))::text`;
@@ -39,7 +57,10 @@ export class ExtensionLoginCheckService {
       for (const account of accounts) {
         const auth = sessionOf(account.settings);
         if (!auth || object(object(account.settings).extensionImport).selected === false || !activeDevices.has(auth.deviceId) || active.has(account.id)) continue;
-        await tx.extensionLoginCheck.create({ data: { batchId, platformAccountId: account.id, deviceId: auth.deviceId, verifyOnly } });
+        const methods = object(object(account.settings).extensionLoginMethods);
+        const method = tryBoth && !verifyOnly ? (object(methods.password).available === true ? 'password' : object(methods.google).available === true ? 'google' : 'configured') : 'configured';
+        await tx.extensionLoginCheck.create({ data: { batchId, platformAccountId: account.id, deviceId: auth.deviceId, verifyOnly,
+          method, tryFallback: tryBoth && !verifyOnly && method === 'password' && object(methods.google).available === true } });
         queued++;
       }
       return { batchId, queued };
@@ -49,27 +70,31 @@ export class ExtensionLoginCheckService {
   async claim(device: AuthenticatedDevice, allowedOrigins?: string[]) {
     return this.prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${device.id}, 7303))::text`;
-    await tx.extensionLoginCheck.updateMany({ where: { deviceId: device.id, status: 'RUNNING', startedAt: { lt: new Date(Date.now() - 2 * 60_000) } },
+    const interrupted = await tx.extensionLoginCheck.findMany({ where: { deviceId: device.id, status: 'RUNNING', startedAt: { lt: new Date(Date.now() - 2 * 60_000) } } });
+    await tx.extensionLoginCheck.updateMany({ where: { id: { in: interrupted.map(c => c.id) }, status: 'RUNNING' },
       data: { status: 'NEEDS_ACTION', message: 'Phiên kiểm tra bị gián đoạn; không tự thử lại mật khẩu.', finishedAt: new Date() } });
+    for (const check of interrupted) if (check.tryFallback && check.method === 'password') {
+      await tx.extensionLoginCheck.create({ data: { batchId: check.batchId, deviceId: check.deviceId, platformAccountId: check.platformAccountId, method: 'google', tryFallback: false, verifyOnly: false } });
+    }
     const running = await tx.extensionLoginCheck.findMany({ where: { deviceId: device.id, status: 'RUNNING' }, include: { account: { select: { settings: true } } } });
     if (running.length >= 3) return null;
-    const scopes = (settings: unknown, verifyOnly = false) => {
-      const session = sessionOf(settings);
+    const scopes = (settings: unknown, verifyOnly = false, method = 'configured') => {
+      const session = loginSession(settings, method);
       if (!session) return [];
       return [sessionScope(settings), ...(session.allowedOrigins ?? []), ...(!verifyOnly && session.autoLogin && session.provider === 'google' ? ['https://accounts.google.com'] : [])];
     };
-    const busyScopes = new Set(running.flatMap(check => scopes(check.account.settings, check.verifyOnly)));
+    const busyScopes = new Set(running.flatMap(check => scopes(check.account.settings, check.verifyOnly, check.method)));
     const pending = await tx.extensionLoginCheck.findMany({ where: { deviceId: device.id, status: 'QUEUED', account: { ownerId: device.ownerId } },
       include: { account: { include: { platform: true } } }, orderBy: { createdAt: 'asc' }, take: 200 });
     const check = pending.find(candidate => {
-      const session = sessionOf(candidate.account.settings);
-      if (scopes(candidate.account.settings, candidate.verifyOnly).some(scope => busyScopes.has(scope))) return false;
+      const session = loginSession(candidate.account.settings, candidate.method);
+      if (scopes(candidate.account.settings, candidate.verifyOnly, candidate.method).some(scope => busyScopes.has(scope))) return false;
       if (!session || allowedOrigins === undefined) return true;
       const required = [session.origin, ...(session.allowedOrigins ?? []), ...(!candidate.verifyOnly && session.autoLogin && session.provider === 'google' ? ['https://accounts.google.com'] : [])];
       return required.every(origin => allowedOrigins.includes(origin));
     });
     if (!check) return null;
-    const auth = sessionOf(check.account.settings);
+    const auth = loginSession(check.account.settings, check.method);
     if (!auth || object(object(check.account.settings).extensionImport).selected === false || auth.deviceId !== device.id) {
       await tx.extensionLoginCheck.update({ where: { id: check.id }, data: { status: 'NEEDS_ACTION', message: 'Cấu hình phiên đã thay đổi.', finishedAt: new Date() } });
       return null;
@@ -86,7 +111,7 @@ export class ExtensionLoginCheckService {
 
   private async active(device: AuthenticatedDevice, id: string) {
     const check = await this.prisma.extensionLoginCheck.findFirst({ where: { id, deviceId: device.id, status: 'RUNNING', account: { ownerId: device.ownerId } }, include: { account: true } });
-    const auth = check && sessionOf(check.account.settings);
+    const auth = check && loginSession(check.account.settings, check.method);
     if (!check || !auth || auth.deviceId !== device.id) throw new NotFoundException('Active login check for this Chrome profile not found');
     return { check, auth };
   }
@@ -99,7 +124,9 @@ export class ExtensionLoginCheckService {
     const allowed = auth.provider === 'google' ? ['https://accounts.google.com'] : [auth.origin, ...(auth.allowedOrigins ?? [])];
     if (!auth.autoLogin || url.username || url.password || !allowed.includes(url.origin)) throw new BadRequestException('Login origin does not match this account');
     if (dto.step === 'totp' && !auth.autoTotp) throw new BadRequestException('No TOTP configured');
-    const secret = object((await this.credentials.resolve(check.platformAccountId)).extensionLogin);
+    const stored = await this.credentials.resolve(check.platformAccountId);
+    const secret = !check.method || check.method === 'configured' ? object(stored.extensionLogin) : object(object(stored.extensionLoginMethods)[check.method]);
+    if (typeof secret.username !== 'string' || secret.username !== auth.loginUsername) throw new BadRequestException('Login method has no matching credential');
     if (dto.step === 'identifier') return { username: secret.username };
     const field = dto.step === 'password' ? 'passwordIssuedAt' : 'totpIssuedAt';
     const reserved = await this.prisma.extensionLoginCheck.updateMany({ where: { id, deviceId: device.id, status: 'RUNNING', [field]: null }, data: { [field]: new Date() } });
@@ -118,8 +145,13 @@ export class ExtensionLoginCheckService {
       ? 'Chưa nhận diện được phiên đăng nhập sẵn có trong Chrome này. Mở nền tảng, đăng nhập đúng tài khoản rồi bấm “Tôi đã đăng nhập · Kiểm tra”. Lượt kiểm tra này không thử mật khẩu hoặc mã 2FA.'
       : dto.message;
     await this.prisma.$transaction(async tx => {
-      await tx.extensionLoginCheck.update({ where: { id }, data: { status, message: message?.slice(0, 500) ?? null,
+      const won = await tx.extensionLoginCheck.updateMany({ where: { id, status: 'RUNNING' }, data: { status, message: message?.slice(0, 500) ?? null,
         detectedUsername: dto.detectedUsername?.slice(0, 200), finishedAt: new Date() } });
+      if (!won.count) throw new BadRequestException('Login check already completed');
+      if (!success && check.tryFallback && check.method === 'password') {
+        await tx.extensionLoginCheck.create({ data: { batchId: check.batchId, deviceId: check.deviceId,
+          platformAccountId: check.platformAccountId, method: 'google', tryFallback: false, verifyOnly: false } });
+      }
       // A Chrome login verifies only the Chrome delivery route. Never turn an
       // API/manual account green using a browser session check.
       const settings = object(check.account.settings);
@@ -135,13 +167,13 @@ export class ExtensionLoginCheckService {
       if (success && (auth.discoverIdentity || auth.allowIdentityByEmail) && dto.detectedUsername?.trim()) {
         const username = dto.detectedUsername.trim();
         await tx.platformAccount.update({ where: { id: check.platformAccountId }, data: { username,
-          settings: { ...object(check.account.settings), extensionSession: { ...auth, expectedUsername: username, discoverIdentity: false,
+          settings: { ...object(check.account.settings), extensionSession: { ...sessionOf(check.account.settings), expectedUsername: username, discoverIdentity: false,
             profileUrl: username.toLowerCase() === auth.expectedUsername.toLowerCase() ? auth.profileUrl : '' } } } });
       }
       if (!success && dto.googleBlocked && auth.provider === 'google') {
         const pending = await tx.extensionLoginCheck.findMany({ where: { batchId: check.batchId, deviceId: device.id, status: 'QUEUED' }, include: { account: { select: { settings: true } } } });
         const shared = pending.filter(candidate => {
-          const session = sessionOf(candidate.account.settings);
+          const session = loginSession(candidate.account.settings, candidate.method);
           return session?.provider === 'google' && session.loginUsername.toLowerCase() === auth.loginUsername.toLowerCase();
         }).map(candidate => candidate.id);
         await tx.extensionLoginCheck.updateMany({ where: { id: { in: shared }, status: 'QUEUED' },

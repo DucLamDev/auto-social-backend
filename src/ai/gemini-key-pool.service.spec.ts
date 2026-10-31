@@ -73,6 +73,9 @@ describe('Gemini encrypted key pool', () => {
     const request = jest.fn<Promise<string>, [string]>().mockRejectedValue({ status: 429, message: 'do-not-leak-secret' });
     await expect(pool.run(request)).rejects.toThrow('All configured Gemini API keys');
     expect(request).toHaveBeenCalledTimes(10);
+    await expect(pool.run(request)).rejects.toMatchObject({ details: {
+      configuredKeys: 10, retryAt: new Date(now + 60_000).toISOString(),
+    } });
     await expect(pool.run(request)).rejects.toThrow('All configured Gemini API keys');
     expect(request).toHaveBeenCalledTimes(10);
     now += 61_000;

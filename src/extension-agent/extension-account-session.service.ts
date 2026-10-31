@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { CredentialStatus, PublishJobStatus } from '@prisma/client';
+import { CredentialStatus, PublishJobStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { CredentialEncryptionService } from '../credentials/credential-encryption.service';
@@ -98,7 +98,7 @@ export class ExtensionAccountSessionService {
       const sameLogin = oldSession?.provider === dto.provider && oldSession.loginUsername === dto.loginUsername?.trim();
       const password = dto.password || (sameLogin ? previous.password : undefined);
       const seed = dto.totpSecret?.trim() || (sameLogin ? previous.totpSecret : undefined);
-      if (dto.autoLogin && (!dto.loginUsername?.trim() || typeof password !== 'string' || !password)) throw new BadRequestException('Login username and password are required');
+      if (dto.autoLogin && (!dto.loginUsername?.trim() || (dto.provider === 'password' && (typeof password !== 'string' || !password)))) throw new BadRequestException('Login username and password are required for password login');
       if (dto.autoLogin && dto.autoTotp) {
         if (typeof seed !== 'string' || !seed) throw new BadRequestException('Supply the TOTP setup key or otpauth URL, not a six-digit code');
         try { generateTotp(seed); } catch { throw new BadRequestException('Invalid TOTP setup key or otpauth URL'); }
@@ -107,11 +107,13 @@ export class ExtensionAccountSessionService {
         profileUrl, identitySelector: dto.identitySelector?.trim() ?? '', provider: dto.provider,
         autoLogin: dto.autoLogin, autoTotp: dto.autoLogin && dto.autoTotp, loginUrl, loginUsername: dto.loginUsername?.trim() ?? '' };
       // Explicitly configuring a fresh login must clear an older token expiry.
-      await this.credentials.upsert(accountId, { ...stored, extensionLogin: dto.autoLogin ? {
-        username: session.loginUsername, password, ...(session.autoTotp ? { totpSecret: seed } : {}),
-      } : null }, dto.autoLogin ? null : undefined, tx);
-      await tx.platformAccount.update({ where: { id: accountId }, data: { settings: { ...settings, extensionSession: { ...session } } } });
-      return { ...session, passwordConfigured: dto.autoLogin, totpConfigured: session.autoTotp };
+      const secret = dto.autoLogin ? { username: session.loginUsername, ...(typeof password === 'string' ? { password } : {}), ...(session.autoTotp ? { totpSecret: seed } : {}) } : null;
+      const methods = { ...object(settings.extensionLoginMethods), [dto.provider]: { available: dto.autoLogin, username: session.loginUsername, loginUrl, autoTotp: session.autoTotp } };
+      await this.credentials.upsert(accountId, { ...stored, extensionLogin: secret,
+        extensionLoginMethods: dto.autoLogin ? { ...object(stored.extensionLoginMethods), [dto.provider]: secret } : {},
+      }, dto.autoLogin ? null : undefined, tx);
+      await tx.platformAccount.update({ where: { id: accountId }, data: { settings: { ...settings, extensionSession: { ...session }, extensionLoginMethods: dto.autoLogin ? methods : {} } as Prisma.InputJsonObject } });
+      return { ...session, passwordConfigured: dto.autoLogin && Boolean(password), totpConfigured: session.autoTotp };
     }, { timeout: 10_000 });
   }
 

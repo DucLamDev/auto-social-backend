@@ -130,11 +130,22 @@ export class AccountImportService {
         const name = `${platform.name} · ${username || login.username}`;
         const account = old ? await tx.platformAccount.update({ where: { id: old.id }, data: { name, enabled: false, status: 'RECONNECT_REQUIRED', settings: settings as Prisma.InputJsonObject } })
           : await tx.platformAccount.create({ data: { ownerId, platformId: platform.id, name, username: username || null, enabled: false, status: 'RECONNECT_REQUIRED', settings: settings as Prisma.InputJsonObject } });
-        await this.credentials.upsert(account.id, { ...stored, extensionLogin: { username: login.username, ...(password ? { password } : {}), ...(seed ? { totpSecret: seed } : {}) } }, null, tx);
+        const credential = { username: login.username, ...(password ? { password } : {}), ...(seed ? { totpSecret: seed } : {}) };
+        const methods = { ...object(stored.extensionLoginMethods), [login.provider]: credential };
+        const methodSettings = { ...object(previous.extensionLoginMethods), [login.provider]: {
+          available: session.autoLogin, username: login.username, autoTotp: session.autoTotp, loginUrl,
+        } };
+        if (googleEmail && login.provider !== 'google') {
+          const priorGoogle = object(methods.google);
+          methods.google = priorGoogle.username === googleEmail.trim() ? priorGoogle : { username: googleEmail.trim() };
+          methodSettings.google = { available: true, username: googleEmail.trim(), autoTotp: false, loginUrl };
+        }
+        await this.credentials.upsert(account.id, { ...stored, extensionLogin: credential, extensionLoginMethods: methods }, null, tx);
+        await tx.platformAccount.update({ where: { id: account.id }, data: { settings: { ...settings, extensionLoginMethods: methodSettings } as Prisma.InputJsonObject } });
         ids.push(account.id); result.push({ id: account.id, row: row.source, name, setup });
       }
     }, { timeout: 30_000 });
-    const batch = await this.checks.queue(ownerId, ids);
+    const batch = await this.checks.queue(ownerId, ids, false, true);
     return { imported: ids.length, queued: batch.queued, batchId: batch.batchId, rows: result };
   }
 }

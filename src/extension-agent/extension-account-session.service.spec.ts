@@ -39,7 +39,8 @@ describe('Chrome account sessions', () => {
   it('stores secrets only through the encrypted vault, not account settings or the configuration response', async () => {
     const { service, tx, credentials } = setup();
     const result = await service.configure(device.ownerId, 'account-a', input);
-    expect(credentials.upsert).toHaveBeenCalledWith('account-a', { extensionLogin: { username: input.loginUsername, password: input.password, totpSecret: input.totpSecret } }, null, tx);
+    const expectedSecret = { username: input.loginUsername, password: input.password, totpSecret: input.totpSecret };
+    expect(credentials.upsert).toHaveBeenCalledWith('account-a', { extensionLogin: expectedSecret, extensionLoginMethods: { password: expectedSecret } }, null, tx);
     const publicData = JSON.stringify([result, tx.platformAccount.update.mock.calls]);
     expect(publicData).not.toContain(input.password);
     expect(publicData).not.toContain(input.totpSecret);

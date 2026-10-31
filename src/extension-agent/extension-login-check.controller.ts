@@ -13,6 +13,7 @@ import { ExtensionLoginCheckService } from './extension-login-check.service';
 class QueueChecksDto {
   @IsOptional() @IsArray() @ArrayMaxSize(200) @IsUUID('4', { each: true }) accountIds?: string[];
   @IsOptional() @IsBoolean() verifyOnly?: boolean;
+  @IsOptional() @IsBoolean() tryBoth?: boolean;
 }
 class ClaimChecksDto {
   @IsOptional() @IsArray() @ArrayMaxSize(200)
@@ -30,7 +31,7 @@ export class ExtensionLoginCheckController {
   constructor(private readonly checks: ExtensionLoginCheckService) {}
   @Get() list(@CurrentUser() user: AuthenticatedUser) { return this.checks.list(user.id); }
   @Post() @Roles(RoleName.ADMIN)
-  queue(@CurrentUser() user: AuthenticatedUser, @Body() dto: QueueChecksDto) { return this.checks.queue(user.id, dto.accountIds, dto.verifyOnly); }
+  queue(@CurrentUser() user: AuthenticatedUser, @Body() dto: QueueChecksDto) { return this.checks.queue(user.id, dto.accountIds, dto.verifyOnly, dto.tryBoth); }
 }
 @Public() @UseGuards(ExtensionDeviceGuard) @Controller('extension/agent/login-checks')
 export class ExtensionLoginCheckAgentController {

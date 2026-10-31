@@ -18,4 +18,6 @@ browser-extension/dist-ext/
 reports/account-import.json
 reports/login-check-results.json
 reports/extension-connections.json
+reports/flow-dom-audit.json
+reports/social-connection-audit.csv
 scripts/__pycache__/

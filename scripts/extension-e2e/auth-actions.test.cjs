@@ -50,7 +50,74 @@ test('Vivaldi follows its offered SSO link and does not fill Google credentials 
   const page = await pageAt('https://social.vivaldi.net/auth/sign_in', '<a href="https://login.vivaldi.net/profile/">vivaldi.net</a>');
   try {
     const scoped = { ...job, targetOrigin: 'https://social.vivaldi.net', recipe: { engine: 'mastodon' } };
-    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'openLogin');
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'sso');
+  } finally { await page.close(); }
+});
+
+test('Mastodon redesign uses the own footer card and rejects another signed-in account', async () => {
+  const page = await pageAt('https://mastodon.social/home', '<nav><footer><a class="_accountLink_123" href="/@alice">Alice @alice</a><a href="/@bob/packs">Starter packs</a></footer></nav><article><a href="/@bob">Bob</a></article>');
+  const scoped = { ...job, targetOrigin: 'https://mastodon.social', recipe: { engine: 'mastodon' } };
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+    await page.locator('a[class*="accountLink"]').evaluate(n => n.href = '/@bob');
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'mismatch');
+  } finally { await page.close(); }
+});
+
+test('Vivaldi verifies the composer account, not the starter packs navigation link', async () => {
+  const page = await pageAt('https://social.vivaldi.net/start', '<div class="navigation-panel"><a href="/@alice/packs">Gói khởi đầu</a></div><div class="navigation-bar"><a class="account__display-name" href="/@alice">Display name @alice</a></div><article><a href="/@bob">bob</a></article>');
+  const scoped = { ...job, targetOrigin: 'https://social.vivaldi.net', recipe: { engine: 'mastodon' }, auth: { ...job.auth, profileUrl: 'https://social.vivaldi.net/@alice' } };
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+    await page.locator('.navigation-bar').evaluate(n => n.remove());
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'unknown');
+  } finally { await page.close(); }
+});
+
+test('Discuit recognizes its own navbar username and excludes a feed author', async () => {
+  const page = await pageAt('https://discuit.org/', '<nav><a href="/@alice/bookmarks">Bookmarks</a></nav><div class="navbar-profile"><span class="navbar-name">@alice</span></div><article><a href="/@bob">bob</a></article>');
+  const scoped = { ...job, targetOrigin: 'https://discuit.org', recipe: { engine: 'discuit' } };
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+    await page.locator('.navbar-name').evaluate(n => n.textContent = '@bob');
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'mismatch');
+    await page.locator('.navbar-profile').evaluate(n => n.remove());
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'unknown');
+  } finally { await page.close(); }
+});
+
+test('Lemmy opens only the own account dropdown and reads its profile handle', async () => {
+  const page = await pageAt('https://lemmy.world/', '<nav><li id="dropdownUser"><button class="dropdown-toggle">Display name</button><ul hidden><li><a href="/u/alice">Tài khoản</a></li></ul></li></nav><article><a href="/u/bob">bob</a></article>');
+  const scoped = { ...job, targetOrigin: 'https://lemmy.world', recipe: { engine: 'lemmy' }, auth: { ...job.auth, autoLogin: false } };
+  try {
+    await page.evaluate(() => document.querySelector('#dropdownUser button').onclick = () => document.querySelector('ul').hidden = false);
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'accountMenu');
+    await page.evaluate(accountAuthStep, { job: scoped, action: 'accountMenu' });
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+  } finally { await page.close(); }
+});
+
+test('Discuit surfaces a rejected credential and never submits it again', async () => {
+  const page = await pageAt('https://discuit.org/login', '<form><input autocomplete="username"><input type="password"><button type="submit">Log in</button></form><p>Username and password do not match.</p>');
+  try {
+    const result = await page.evaluate(accountAuthStep, { job: { ...job, targetOrigin: 'https://discuit.org' }, action: 'password', payload: { username: 'alice', password: 'fixture' } });
+    assert.equal(result.state, 'challenge');
+    assert.equal(await page.locator('input[type=password]').inputValue(), '');
+  } finally { await page.close(); }
+});
+
+test('Discourse reports rejected credentials and activation requirements before submitting again', async () => {
+  const page = await pageAt('https://forum.test/login', '<div id="login-alert">Incorrect username, email or password</div><input type="password">');
+  const scoped = { ...job, targetOrigin: 'https://forum.test', recipe: { engine: 'discourse' } };
+  try {
+    let result = await page.evaluate(accountAuthStep, { job: scoped });
+    assert.equal(result.state, 'challenge'); assert.match(result.message, /mật khẩu/);
+    await page.locator('#login-alert').evaluate(n => n.textContent = 'Không đúng tài khoản, email hoặc mật khẩu');
+    result = await page.evaluate(accountAuthStep, { job: scoped });
+    assert.equal(result.state, 'challenge'); assert.match(result.message, /mật khẩu/);
+    await page.locator('#login-alert').evaluate(n => n.textContent = "You can't log in yet. We previously sent an activation email to you.");
+    result = await page.evaluate(accountAuthStep, { job: scoped });
+    assert.equal(result.state, 'challenge'); assert.match(result.message, /kích hoạt/);
   } finally { await page.close(); }
 });
 

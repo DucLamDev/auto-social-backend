@@ -17,7 +17,7 @@ const MAX_WAITING_TABS = 5;
 const MAX_ACTIVE_FLOWS = 3;
 const MAX_LOGIN_CHECKS = 3;
 const LOG_LIMIT = 20;
-const SUPPORTED_ENGINES = ['discourse', 'xenforo', 'phpbb', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto'];
+const SUPPORTED_ENGINES = ['discourse', 'xenforo', 'phpbb', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'];
 
 // Chrome fires several tab updates for one navigation; these guard against
 // filling or reporting the same job twice while the worker is alive.
@@ -37,7 +37,18 @@ async function settings() {
 /** Tasks keyed by tab id. */
 let taskWrites = Promise.resolve();
 let historyWrites = Promise.resolve();
+let restorePromise;
 async function getTasks() {
+  restorePromise ??= (async () => {
+    const { updateCheckpoint } = await chrome.storage.local.get('updateCheckpoint');
+    if (!updateCheckpoint) return;
+    const existing = (await chrome.storage.session.get('tasks')).tasks ?? {};
+    // Preserve submitted/waiting tasks across an extension update: restoring
+    // them must never reset them to a fresh submission.
+    await chrome.storage.session.set({ tasks: { ...updateCheckpoint.tasks, ...existing } });
+    await chrome.storage.local.set({ updateCheckpoint: null, paused: updateCheckpoint.paused });
+  })();
+  await restorePromise;
   await taskWrites;
   return (await chrome.storage.session.get('tasks')).tasks ?? {};
 }
@@ -211,7 +222,8 @@ async function authenticateTask(task) {
       if (!current || current.phase !== 'authenticating') return false;
       const tabId = current.authTabId ?? task.tabId;
       let result;
-      try { [{ result }] = await withDeadline(chrome.scripting.executeScript({ target: { tabId }, func: accountAuthStep, args: [{ job: { ...task.job, authIdentityVerified: current.googleIdentityVerified === true } }], injectImmediately: true }), 8_000); }
+      let documentId;
+      try { [{ result, documentId }] = await withDeadline(chrome.scripting.executeScript({ target: { tabId }, func: accountAuthStep, args: [{ job: { ...task.job, authIdentityVerified: current.googleIdentityVerified === true } }], injectImmediately: true }), 8_000); }
       catch (error) {
         if (error.message === 'AUTH_STEP_TIMEOUT') return stop('Trang không phản hồi kiểm tra trong 8 giây. Đã dừng lượt này để tiếp tục các nền tảng khác.');
         try {
@@ -223,6 +235,11 @@ async function authenticateTask(task) {
           }
         } catch { return stop('Tab xác thực đã đóng hoặc không còn truy cập được. Chưa xác nhận đúng hồ sơ.'); }
         await new Promise(resolve => setTimeout(resolve, 750)); continue;
+      }
+      // tabs.update resolves before its previous document is replaced. Never
+      // authenticate/fill that old document while the composer is navigating.
+      if (current.authSourceDocumentId && documentId === current.authSourceDocumentId) {
+        await new Promise(resolve => setTimeout(resolve, 250)); continue;
       }
       if (Date.now() >= current.authDeadline) break;
       if (result?.url) current.authOrigin = new URL(result.url).origin;
@@ -252,7 +269,10 @@ async function authenticateTask(task) {
         }
         if (tabId !== task.tabId || !current.authReturning) {
           if (tabId !== task.tabId) { try { await chrome.tabs.remove(tabId); } catch { /* popup closed */ } }
-          current = { ...current, authTabId: null, authReturning: true };
+          // The destination creates a new menu after navigation. Only this
+          // harmless menu action may repeat; never reset password/TOTP attempts.
+          const { accountMenu: _previousMenu, ...authSteps } = current.authSteps ?? {};
+          current = { ...current, authTabId: null, authReturning: true, authSteps, authSourceDocumentId: tabId === task.tabId ? documentId : null };
           await setTask(task.tabId, current);
           await chrome.tabs.update(task.tabId, { url: task.job.openUrl });
         } else {
@@ -263,12 +283,12 @@ async function authenticateTask(task) {
         return stop('Chrome đang đăng nhập tài khoản khác. Kiểm tra hồ sơ đã gán trên web; chưa điền hoặc đăng bài.', 'ACCOUNT_MISMATCH', false, false, result.detectedUsername);
       } else if (result?.state === 'challenge') {
         return stop(result.message, 'AUTH_REQUIRED', false, result.googleBlocked === true);
-      } else if (['identifier', 'password', 'totp', 'google', 'chooser', 'alternate', 'totpChoice', 'openLogin', 'accountMenu'].includes(result?.state)) {
+      } else if (['identifier', 'password', 'totp', 'google', 'chooser', 'alternate', 'totpChoice', 'openLogin', 'sso', 'accountMenu'].includes(result?.state)) {
         if (!task.job.auth.autoLogin && result.state !== 'accountMenu') return stop('Chưa nhận diện được phiên sẵn có và tài khoản này chưa bật tự đăng nhập hoặc còn thiếu thông tin xác thực.');
         const attempted = current.authSteps?.[result.state];
         if (attempted && Date.now() - attempted > 15_000) return stop(result.state === 'accountMenu'
           ? 'Trang đã đăng nhập nhưng tiện ích chưa mở được menu để xác nhận đúng hồ sơ. Chưa thử lại mật khẩu.'
-          : 'Bước đăng nhập chưa được chấp nhận; không tự thử lặp mật khẩu hoặc mã TOTP.');
+          : `Bước đăng nhập chưa được chấp nhận (${result.state} tại ${new URL(result.url).origin}${new URL(result.url).pathname}); không tự thử lặp mật khẩu hoặc mã TOTP.`);
         if (!attempted) {
           current = { ...current, authSteps: { ...current.authSteps, [result.state]: Date.now() } };
           await setTask(task.tabId, current); // reserve before obtaining a secret
@@ -293,7 +313,10 @@ async function authenticateTask(task) {
           }
           finally { payload = undefined; }
         }
-      } else if (!current.authLoginOpened && !current.authReturning && task.job.auth.autoLogin) {
+      } else if (!current.authLoginOpened && !current.authReturning && task.job.auth.autoLogin
+        && !Object.keys(current.authSteps ?? {}).some(step => step !== 'accountMenu')) {
+        // Only use the configured login URL before authentication starts. SSO
+        // callbacks can briefly be blank; navigating here would cancel them.
         current = { ...current, authLoginOpened: true };
         await setTask(task.tabId, current);
         await chrome.tabs.update(task.tabId, { url: task.job.auth.loginUrl });
@@ -316,9 +339,10 @@ async function fill(task) {
   let result;
   try {
     if (task.job.auth) {
-      const [{ result: identity }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: accountAuthStep, args: [{ job: task.job }], injectImmediately: true });
+      const identity = await verifyOwnIdentity(task);
       if (identity?.state !== 'authenticated') {
         await report(task, 'NEEDS_ACTION', { reason: identity?.state === 'mismatch' ? 'ACCOUNT_MISMATCH' : 'AUTH_REQUIRED', message: 'Phiên thay đổi trước khi điền bài. Kiểm tra đúng tài khoản trong hồ sơ Chrome.' });
+        filling.delete(task.job.jobId);
         await setTask(task.tabId, { ...task, phase: 'waitingAuth', deadline: Date.now() + WAIT_USER_MS });
         return;
       }
@@ -368,7 +392,8 @@ async function fill(task) {
         reason: captcha ? 'CAPTCHA_REQUIRED' : result.status === 'uncertain' ? 'SUBMIT_UNCONFIRMED' : result.status === 'rejected' ? 'SUBMIT_REJECTED' : 'WAITING_USER',
         message: result.message ?? (captcha ? 'Hoàn thành CAPTCHA rồi bấm Đăng trong tab vừa mở' : 'Kiểm tra nội dung rồi bấm Đăng trong tab vừa mở'),
       });
-      await setTask(task.tabId, { ...task, beforeUrls: result.beforeUrls ?? [], phase: 'waitingUser', deadline: now + WAIT_USER_MS });
+      await setTask(task.tabId, { ...task, beforeUrls: result.beforeUrls ?? [], phase: 'waitingUser', waitingMessage: result.message,
+        waitingReason: captcha ? 'CAPTCHA_REQUIRED' : result.status === 'filled' ? 'WAITING_USER' : result.status === 'rejected' ? 'SUBMIT_REJECTED' : 'SUBMIT_UNCONFIRMED', deadline: now + WAIT_USER_MS });
       await focusTab(task.tabId);
       return;
     }
@@ -387,6 +412,23 @@ async function fill(task) {
       await setTask(task.tabId, null);
       await focusTab(task.tabId);
   }
+}
+
+// Read the own-account marker, opening its menu if needed. This never obtains
+// a password or OTP, changes account, or submits a login form.
+async function verifyOwnIdentity(task) {
+  const probe = async action => {
+    const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: accountAuthStep,
+      args: [{ job: task.job, ...(action ? { action } : {}) }], injectImmediately: true });
+    return result;
+  };
+  let identity = await probe();
+  if (identity?.state === 'accountMenu') {
+    await probe('accountMenu');
+    await new Promise(resolve => setTimeout(resolve, 500));
+    identity = await probe();
+  }
+  return identity;
 }
 
 async function focusTab(tabId) {
@@ -479,6 +521,18 @@ async function sweep() {
     }
     if (task.phase === 'waitingAuth') {
       if (now >= task.deadline) await setTask(task.tabId, null);
+      else if (now - (task.lastIdentityCheck ?? 0) >= 30_000) {
+        await setTask(task.tabId, { ...task, lastIdentityCheck: now });
+        try {
+          const identity = await verifyOwnIdentity(task);
+          if (identity?.state === 'authenticated') {
+            const resumed = { ...task, phase: 'loading', authVerified: true, deadline: now + LOAD_TIMEOUT_MS };
+            await setTask(task.tabId, resumed);
+            if (!task.authReturning) await chrome.tabs.update(task.tabId, { url: task.job.openUrl });
+            else void tryFill(resumed);
+          }
+        } catch { /* A later heartbeat may find the restored session. */ }
+      }
       continue;
     }
     if (task.phase !== 'loading' && await checkPublished(task)) continue;
@@ -630,6 +684,20 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'resume-pre-submit' && _sender.id === chrome.runtime.id) {
+    (async () => {
+      const task = Object.values(await getTasks()).find(item => item.job.jobId === message.jobId);
+      const { history = [] } = await chrome.storage.local.get('history');
+      const reason = task?.waitingReason ?? history.find(item => item.jobId === message.jobId && item.outcome === 'NEEDS_ACTION')?.reason;
+      if (!task || task.phase !== 'waitingUser' || task.submittedAt || reason !== 'WAITING_USER') return { ok: false, message: 'Chỉ tiếp tục bài đã dừng trước khi gửi.' };
+      filling.delete(task.job.jobId);
+      const next = { ...task, phase: 'loading', deadline: Date.now() + LOAD_TIMEOUT_MS };
+      await setTask(task.tabId, next);
+      void tryFill(next);
+      return { ok: true };
+    })().then(sendResponse);
+    return true;
+  }
   if (message?.type === 'tick-now') {
     tick().then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: String(error) }));
     return true;

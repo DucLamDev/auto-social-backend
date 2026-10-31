@@ -27,7 +27,7 @@ function setup() {
     action: { setBadgeBackgroundColor: async () => {}, setBadgeText: async () => {} },
     tabs: {
       create: async ({ url }) => { state.openedUrls.push(url); return { id: ++state.nextTabId, windowId: 2, status: 'loading' }; },
-      update: async (id, options) => { if (options?.active) state.activated = id; return { id, windowId: 2 }; }, remove: async () => {},
+      update: async (id, options) => { if (options?.active) state.activated = id; if (options?.url) state.openedUrls.push(options.url); return { id, windowId: 2 }; }, remove: async () => {},
       get: async id => ({ id, url: state.currentUrl ?? job.openUrl }),
       onUpdated: event(), onRemoved: event(), onCreated: event(),
     },
@@ -55,7 +55,8 @@ function setup() {
       if (injection.func.name === 'readPublishedPost') return [{ result: state.publishedUrl ?? null }];
       if (injection.func.name === 'accountAuthStep') {
         if (state.authError) throw new Error(state.authError);
-        return [{ result: typeof state.authResult === 'function' ? state.authResult() : state.authResult }];
+        const result = typeof state.authResult === 'function' ? state.authResult(injection.args[0]) : state.authResult;
+        return [{ result, documentId: state.authDocumentId }];
       }
       return [{ result: null }];
     } },
@@ -102,6 +103,51 @@ test('a page probe that never resolves cannot hold the authentication queue fore
   assert.equal(await worker.withDeadline(Promise.resolve('ready'), 100), 'ready');
 });
 
+test('account menu can reopen after composer navigation without repeating credentials', async () => {
+  const { state, worker } = setup();
+  let menuAt = -1, menus = 0;
+  state.authResult = ({ action }) => {
+    if (action === 'accountMenu') { menuAt = state.openedUrls.length; menus++; return { state: 'submitted' }; }
+    return { state: menuAt === state.openedUrls.length ? 'authenticated' : 'accountMenu', url: 'http://forum.test/' };
+  };
+  assert.equal(await worker.authenticateTask({ tabId: 8, job: { ...job, auth: { autoLogin: false } } }), true);
+  assert.equal(menus, 2);
+  assert.equal(state.reports.length, 0);
+  assert.equal(state.injections.some(i => ['password', 'totp'].includes(i.args?.[0]?.action)), false);
+});
+
+test('waiting authentication resumes in its existing tab after identity is confirmed', async () => {
+  const { state, chrome, worker } = setup();
+  state.authResult = { state: 'authenticated', detectedUsername: 'alice' };
+  await chrome.storage.session.set({ tasks: { 8: { tabId: 8, job: { ...job, auth: { autoLogin: false } }, phase: 'waitingAuth', deadline: Date.now() + 60000 } } });
+  await worker.sweep();
+  assert.equal((await worker.getTasks())[8].phase, 'loading');
+  assert.equal(state.nextTabId, 0);
+  assert.deepEqual(state.openedUrls, [job.openUrl]);
+});
+
+test('composer authentication waits for navigation to replace the previous document', async () => {
+  const { state, worker } = setup();
+  let probes = 0;
+  state.authResult = () => {
+    state.authDocumentId = ++probes < 3 ? 'old-document' : 'composer-document';
+    return { state: 'authenticated', detectedUsername: 'alice' };
+  };
+  assert.equal(await worker.authenticateTask({ tabId: 8, job: { ...job, auth: { autoLogin: false } } }), true);
+  assert.equal(probes, 3);
+  assert.deepEqual(state.openedUrls, [job.openUrl]);
+  assert.equal((await worker.getTasks())[8].authVerified, true);
+});
+
+test('updating restores uncertain submissions without sending them again', async () => {
+  const { state, chrome, worker } = setup();
+  await chrome.storage.local.set({ updateCheckpoint: { paused: false, tasks: { 8: { tabId: 8, job, phase: 'waitingUser', submittedAt: Date.now(), deadline: Date.now() + 60000 } } } });
+  await worker.sweep();
+  assert.equal((await worker.getTasks())[8].phase, 'waitingUser');
+  assert.equal(state.fills, 0);
+  assert.equal((await chrome.storage.local.get('updateCheckpoint')).updateCheckpoint, null);
+});
+
 for (const googleBlocked of [false, true]) test(`only a confirmed Google challenge blocks the shared Google queue (${googleBlocked})`, async () => {
   const { state, worker } = setup();
   state.authResult = { state: 'challenge', url: 'https://accounts.google.com/', message: 'Fixture challenge', googleBlocked };
@@ -124,6 +170,17 @@ test('activates a deferred login page once and verifies it without publishing', 
   state.authResult = () => ({ state: state.activated === 8 ? 'authenticated' : 'unknown', url: 'https://forum.test/' });
   await worker.authenticateTask({ tabId: 8, job: { ...job, kind: 'LOGIN_CHECK', auth: { provider: 'password', autoLogin: false } } });
   assert.equal(state.activated, 8);
+  assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
+  assert.equal(state.fills, 0);
+});
+
+test('SSO callback hydration never redirects an in-progress login back to its start', async () => {
+  const { state, worker } = setup();
+  let probes = 0;
+  state.authResult = () => ({ state: ++probes > 1 ? 'authenticated' : 'unknown', url: 'https://login.vivaldi.net/callback' });
+  await worker.authenticateTask({ tabId: 8, authActivated: true, authSteps: { sso: Date.now(), password: Date.now() },
+    job: { ...job, kind: 'LOGIN_CHECK', auth: { provider: 'password', autoLogin: true, loginUrl: 'https://social.vivaldi.net/auth/sign_in' } } });
+  assert.deepEqual(state.openedUrls, []);
   assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
   assert.equal(state.fills, 0);
 });
