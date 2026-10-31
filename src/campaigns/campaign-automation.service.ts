@@ -17,6 +17,7 @@ import { PrismaService } from '../database/prisma.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { hasUsableBrowserStorageState } from '../connectors/browser/browser-session-readiness';
 import { isExtensionDelivery } from '../connectors/extension/extension-delivery';
+import { CONTENT_REVIEW_REQUIRED_CODE } from '../publishing/publishing.constants';
 import { CampaignsService } from './campaigns.service';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
 
@@ -185,9 +186,9 @@ export class CampaignAutomationService {
             targets: { none: {} },
           },
           orderBy: { version: 'desc' },
-          select: { id: true, platformId: true },
+          select: { id: true, platformId: true, recommended: true, reason: true },
         });
-      const reusableByPlatform = new Map<string, { id: string; platformId: string }>();
+      const reusableByPlatform = new Map<string, (typeof reusable)[number]>();
       for (const variant of reusable) {
         if (!reusableByPlatform.has(variant.platformId)) reusableByPlatform.set(variant.platformId, variant);
       }
@@ -208,16 +209,19 @@ export class CampaignAutomationService {
       // Credentials and account state can change while the model is generating.
       accounts = await this.loadConnectedAccounts(ownerId, dto.platformAccountIds);
 
+      // Only drafts that passed the AI quality check are auto-approved. The rest
+      // wait in "needs action" until an operator approves or edits them.
+      const approvable = variants.filter((variant) => variant.recommended);
       await this.prisma.$transaction(async (transaction) => {
         const approved = await transaction.contentVariant.updateMany({
           where: {
-            id: { in: variants.map((variant) => variant.id) },
+            id: { in: approvable.map((variant) => variant.id) },
             contentId: reservation.campaign.contentId,
             status: VariantStatus.GENERATED,
           },
           data: { status: VariantStatus.APPROVED },
         });
-        if (approved.count !== variants.length) {
+        if (approved.count !== approvable.length) {
           throw new ConflictException('One or more generated variants could not be approved');
         }
 
@@ -238,7 +242,13 @@ export class CampaignAutomationService {
               platformAccountId: account.id,
               idempotencyKey: stableIdempotencyKey(reservation.campaign.id, account.id, variant.id),
               scheduledAt,
-              status: PublishJobStatus.SCHEDULED,
+              ...(variant.recommended
+                ? { status: PublishJobStatus.SCHEDULED }
+                : {
+                  status: PublishJobStatus.NEEDS_ACTION,
+                  lastErrorCode: CONTENT_REVIEW_REQUIRED_CODE,
+                  lastErrorMessage: (variant.reason ?? 'Nội dung cần được duyệt trước khi đăng').slice(0, 1_000),
+                }),
             },
           });
         }
@@ -422,6 +432,8 @@ export class CampaignAutomationService {
             body: input.brief,
             summary: input.brief.slice(0, 500),
             language: 'vi',
+            // The title is the internal campaign name; the AI writes its own headline.
+            aiAnalysis: { kind: 'brief' },
             contentHash: sha256(`${input.name}\n${input.brief}`),
             status: ContentStatus.DRAFT,
           },
