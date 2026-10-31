@@ -3,6 +3,15 @@
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
 
+## 1.2.0 · 31/10/2026
+### Tính năng
+- Nhập file cấu hình API, hệ thống tự kết nối
+  ADMIN tải lên một file Excel/CSV, mỗi dòng một tài khoản dev.to, Mastodon, Bluesky, Discord, Discourse hoặc
+  WordPress kèm khoá. Hệ thống tạo hoặc cập nhật tài khoản, lưu khoá đã mã hoá, tự kiểm tra kết nối và báo kết quả
+  từng dòng (đã kết nối, khoá sai, thiếu cột, trùng dòng…). Nhập lại cùng file chỉ cập nhật, không tạo trùng. Tài
+  khoản đang đăng qua tiện ích Chrome cùng username được gắn khoá và chuyển sang đăng bằng API khi kiểm tra đạt.
+  Instagram, Threads, Blogger, LinkedIn, Tumblr vẫn cần bấm Kết nối một lần; file báo rõ các dòng này.
+
 ## 1.1.0 · 21/10/2026
 ### Tính năng
 - Kết nối Instagram và Threads bằng một lần đăng nhập, token tự gia hạn
