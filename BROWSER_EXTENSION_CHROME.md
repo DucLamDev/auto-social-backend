@@ -1,5 +1,13 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.7.3: nhận diện đúng khung soạn bài
+
+- Chọn tiêu đề, nội dung và nút đăng trong hộp soạn đang mở, kể cả hộp dùng Shadow DOM. Khi có nhiều hộp không xác định được duy nhất, dừng để người dùng xử lý.
+- Chờ đủ các ô cho phép nhập; nút đăng bị khóa không khiến tiện ích bấm sang nút Post ngoài hộp. Với editor nằm trong form, tìm nút trong cùng form.
+- Reddit chuyển sang tab Text/Văn bản nếu chưa có ô nội dung. Các luồng social kiểm tra cả tiêu đề và nội dung trước khi điền để không ghi đè bản nháp khác.
+- Nạp lại extension trong `chrome://extensions` để dùng bản 1.7.3. Kiểm thử tự động tại `scripts/extension-e2e/composer-discovery.test.cjs` dùng trang giả lập; chưa thay thế kiểm chứng trên phiên Chrome và quyền đăng thật.
+- Các kênh chưa có luồng (`FLOW_REQUIRED`), thiếu nơi đăng (`DESTINATION_REQUIRED`) hoặc bị hạn chế quyền vẫn cần xử lý riêng. Đăng nhập thành công không đồng nghĩa đã kiểm tra được composer.
+
 ## Bản 1.6.2: hiển thị kết quả gửi bài và quản lý chờ duyệt
 
 - Tab diễn đàn hiện thông báo khi đã gửi và chờ duyệt, kể cả khi khung soạn thảo vẫn còn nội dung. Đây là kết quả gửi trực tiếp; không bấm nút Đăng lần thứ hai.
