@@ -299,3 +299,18 @@ test('detects a shadow DOM composer while other resources are still loading', as
     assert.equal(await page.evaluate(recipe => window.canFillPage(recipe, 'http://other.test'), EXTENSION_RECIPES.reddit), false);
   } finally { await page.close(); }
 });
+
+test('recognizes a social "submitted to moderation" toast but not help text about a future review', async () => {
+  const page = await browser.newPage();
+  const recipe = EXTENSION_RECIPES.dzone;
+  try {
+    await page.setContent('<div class="toast">Thank you! Your article has been submitted to moderation.</div>');
+    assert.match(await page.evaluate(readModeration, recipe), /quản trị viên duyệt/);
+    await page.setContent('<div role="status">Bài viết của bạn đang chờ kiểm duyệt.</div>');
+    assert.match(await page.evaluate(readModeration, recipe), /quản trị viên duyệt/);
+    await page.setContent('<div role="status">Your article will be submitted for review once you click Submit.</div>');
+    assert.equal(await page.evaluate(readModeration, recipe), null);
+    await page.setContent('<div class="alert">Saving draft…</div>');
+    assert.equal(await page.evaluate(readModeration, recipe), null);
+  } finally { await page.close(); }
+});

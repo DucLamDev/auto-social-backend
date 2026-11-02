@@ -198,4 +198,15 @@ describe('extension helpers', () => {
     expect(threadIdFromUrl('https://community.nginx.org/t/hello/4521/2')).toBe('4521');
     expect(threadIdFromUrl('https://forum.mikrotik.com/viewtopic.php?f=3&t=99')).toBe('99');
   });
+  it('repairs a double-escaped AI body before it reaches the forum', () => {
+    expect(forumPost({ title: 'T', body: 'Setup\\n- Version 24.04\\n\\n### Question\\nWhy?', hashtags: [] }, null).body)
+      .toBe('Setup\n- Version 24.04\n\n### Question\nWhy?');
+  });
+
+  it('falls back to the first body line as title and appends source and tags', () => {
+    expect(forumPost({ title: null, body: 'Dòng đầu\nDòng hai', hashtags: ['a'] }, 'https://vpsttt.com/x')).toEqual({
+      title: 'Dòng đầu',
+      body: 'Dòng đầu\nDòng hai\n\nNguồn: https://vpsttt.com/x\n\n#a',
+    });
+  });
 });

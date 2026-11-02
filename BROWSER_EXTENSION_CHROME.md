@@ -1,5 +1,31 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.7.4: không kẹt hàng đợi, xác nhận bài chắc hơn
+
+- **Tab chờ không còn chặn bài mới.** Trước đây đủ 5 tab "chờ bạn" thì tiện ích ngừng nhận bài cho tới khi các tab hết
+  hạn 30 phút. Nay khi đã có 5 tab chờ, tiện ích ngừng theo dõi tab chờ cũ nhất để nhận bài tiếp; ưu tiên nhả tab đã bấm
+  Đăng. Tab vẫn mở, bài vẫn ở **Cần thao tác** trên web để bấm **Đã đăng** hoặc **Giao lại cho tiện ích**. Tab đã bấm
+  Đăng không còn giữ chỗ tên miền, nên bài khác trên cùng nền tảng vẫn chạy.
+- **Thông báo đang xử lý không còn bị coi là lỗi.** Câu như "Đang tạo bài viết đợi xíu nhé" (Tinhte), "please wait" hay
+  báo thành công bị bỏ qua. Một thông báo lỗi chỉ được coi là bị từ chối khi vẫn còn hiện ở lần kiểm sau ít nhất 8 giây.
+- **Xác nhận bài sau khi bấm Đăng:**
+  - Chờ tối đa 3 phút (trước là 60 giây), kiểm mỗi 5 giây.
+  - So 12 từ đầu của nội dung, vì feed hay rút gọn bài (Quora "(more)").
+  - Tìm link bài trong khối chứa bài kể cả khi trang không dùng thẻ `article`, và nhận link có chữ đúng bằng tiêu đề bài
+    (trang danh sách, trang cá nhân).
+  - Hết 3 phút vẫn chưa thấy: nếu **Phiên Chrome / 2FA** có URL hồ sơ cùng tên miền, tiện ích mở trang hồ sơ đó (Quora
+    mở `/posts`) để tìm bài, tối đa 60 giây. Bước này chỉ đọc trang, không điền và không bấm Đăng lại.
+  - Không tìm thấy thì báo **Cần thao tác** như trước. Tab còn được theo dõi 10 phút để tự nhận bài nếu bài hiện muộn.
+- **Nhận diện thêm câu báo đã gửi duyệt** ("submitted to moderation", "Staging Ground", "đang chờ kiểm duyệt"), nhưng bỏ
+  qua câu mô tả tương lai như "will be reviewed".
+- **Minds:** đăng được từ khung soạn "Speak your mind…" ngay trên newsfeed; hộp soạn kiểu cũ vẫn phải là **My Channel**.
+- **Stack Exchange:** nhận đúng tag đã chọn (chip `nginx ×`); không có gợi ý khớp thì nhập tag bằng Enter như người dùng.
+  Lời nhắn lỗi ghi đúng tên trang (Server Fault, Unix & Linux…).
+- **Tài khoản bị đình chỉ hoặc khoá** (vd. "@vpsttt is suspended." trên Discuit) được báo đúng lý do và dừng; không coi là
+  sai mật khẩu, không thử đăng nhập lại.
+- Lời nhắn gửi về web được cắt dưới 500 ký tự. Backend từ chối kết quả (4xx) thì tiện ích ngừng gửi lại và giải phóng chỗ.
+- Nạp lại extension trong `chrome://extensions` để dùng bản 1.7.4.
+
 ## Bản 1.7.3: nhận diện đúng khung soạn bài
 
 - Chọn tiêu đề, nội dung và nút đăng trong hộp soạn đang mở, kể cả hộp dùng Shadow DOM. Khi có nhiều hộp không xác định được duy nhất, dừng để người dùng xử lý.
@@ -231,7 +257,7 @@ Tiện ích (30 giây/lần) → POST /extension/agent/claim → nhận từng b
 
 - Gặp **CAPTCHA**, hoặc tài khoản tắt **Tự bấm Đăng**: tiện ích điền sẵn, đưa tab lên trước, job hiện "Tiện ích cần
   bạn". Bạn giải CAPTCHA / kiểm tra rồi bấm Đăng; tiện ích tự nhận ra link bài và báo "Đã đăng". Tab đang chờ không
-  làm tắc các bài khác (tối đa 5 tab chờ cùng lúc).
+  làm tắc các bài khác: tiện ích theo dõi tối đa 5 tab chờ, quá số đó thì ngừng theo dõi tab cũ nhất (tab vẫn mở).
 - **Chưa đăng nhập diễn đàn**, không thấy form, tab bị đóng trước khi điền, chưa cấp quyền: job "Thất bại" kèm lý
   do. Những lỗi này chắc chắn chưa gửi gì, nên bấm **Retry** trên trang Publishing là an toàn.
 - **Đã bấm Đăng nhưng không thấy bài mới / diễn đàn báo lỗi / tiện ích im lặng quá 10 phút**: không bao giờ tự đăng

@@ -110,3 +110,64 @@ test('LinkedIn supports its current ProseMirror composer and Vietnamese publish 
   const result = await page.evaluate(fill, { recipe: EXTENSION_RECIPES.linkedin, targetOrigin: 'https://www.linkedin.com', post, autoSubmit: true });
   assert.equal(result.status, 'submitted', JSON.stringify(result)); assert.equal(await page.evaluate(() => window.sent), 1); await page.close();
 });
+
+test('Minds posts from the inline "Speak your mind" newsfeed composer without a Create button or audience picker', async () => {
+  const page = await pageAt('https://www.minds.com/newsfeed/subscriptions/latest');
+  await page.evaluate(() => {
+    window.submits = 0;
+    document.body.innerHTML = '<m-composer><m-composer__textarea><textarea class="m-composerTextarea__message" placeholder="Speak your mind..."></textarea></m-composer__textarea><m-composer__postbutton><button disabled>Post</button><button aria-label="More options"></button></m-composer__postbutton></m-composer>';
+    const body = document.querySelector('textarea'), submit = document.querySelector('m-composer__postbutton button');
+    body.oninput = () => { submit.disabled = !body.value.trim(); };
+    submit.onclick = () => { window.submits++; };
+  });
+  const job = { recipe: EXTENSION_RECIPES.minds, targetOrigin: 'https://www.minds.com', openUrl: 'https://www.minds.com/newsfeed/subscriptions', post, autoSubmit: true };
+  const result = await page.evaluate(fill, job);
+  assert.equal(result.status, 'submitted', JSON.stringify(result));
+  assert.equal(await page.evaluate(() => window.submits), 1);
+  assert.equal(await page.locator('textarea').inputValue(), post.body);
+  await page.close();
+});
+
+test('Stack Overflow accepts a tag shown as an ".s-tag" chip and commits a typed tag with Enter when no suggestion matches', async () => {
+  const page = await pageAt('https://stackoverflow.com/questions/ask');
+  await page.evaluate(() => {
+    window.steps = [];
+    document.body.innerHTML = '<input id="title"><textarea id="wmd-input"></textarea><div class="tag-editor"><span class="chips"></span><input id="filterInput" aria-label="tags"></div><ul role="listbox"></ul><button>Review your question</button><button id="final" hidden>Post your question</button>';
+    const input = document.querySelector('#filterInput'), chips = document.querySelector('.chips'), list = document.querySelector('[role="listbox"]');
+    const add = name => { chips.insertAdjacentHTML('beforeend', `<span class="s-tag">${name}<button aria-label="Remove tag">×</button></span>`); input.value = ''; list.innerHTML = ''; };
+    // Suggestions carry counts; "nginx" is suggested, "proxy-pass" only commits on Enter.
+    input.oninput = () => { list.innerHTML = input.value === 'nginx' ? '<li role="option"><span class="s-tag">nginx</span> × 51234</li>' : ''; const row = list.querySelector('li'); if (row) row.onclick = () => add('nginx'); };
+    input.onkeydown = event => { if (event.key === 'Enter' && input.value) add(input.value); };
+    document.querySelector('button:not(#final)').onclick = event => { window.steps.push('review'); event.target.hidden = true; document.querySelector('#final').hidden = false; };
+    document.querySelector('#final').onclick = () => window.steps.push('post');
+  });
+  const result = await page.evaluate(fill, { recipe: EXTENSION_RECIPES.stackexchange, targetOrigin: 'https://stackoverflow.com', openUrl: page.url(), post, autoSubmit: true, options: { tags: ['nginx', 'proxy-pass'] } });
+  assert.equal(result.status, 'submitted', JSON.stringify(result));
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.chips .s-tag')].map(node => node.firstChild.textContent)), ['nginx', 'proxy-pass']);
+  assert.deepEqual(await page.evaluate(() => window.steps), ['review', 'post']);
+  await page.close();
+});
+
+test('a tag the site refuses is reported with that site name and nothing is posted', async () => {
+  const page = await pageAt('https://serverfault.com/questions/ask');
+  await page.evaluate(() => {
+    window.steps = [];
+    document.body.innerHTML = '<input id="title"><textarea id="wmd-input"></textarea><input id="filterInput" aria-label="tags"><button>Post your question</button>';
+    document.querySelector('button').onclick = () => window.steps.push('post');
+  });
+  const result = await page.evaluate(fill, { recipe: EXTENSION_RECIPES.stackexchange, targetOrigin: 'https://serverfault.com', openUrl: page.url(), post, autoSubmit: true, options: { tags: ['not-a-real-tag'] } });
+  assert.equal(result.status, 'filled');
+  assert.match(result.message, /not-a-real-tag trên serverfault\.com/);
+  assert.deepEqual(await page.evaluate(() => window.steps), []);
+  await page.close();
+});
+
+test('a suspended account is reported as restricted before anything is filled', async () => {
+  const page = await pageAt('https://discuit.org/new');
+  await page.setContent('<textarea class="page-new-post-title"></textarea><textarea class="page-new-post-body"></textarea><div class="form-error">@vpsttt is suspended.</div>');
+  const result = await page.evaluate(fill, { recipe: EXTENSION_RECIPES.discuit, targetOrigin: 'https://discuit.org', openUrl: page.url(), post, autoSubmit: true, options: { category: 'technology' } });
+  assert.equal(result.status, 'restricted');
+  assert.match(result.message, /đình chỉ/);
+  assert.equal(await page.locator('.page-new-post-title').inputValue(), '');
+  await page.close();
+});

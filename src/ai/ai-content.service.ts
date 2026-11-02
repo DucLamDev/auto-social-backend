@@ -6,6 +6,7 @@ import { zodResponseFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
+import { repairEscapedNewlines } from '../common/utils/escaped-text';
 import { PlatformContract, platformContract } from '../platforms/platform-contract';
 import { markdownToPlain } from '../platforms/post-text';
 import { BrandProfile, brandProfileBlock, BrandProfileService } from './brand-profile.service';
@@ -329,7 +330,7 @@ export class AiContentService {
               contentId,
               platformId: platform.id,
               title: generated.title,
-              body: generated.body,
+              body: repairEscapedNewlines(generated.body),
               summary: generated.summary,
               hashtags: generated.hashtags,
               cta: generated.cta,
