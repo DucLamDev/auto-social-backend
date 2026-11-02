@@ -15,20 +15,38 @@ export async function fillSocialAndSubmit(job) {
   };
   const all = selector => roots().flatMap(root => [...root.querySelectorAll(selector)]);
   const visible = node => node && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
-  const enabled = node => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true';
+  const enabled = node => visible(node) && !node.disabled && !node.readOnly && node.getAttribute('aria-disabled') !== 'true';
+  const contains = (root, node) => {
+    while (node) {
+      if (root.contains(node)) return true;
+      node = node.getRootNode().host;
+    }
+    return false;
+  };
+  let composerForm = null;
+  const activeScope = () => {
+    const dialogs = all('[role="dialog"], .modal.show, .compose-modal-component, m-composer__modal').filter(visible);
+    // Nested dialogs are common; unrelated simultaneous dialogs are ambiguous.
+    const leaves = dialogs.filter(node => !dialogs.some(other => other !== node && contains(node, other)));
+    return leaves.length === 1 ? leaves[0] : leaves.length ? false
+      : composerForm?.isConnected ? composerForm : document;
+  };
   const pick = selectors => {
+    const scope = activeScope();
+    if (!scope) return null;
     for (const selector of selectors ?? []) {
-      const found = all(selector).filter(visible);
+      const found = all(selector).filter(node => visible(node) && contains(scope, node));
       if (found.length === 1) return found[0];
+      if (found.length > 1) return null;
     }
     return null;
   };
   const button = labels => {
-    const dialogs = all('[role="dialog"], .modal.show, .compose-modal-component, m-composer__modal').filter(visible);
-    const candidates = all('button, [role="button"], [role="tab"], input[type="submit"], a').filter(enabled);
+    const scope = activeScope();
+    if (!scope) return null;
+    const candidates = all('button, [role="button"], [role="tab"], input[type="submit"], a').filter(node => enabled(node) && contains(scope, node));
     const matches = candidates.filter(node => labels.some(label => [node.innerText, node.getAttribute('aria-label'), node.value].some(text => normalize(text).toLowerCase() === label.toLowerCase())));
-    const scoped = dialogs.length ? matches.filter(node => dialogs.at(-1).contains(node)) : [];
-    return (scoped.length === 1 ? scoped : matches).length === 1 ? (scoped.length === 1 ? scoped[0] : matches[0]) : null;
+    return matches.length === 1 ? matches[0] : null;
   };
   const wait = async (find, timeout = 20_000) => {
     const end = Date.now() + timeout;
@@ -78,6 +96,19 @@ export async function fillSocialAndSubmit(job) {
   }
 
   const quoraPersonal = engine === 'quora' && new URL(job.openUrl).hostname === 'www.quora.com';
+  if (engine === 'reddit' && !pick(bodySelectors)) {
+    // A submit page can initially show the link/media tab. Only switch an
+    // explicit text tab, never a generic Post action that could submit a draft.
+    const textTab = await wait(() => {
+      const body = pick(bodySelectors);
+      if (body) return body;
+      const scope = activeScope();
+      const tabs = all('[role="tab"]').filter(node => scope && enabled(node) && contains(scope, node))
+        .filter(node => ['text', 'văn bản'].includes(normalize(node.innerText || node.getAttribute('aria-label')).toLowerCase()));
+      return tabs.length === 1 ? tabs[0] : null;
+    }, 3000);
+    if (textTab?.getAttribute('role') === 'tab' && textTab.getAttribute('aria-selected') !== 'true') textTab.click();
+  }
   if (engine === 'linkedin' && !pick(bodySelectors)) {
     const open = await wait(() => button(['Start a post', 'Start a post, try writing with AI', 'Bắt đầu bài đăng']));
     if (!open) return fail('Không thấy Start a post của LinkedIn.');
@@ -149,14 +180,22 @@ export async function fillSocialAndSubmit(job) {
     }
   }
 
-  const body = await wait(() => pick(bodySelectors), recipe.requiredMedia ? 45_000 : 20_000);
-  let title = pick(recipe.titleSelectors);
-  if (!body) return fail('Không nhận diện được trình soạn thảo của nền tảng; chưa bấm đăng.');
-  if (['stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'].includes(engine)) {
-    const current = value(body);
-    if (current && current !== normalize(expectedBody)) return fail('Trình soạn đang chứa bản nháp khác; chưa ghi đè nội dung.');
+  const fields = await wait(() => {
+    const body = pick(bodySelectors), title = pick(recipe.titleSelectors);
+    const writable = node => enabled(node) && (node.isContentEditable || node.matches('input, textarea'));
+    return writable(body) && (!recipe.titleSelectors.length || writable(title)) && body !== title ? { body, title } : null;
+  }, recipe.requiredMedia ? 45_000 : 20_000);
+  if (!fields) return fail('Không xác định được một khung soạn có đủ ô tiêu đề/nội dung cho phép nhập. Kiểm tra trang tạo bài, hộp thoại đang mở và quyền đăng; chưa bấm đăng.');
+  const { body } = fields;
+  let { title } = fields;
+  const form = body.closest('form');
+  if (form && (!title || contains(form, title))) composerForm = form;
+  // Check every field before writing any of them, including short-post engines.
+  const bodyText = engine === 'medium' && title && body.contains(title)
+    ? normalize([...body.children].filter(node => !node.contains(title)).map(node => node.innerText).join(' ')) : value(body);
+  if ((bodyText && bodyText !== normalize(expectedBody)) || (title && value(title) && value(title) !== normalize(post.title))) {
+    return fail('Trình soạn đang chứa bản nháp khác; chưa ghi đè tiêu đề hoặc nội dung.');
   }
-  if (recipe.titleSelectors.length && !title) return fail('Không xác định được ô tiêu đề duy nhất; chưa gửi bài.');
   if (title && !write(title, post.title)) return fail('Không điền được tiêu đề.');
   if (engine === 'medium' && title && body.contains(title)) {
     // Medium's title and body share a contenteditable section. Preserve the
@@ -291,7 +330,15 @@ export async function fillSocialAndSubmit(job) {
     tinhte: ['Đăng', 'Đăng bài', 'Đăng bài viết', 'Xuất bản'], pixelfed: ['Post', 'Share', 'Publish', 'Đăng'],
     mastodon: ['Publish!', 'Publish', 'Post', 'Đăng', 'Đăng bài'], bluesky: ['Post', 'Đăng'], tumblr: ['Post', 'Post now', 'Đăng'], devto: ['Publish', 'Xuất bản'],
   }[engine];
-  const submit = await wait(() => { const target = pick(recipe.submitSelectors); return target && enabled(target) ? target : button(finalLabels ?? []); }, 5000);
+  const submit = await wait(() => {
+    const target = pick(recipe.submitSelectors);
+    if (target) return enabled(target) ? target : null;
+    const scope = activeScope();
+    // A known but ambiguous/disabled submit must not fall through to another
+    // action with the same label (e.g. a comment or a different post type).
+    if (!scope || (recipe.submitSelectors ?? []).some(selector => all(selector).some(node => visible(node) && contains(scope, node)))) return null;
+    return button(finalLabels ?? []);
+  }, 5000);
   if (!submit) return needs('Nút đăng chưa sẵn sàng. Kiểm tra các trường bắt buộc hoặc quyền của tài khoản.');
   if (!['medium', 'substack'].includes(engine) && !validContent()) return needs('Nội dung không còn khớp với bài trên web; chưa đăng.');
   if (!mindsChannelMatches()) return needs('Nơi đăng Minds đã thay đổi; chưa gửi bài.');
