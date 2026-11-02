@@ -285,3 +285,17 @@ test('detects an editable composer before slow resources finish loading and reje
     assert.equal(await page.evaluate(recipe => window.canFillPage(recipe, 'http://other.test'), task.recipe), false);
   } finally { await page.close(); }
 });
+
+test('detects a shadow DOM composer while other resources are still loading', async () => {
+  const page = await browser.newPage();
+  try {
+    await page.route('http://forum.test/slow.png', () => {});
+    await page.route('http://forum.test/new-topic', route => route.fulfill({ contentType: 'text/html', body: '<div id="host"></div><img src="/slow.png">' }));
+    await page.goto('http://forum.test/new-topic', { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => { document.querySelector('#host').attachShadow({ mode: 'open' }).innerHTML = '<textarea name="title"></textarea>'; });
+    assert.notEqual(await page.evaluate(() => document.readyState), 'complete');
+    await page.addScriptTag({ content: `window.canFillPage = ${canFillPage.toString()};` });
+    assert.equal(await page.evaluate(recipe => window.canFillPage(recipe, 'http://forum.test'), EXTENSION_RECIPES.reddit), true);
+    assert.equal(await page.evaluate(recipe => window.canFillPage(recipe, 'http://other.test'), EXTENSION_RECIPES.reddit), false);
+  } finally { await page.close(); }
+});

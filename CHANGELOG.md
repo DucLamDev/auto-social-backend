@@ -25,7 +25,11 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
 ### Vận hành
 - Database đang chạy cần chạy `scripts/sync-ai-prompts.cjs` (xem trước, rồi `--apply`) để dùng prompt mới; có
   `--rollback 2` để quay lại prompt cũ.
-
+## 1.1.1 · 01/11/2026
+### Sửa lỗi
+- Tiện ích Chrome 1.7.3 chọn ô nhập và nút đăng trong hộp soạn đang mở, hỗ trợ cả Shadow DOM; không chọn nút ngoài hộp khi nút đăng chưa sẵn sàng.
+- Chờ đủ tiêu đề và nội dung cho phép nhập trước khi điền, chuyển sang tab Text của Reddit khi cần và giữ bản nháp khác đang có trong các luồng social.
+- Bổ sung kiểm thử trình duyệt cho khung soạn tải chậm, nhiều editor, nút trùng và bản nháp. Kiểm thử dùng trang giả lập, chưa xác nhận đăng trên tài khoản thật.
 ## 1.1.0 · 21/10/2026
 ### Tính năng
 - Kết nối Instagram và Threads bằng một lần đăng nhập, token tự gia hạn

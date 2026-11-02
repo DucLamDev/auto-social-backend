@@ -7,7 +7,9 @@ export function canFillPage(recipe, targetOrigin) {
   if (location.origin !== targetOrigin) return false;
   const selectors = [...recipe.readySelectors, ...recipe.loginSelectors];
   if (recipe.engine === 'discourse') selectors.push('#reply-control', '.reply-area[role="dialog"]', 'button#create-topic');
-  return selectors.some((selector) => [...document.querySelectorAll(selector)].some((element) => element.getClientRects().length > 0))
+  const roots = [document];
+  for (let i = 0; i < roots.length; i++) for (const node of roots[i].querySelectorAll('*')) if (node.shadowRoot) roots.push(node.shadowRoot);
+  return selectors.some((selector) => roots.some(root => [...root.querySelectorAll(selector)].some((element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden')))
     || document.readyState === 'complete';
 }
 
