@@ -239,6 +239,12 @@ Tiện ích (30 giây/lần) → POST /extension/agent/claim → nhận từng b
 - **Post Needs Approval**: bài đã được diễn đàn nhận và đang chờ quản trị viên duyệt. Web hiển thị **Chờ diễn đàn
   duyệt**, không tự gửi lại và không cho giao lại bài này. Sau khi duyệt, dùng link bài thật để xác nhận **Đã đăng**.
   Hiện bộ nhận diện tự động hỗ trợ thông báo tiếng Anh đã quan sát trên NGINX.
+- Nội dung gửi cho tiện ích được dựng ở backend bằng `src/platforms/post-text.ts`, không cần cài lại tiện ích:
+  - Diễn đàn và bài viết dài không còn bị nối dòng hashtag vào cuối; tag đi qua ô tags của từng tài khoản.
+  - Mastodon, Bluesky, LinkedIn… giữ hashtag ngay trong bài và chỉ thêm tag còn thiếu khi bài vẫn nằm trong giới hạn ký tự.
+  - Nơi đăng chỉ nhận văn bản thường (XenForo, Tinhte, Medium, Quora, Reddit…) được chuyển Markdown sang đoạn văn sạch, không còn `**`, `##`.
+  - Dòng nguồn ghi "Nguồn:" hoặc "Source:" theo ngôn ngữ của bài.
+  - Tiêu đề chỉ bị cắt ở nơi có giới hạn đã biết: diễn đàn 150, Stack Exchange 150, Reddit 300 ký tự.
 - Bộ chỉ dẫn form (selector, mẫu link bài) nằm ở backend `src/connectors/extension/extension-delivery.ts` và được gửi
   kèm mỗi bài. Diễn đàn đổi giao diện thì sửa ở đó, không phải cài lại tiện ích.
 

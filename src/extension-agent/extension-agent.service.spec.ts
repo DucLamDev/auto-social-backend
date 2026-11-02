@@ -4,7 +4,7 @@ import { sha256 } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { createHash } from 'node:crypto';
-import { EXTENSION_RESULT_UNKNOWN, ExtensionAgentService, forumPost, threadIdFromUrl } from './extension-agent.service';
+import { EXTENSION_RESULT_UNKNOWN, ExtensionAgentService, threadIdFromUrl } from './extension-agent.service';
 
 const device = { id: 'dev-1', ownerId: 'owner-1', name: 'Chrome' };
 const settings = { delivery: 'extension', extensionEngine: 'xenforo', extensionTargetUrl: 'https://voz.vn/f/a.17/post-thread', extensionAutoSubmit: true };
@@ -129,7 +129,8 @@ describe('ExtensionAgentService', () => {
     });
     const task = await service.claim(device);
     expect(task).toMatchObject({ jobId: 'job-1', openUrl: settings.extensionTargetUrl, targetOrigin: 'https://voz.vn', autoSubmit: true, recipe: { engine: 'xenforo' } });
-    expect(task?.post).toEqual({ title: 'Tiêu đề', body: 'Nội dung\n\n#vps', summary: '' });
+    // Forum topics keep tags in the forum's own tag field; hashtags are not printed in the body.
+    expect(task?.post).toEqual({ title: 'Tiêu đề', body: 'Nội dung', summary: '' });
     const claimCall = (prisma.publishJob.updateMany.mock.calls[1] as [{ where: Record<string, unknown> }])[0];
     expect(claimCall.where).toMatchObject({ id: 'job-1', lockedAt: null, lastErrorCode: null });
   });
@@ -196,12 +197,5 @@ describe('extension helpers', () => {
     expect(threadIdFromUrl('https://voz.vn/t/abc.123/')).toBe('123');
     expect(threadIdFromUrl('https://community.nginx.org/t/hello/4521/2')).toBe('4521');
     expect(threadIdFromUrl('https://forum.mikrotik.com/viewtopic.php?f=3&t=99')).toBe('99');
-  });
-
-  it('falls back to the first body line as title and appends source and tags', () => {
-    expect(forumPost({ title: null, body: 'Dòng đầu\nDòng hai', hashtags: ['a'] }, 'https://vpsttt.com/x')).toEqual({
-      title: 'Dòng đầu',
-      body: 'Dòng đầu\nDòng hai\n\nNguồn: https://vpsttt.com/x\n\n#a',
-    });
   });
 });

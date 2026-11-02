@@ -4,6 +4,7 @@ import { ApplicationException, ErrorCode } from '../common/exceptions/applicatio
 import { PrismaService } from '../database/prisma.service';
 import { AiProvider } from './ai-provider';
 import { AiContentService } from './ai-content.service';
+import { BrandProfileService } from './brand-profile.service';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
 
 type ConfigValue = string | number | undefined;
@@ -516,5 +517,140 @@ describe('AiContentService structured parsing and provider routing', () => {
     expect(create).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('AiContentService quality-checked generation', () => {
+  const brief = 'Giới thiệu dịch vụ VPS NVMe cho lập trình viên Việt Nam, nhấn mạnh tốc độ triển khai và hỗ trợ kỹ thuật tiếng Việt.';
+  const shortBody = 'Triển khai VPS NVMe trong 60 giây, có người hỗ trợ bằng tiếng Việt khi bạn cần. Bạn đang chạy dự án trên đâu? #vps';
+  const passingReview = {
+    score: 8, hook: 8, specificity: 7, platformFit: 8, naturalness: 8, languageOk: true, unsupportedClaims: [], issues: [],
+  };
+  const variant = (body: string, extra: Record<string, unknown> = {}) => ({
+    output_text: JSON.stringify({
+      platform: 'bluesky', title: null, body, summary: null, hashtags: ['vps'], cta: null,
+      recommended: true, reason: 'Hợp người đọc', media: { type: 'none', altText: '' }, ...extra,
+    }),
+  });
+  const reviewed = (review: Record<string, unknown> = passingReview) => ({ output_text: JSON.stringify(review) });
+
+  function setup(create: jest.Mock) {
+    const created: Array<Record<string, unknown>> = [];
+    const transaction = {
+      contentVariant: {
+        aggregate: jest.fn().mockResolvedValue({ _max: { version: null } }),
+        create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+          created.push(data);
+          return Promise.resolve({ id: `variant-${created.length}`, ...data });
+        }),
+      },
+      content: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    };
+    const prisma = {
+      content: {
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'content-1', title: 'Chiến dịch nội bộ T11', body: brief, summary: brief, canonicalUrl: null,
+          status: 'DRAFT', aiAnalysis: { kind: 'brief' },
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      platform: {
+        findMany: jest.fn().mockResolvedValue([{
+          id: 'platform-1', slug: 'bluesky',
+          prompts: [{ systemPrompt: 'System', userTemplate: 'Title or brief: {{title}}\nSummary: {{summary}}\n{{body}}' }],
+        }]),
+      },
+      $transaction: jest.fn((callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
+    };
+    const config = isolatedConfig();
+    const brand = { load: () => Promise.resolve({ brandName: 'VPSTTT', facts: ['VPS NVMe triển khai trong 60 giây'] }) };
+    const service = new AiContentService(
+      prisma as unknown as PrismaService,
+      config,
+      { configured: () => Promise.resolve(false), run: jest.fn() } as unknown as GeminiKeyPoolService,
+      brand as unknown as BrandProfileService,
+    );
+    installClient(service, 'openai', { responses: { create } });
+    const delay = skipGeminiRetryDelay(service);
+    return { service, created, delay };
+  }
+
+  type Request = { instructions: string; input: string; text: { format: { name: string } } };
+  const request = (create: jest.Mock, index: number) => (create.mock.calls[index] as [Request])[0];
+
+  it('sends the destination contract and brand facts, hides the campaign name, and stores a passing draft', async () => {
+    const create = jest.fn().mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed());
+    const { service, created } = setup(create);
+
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+    const writer = request(create, 0);
+    expect(writer.instructions).toContain('Destination contract for Bluesky');
+    expect(writer.instructions).toContain('at most 300 characters');
+    expect(writer.instructions).toContain('Write every field in Vietnamese');
+    expect(writer.input).toContain('<brand_facts>');
+    expect(writer.input).toContain('Input type: a short marketing brief');
+    expect(writer.input).not.toContain('Chiến dịch nội bộ T11');
+    expect(request(create, 1).text.format.name).toBe('content_review');
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ body: shortBody, recommended: true, reason: 'Hợp người đọc (AI chấm 8/10)', hashtags: ['vps'] });
+  });
+
+  it('stores clean paragraphs for plain-text destinations so API routes never post Markdown', async () => {
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant('**Triển khai VPS NVMe trong 60 giây.** Có người hỗ trợ bằng tiếng Việt khi bạn cần, kể cả cuối tuần. #vps'))
+      .mockResolvedValueOnce(reviewed());
+    const { service, created } = setup(create);
+
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+    expect(created[0]!.body).toBe('Triển khai VPS NVMe trong 60 giây. Có người hỗ trợ bằng tiếng Việt khi bạn cần, kể cả cuối tuần. #vps');
+    expect(request(create, 1).input).not.toContain('**');
+  });
+
+  it('rewrites once with the editor feedback and holds a draft that still fails', async () => {
+    const tooLong = `${shortBody} ${'Thêm chi tiết dài dòng. '.repeat(20)}`;
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant(tooLong))
+      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 5, issues: ['Mở bài chung chung'] }))
+      .mockResolvedValueOnce(variant(tooLong))
+      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 6, unsupportedClaims: ['Rẻ nhất thị trường'] }));
+    const { service, created } = setup(create);
+
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+    expect(create).toHaveBeenCalledTimes(4);
+    expect(request(create, 2).input).toContain('Your previous draft was rejected');
+    expect(request(create, 2).input).toMatch(/- Dài \d+\/300 ký tự/);
+    expect(request(create, 2).input).toContain('- Mở bài chung chung');
+    expect(created[0]).toMatchObject({ recommended: false });
+    expect(created[0]!.reason).toMatch(/^Cần xem lại \(AI chấm 6\/10\): Dài \d+\/300 ký tự/);
+    expect(created[0]!.reason).toContain('Thông tin chưa có căn cứ: Rẻ nhất thị trường');
+  });
+
+  it('does not rewrite a draft the writer marks as unsuitable, and never auto-approves it', async () => {
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant(shortBody, { recommended: false, reason: 'Không phải câu hỏi thật' }))
+      .mockResolvedValueOnce(reviewed());
+    const { service, created } = setup(create);
+
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(created[0]).toMatchObject({ recommended: false, reason: 'Cần xem lại (AI chấm 8/10): AI đánh giá không hợp nơi đăng: Không phải câu hỏi thật' });
+  });
+
+  it('retries a rate-limited write once and still stores the draft when the reviewer is unavailable', async () => {
+    const create = jest.fn()
+      .mockRejectedValueOnce({ status: 429, message: 'raw-limit' })
+      .mockResolvedValueOnce(variant(shortBody))
+      .mockRejectedValueOnce(new Error('reviewer down'));
+    const { service, created, delay } = setup(create);
+
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+    expect(delay).toHaveBeenCalledWith(2_000);
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(created[0]).toMatchObject({ recommended: true, reason: 'Hợp người đọc (AI chưa chấm được)' });
   });
 });

@@ -8,6 +8,7 @@ import {
   assertPlatformCatalog,
   PLATFORM_CATALOG,
 } from '../src/platforms/platform-catalog';
+import { DEFAULT_PROMPT_NAME, DEFAULT_PROMPT_VERSION, defaultPromptFor } from '../src/prompts/default-prompts';
 
 const prisma = new PrismaClient();
 
@@ -76,33 +77,22 @@ export async function seed(): Promise<void> {
       update: capability,
     });
     await prisma.promptTemplate.updateMany({
-      where: { platformId: platform.id, name: 'default', version: { not: 2 }, active: true },
+      where: { platformId: platform.id, name: DEFAULT_PROMPT_NAME, version: { not: DEFAULT_PROMPT_VERSION }, active: true },
       data: { active: false },
     });
-    const systemPrompt = [
-      'You are a multilingual editorial and SEO assistant.',
-      'Generate only truthful content grounded in the supplied source.',
-      'Adapt structure, length, tone, title, CTA, hashtags, and media guidance to the target platform.',
-      'Never publish, claim an action was performed, invent facts, or expose secrets.',
-      item.promptRule,
-    ].join(' ');
-    const userTemplate = 'Platform: {{platform}}\nTitle or brief: {{title}}\nSummary: {{summary}}\nCanonical URL: {{canonicalUrl}}\nSource content:\n{{body}}';
+    const prompt = defaultPromptFor(item);
     await prisma.promptTemplate.upsert({
-      where: { platformId_name_version: { platformId: platform.id, name: 'default', version: 2 } },
+      where: { platformId_name_version: { platformId: platform.id, name: DEFAULT_PROMPT_NAME, version: DEFAULT_PROMPT_VERSION } },
       create: {
         platformId: platform.id,
-        name: 'default',
-        version: 2,
+        name: DEFAULT_PROMPT_NAME,
+        version: DEFAULT_PROMPT_VERSION,
         active: true,
-        systemPrompt,
-        userTemplate,
-        schema: { name: 'content_variant', version: 2 },
+        ...prompt,
       },
       update: {
         active: true,
-        systemPrompt,
-        userTemplate,
-        schema: { name: 'content_variant', version: 2 },
+        ...prompt,
       },
     });
   }
