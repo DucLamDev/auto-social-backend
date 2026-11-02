@@ -1,19 +1,22 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import {
   AccountStatus,
   AttemptStatus,
   CampaignStatus,
   Prisma,
   PublishJobStatus,
+  VariantStatus,
 } from '@prisma/client';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
+import { stableIdempotencyKey } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
 import { PublishQueueService } from '../queue/publish-queue.service';
+import { ApproveContentDto } from './dto/approve-content.dto';
 import { ManualPublishedDto } from './dto/manual-published.dto';
 import { ListPublishJobsQueryDto } from './dto/list-publish-jobs-query.dto';
 import { paginatedData } from '../common/interceptors/api-response.interceptor';
 import { PublishJobMetricsQueryDto } from './dto/publish-job-metrics-query.dto';
-import { WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
+import { CONTENT_REVIEW_REQUIRED_CODE, WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
 import { collectPublishMedia } from './publishing.service';
 import { reviewDestination } from './review-destination';
 
@@ -21,6 +24,17 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+/** Same normalization as Studio: no leading #, no blanks, case-insensitive duplicates removed. */
+function uniqueHashtags(values: string[]): string[] {
+  const seen = new Set<string>();
+  return values.map((value) => value.trim().replace(/^#+/, '').trim()).filter((tag) => {
+    const key = tag.toLowerCase();
+    if (!tag || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 const SAFE_BROWSER_RESUME_REASONS = new Set([
@@ -169,6 +183,78 @@ export class PublishJobsService {
       throw error;
     }
     return { queued: true };
+  }
+
+  /**
+   * Releases a job the AI quality check held back. Variants are immutable once
+   * in a campaign, so the approved (optionally edited) text becomes a new
+   * variant version and the target points to it. Nothing was sent before, so
+   * scheduling it cannot duplicate a post.
+   */
+  async approveContent(ownerId: string, id: string, dto: ApproveContentDto) {
+    const job = await this.prisma.publishJob.findFirstOrThrow({
+      where: { id, target: { campaign: { ownerId } } },
+      include: {
+        target: { include: { contentVariant: { include: { media: { select: { id: true } } } } } },
+        _count: { select: { attempts: true } },
+      },
+    });
+    if (job.status !== PublishJobStatus.NEEDS_ACTION || job.lastErrorCode !== CONTENT_REVIEW_REQUIRED_CODE || job._count.attempts > 0) {
+      throw new BadRequestException('Only jobs held by the AI content review can be approved here');
+    }
+    const previous = job.target.contentVariant;
+    if (previous.media.length) {
+      throw new BadRequestException('This variant has its own media; approve it from Studio instead');
+    }
+    const body = dto.body === undefined ? previous.body : dto.body.trim();
+    if (!body) throw new BadRequestException('body must not be blank');
+    const title = dto.title === undefined ? previous.title : dto.title?.trim() || null;
+    const hashtags = dto.hashtags === undefined ? previous.hashtags : uniqueHashtags(dto.hashtags);
+    const variantId = await this.prisma.$transaction(async (transaction) => {
+      const latest = await transaction.contentVariant.aggregate({
+        where: { contentId: previous.contentId, platformId: previous.platformId },
+        _max: { version: true },
+      });
+      const variant = await transaction.contentVariant.create({
+        data: {
+          contentId: previous.contentId,
+          platformId: previous.platformId,
+          title,
+          body,
+          summary: previous.summary,
+          hashtags,
+          cta: previous.cta,
+          recommended: true,
+          reason: 'Người vận hành đã duyệt sau khi AI giữ lại',
+          mediaRecommendation: previous.mediaRecommendation ?? Prisma.JsonNull,
+          status: VariantStatus.APPROVED,
+          version: (latest._max.version ?? 0) + 1,
+        },
+      });
+      const released = await transaction.publishJob.updateMany({
+        where: { id, status: PublishJobStatus.NEEDS_ACTION, lastErrorCode: CONTENT_REVIEW_REQUIRED_CODE, attempts: { none: {} } },
+        data: {
+          status: PublishJobStatus.SCHEDULED,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          idempotencyKey: stableIdempotencyKey(job.target.campaignId, job.platformAccountId, variant.id),
+        },
+      });
+      if (!released.count) throw new ConflictException('The job changed while it was being approved');
+      await transaction.campaignTarget.update({ where: { id: job.campaignTargetId }, data: { contentVariantId: variant.id } });
+      await transaction.campaign.updateMany({
+        where: { id: job.target.campaignId, status: CampaignStatus.PARTIAL },
+        data: { status: CampaignStatus.RUNNING },
+      });
+      return variant.id;
+    }).catch((error: unknown) => {
+      // A concurrent approval took the same variant version number.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('The job changed while it was being approved');
+      }
+      throw error;
+    });
+    return { queued: true, contentVariantId: variantId };
   }
 
   async reconcileNotFound(ownerId: string, id: string, confirmedNotFound: boolean) {

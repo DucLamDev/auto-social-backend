@@ -4,7 +4,7 @@ import { sha256 } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { createHash } from 'node:crypto';
-import { EXTENSION_RESULT_UNKNOWN, ExtensionAgentService, forumPost, threadIdFromUrl } from './extension-agent.service';
+import { EXTENSION_RESULT_UNKNOWN, ExtensionAgentService, threadIdFromUrl } from './extension-agent.service';
 
 const device = { id: 'dev-1', ownerId: 'owner-1', name: 'Chrome' };
 const settings = { delivery: 'extension', extensionEngine: 'xenforo', extensionTargetUrl: 'https://voz.vn/f/a.17/post-thread', extensionAutoSubmit: true };
@@ -129,7 +129,8 @@ describe('ExtensionAgentService', () => {
     });
     const task = await service.claim(device);
     expect(task).toMatchObject({ jobId: 'job-1', openUrl: settings.extensionTargetUrl, targetOrigin: 'https://voz.vn', autoSubmit: true, recipe: { engine: 'xenforo' } });
-    expect(task?.post).toEqual({ title: 'Tiêu đề', body: 'Nội dung\n\n#vps', summary: '' });
+    // Forum topics keep tags in the forum's own tag field; hashtags are not printed in the body.
+    expect(task?.post).toEqual({ title: 'Tiêu đề', body: 'Nội dung', summary: '' });
     const claimCall = (prisma.publishJob.updateMany.mock.calls[1] as [{ where: Record<string, unknown> }])[0];
     expect(claimCall.where).toMatchObject({ id: 'job-1', lockedAt: null, lastErrorCode: null });
   });
@@ -197,7 +198,6 @@ describe('extension helpers', () => {
     expect(threadIdFromUrl('https://community.nginx.org/t/hello/4521/2')).toBe('4521');
     expect(threadIdFromUrl('https://forum.mikrotik.com/viewtopic.php?f=3&t=99')).toBe('99');
   });
-
   it('repairs a double-escaped AI body before it reaches the forum', () => {
     expect(forumPost({ title: 'T', body: 'Setup\\n- Version 24.04\\n\\n### Question\\nWhy?', hashtags: [] }, null).body)
       .toBe('Setup\n- Version 24.04\n\n### Question\nWhy?');
