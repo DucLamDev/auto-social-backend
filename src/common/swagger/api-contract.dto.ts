@@ -200,6 +200,11 @@ export class CampaignProgressContractDto {
 }
 
 export class CampaignContractDto {
+  @ApiPropertyOptional({ enum: ['AUTOMATION', 'EXISTING_CAMPAIGN', 'CONTENT'] }) reviewMode?: string;
+  @ApiPropertyOptional({ nullable: true, type: String }) automationState?: string | null;
+  @ApiPropertyOptional({ nullable: true, type: String }) automationErrorCode?: string | null;
+  @ApiPropertyOptional({ type: [String], format: 'uuid' }) automationVariantIds?: string[];
+  @ApiPropertyOptional({ type: [String], format: 'uuid' }) automationAccountIds?: string[];
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty() name!: string;
   @ApiProperty({ format: 'uuid' }) contentId!: string;
@@ -217,8 +222,8 @@ export class CampaignContractDto {
 export class AutomatedCampaignContractDto {
   @ApiProperty({ type: CampaignContractDto }) campaign!: CampaignContractDto;
   @ApiProperty({ type: ContentContractDto }) content!: ContentContractDto;
-  @ApiProperty({ minimum: 1 }) generatedVariants!: number;
-  @ApiProperty({ minimum: 1 }) jobsCreated!: number;
+  @ApiProperty({ minimum: 0 }) generatedVariants!: number;
+  @ApiProperty({ minimum: 0 }) jobsCreated!: number;
   @ApiProperty({ description: 'Whether the campaign was activated for immediate or scheduled delivery.' }) activated!: boolean;
 }
 

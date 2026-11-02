@@ -27,7 +27,7 @@ function setup() {
     action: { setBadgeBackgroundColor: async () => {}, setBadgeText: async () => {} },
     tabs: {
       create: async ({ url }) => { state.openedUrls.push(url); return { id: ++state.nextTabId, windowId: 2, status: 'loading' }; },
-      update: async (id, options) => { if (options?.active) state.activated = id; if (options?.url) state.openedUrls.push(options.url); return { id, windowId: 2 }; }, remove: async () => {},
+      update: async (id, options) => { if (options?.active) state.activated = id; if (options?.url) state.openedUrls.push(options.url); return { id, windowId: 2 }; }, remove: async id => { (state.closedTabs ??= []).push(id); },
       get: async id => ({ id, url: state.currentUrl ?? job.openUrl }),
       onUpdated: event(), onRemoved: event(), onCreated: event(),
     },
@@ -207,8 +207,8 @@ test('starts filling an already usable form without waiting for a complete tab e
 });
 
 async function settleUntil(condition) {
-  for (let attempt = 0; attempt < 30 && !condition(); attempt++) await new Promise(setImmediate);
-  assert.ok(condition(), 'background event did not complete');
+  for (let attempt = 0; attempt < 30 && !await condition(); attempt++) await new Promise(setImmediate);
+  assert.ok(await condition(), 'background event did not complete');
 }
 
 test('browser startup automatically claims a waiting web job without a popup message', async () => {
@@ -264,27 +264,28 @@ test('work arriving during a poll runs immediately instead of waiting for the ne
   assert.equal(state.fills, 1);
 });
 
-test('three forums run concurrently while a second job on the same forum waits for its own flow', async () => {
+test('publishes one forum at a time and closes the completed tab before starting the next', async () => {
   const { state, worker, chrome } = setup();
   const makeJob = (id, host) => ({ ...job, jobId: id, targetOrigin: `http://${host}.test`, openUrl: `http://${host}.test/new-topic` });
   state.jobs = [makeJob('a1', 'a'), makeJob('a2', 'a'), makeJob('b1', 'b'), makeJob('c1', 'c'), makeJob('d1', 'd')];
   const release = new Map();
   state.fillResult = pending => new Promise(resolve => release.set(pending.jobId, resolve));
   await worker.tick();
-  await settleUntil(() => state.fills === 3);
-  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['a1', 'b1', 'c1']);
-  assert.deepEqual(state.jobs.map(t => t.jobId), ['a2', 'd1']);
+  await settleUntil(() => state.fills === 1);
+  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['a1']);
+  assert.deepEqual(state.jobs.map(t => t.jobId), ['a2', 'b1', 'c1', 'd1']);
   await worker.tick();
-  assert.equal(state.fills, 3);
+  assert.equal(state.fills, 1);
   release.get('a1')({ status: 'submitted' });
-  await settleUntil(() => state.injections.length >= 6);
+  await settleUntil(async () => (await worker.getTasks())[1]?.phase === 'submitted');
   await new Promise(setImmediate);
   state.publishedUrl = 'http://a.test/t/post/1';
   await Promise.all(chrome.tabs.onUpdated.listeners.map(listener => listener(1, { url: 'http://a.test/t/post/1' }, { url: 'http://a.test/t/post/1' })));
   await worker.tick();
-  await settleUntil(() => state.fills === 4);
-  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['b1', 'c1', 'a2']);
-  assert.deepEqual(state.jobs.map(t => t.jobId), ['d1']);
+  await settleUntil(() => state.fills === 2);
+  assert.deepEqual(state.closedTabs, [1]);
+  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['a2']);
+  assert.deepEqual(state.jobs.map(t => t.jobId), ['b1', 'c1', 'd1']);
   for (const resolve of release.values()) resolve({ status: 'filled' });
 });
 
@@ -293,9 +294,13 @@ test('one failed forum leaves the other flows running and concurrent result logs
   state.jobs = ['a', 'b', 'c'].map(id => ({ ...job, jobId: id, targetOrigin: `http://${id}.test`, openUrl: `http://${id}.test/new-topic` }));
   state.fillResult = async pending => pending.jobId === 'a' ? { status: 'login', message: 'Sign in' } : { status: 'filled' };
   await worker.tick();
+  await settleUntil(() => state.reports.length === 1);
+  await worker.tick();
+  await settleUntil(() => state.reports.length === 2);
+  await worker.tick();
   await settleUntil(() => state.reports.length === 3);
   assert.equal(state.reports.filter(report => report.outcome === 'FAILED').length, 1);
-  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['b', 'c']);
+  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['a', 'b', 'c']);
   const { history } = await chrome.storage.local.get('history');
   assert.deepEqual([...new Set(history.map(entry => entry.jobId))].sort(), ['a', 'b', 'c']);
   assert.equal(history.filter(entry => entry.outcome === 'RECEIVED').length, 3);
@@ -372,10 +377,11 @@ test('repeated tab updates never submit the same active task a second time', asy
 });
 
 test('an explicitly retried task can run after a previous pre-submit failure', async () => {
-  const { state, worker } = setup();
+  const { state, worker, chrome } = setup();
   state.result = { status: 'notReady' };
   await worker.start(job);
   assert.equal(state.reports[0].outcome, 'FAILED');
+  await Promise.all(chrome.tabs.onRemoved.listeners.map(listener => listener(1)));
   state.result = { status: 'filled' };
   await worker.start(job);
   assert.equal(state.fills, 2);
@@ -431,6 +437,18 @@ test('approval after a manual submit is recorded without publishing or retrying'
   await worker.sweep();
   assert.equal(state.reports.at(-1).reason, 'MODERATION_PENDING');
   assert.equal(Object.keys(await worker.getTasks()).length, 0);
+  assert.deepEqual(state.closedTabs, [1]);
+});
+
+test('a waiting manual tab closes as soon as its published post is confirmed', async () => {
+  const { state, worker } = setup();
+  await worker.start(job);
+  assert.equal((await worker.getTasks())[1].phase, 'waitingUser');
+  state.currentUrl = state.publishedUrl = 'http://forum.test/t/manual-post/7';
+  await worker.sweep();
+  assert.equal(state.reports.at(-1).outcome, 'PUBLISHED');
+  assert.deepEqual(state.closedTabs, [1]);
+  assert.equal(state.fills, 1);
 });
 
 for (const [status, expected] of [['moderation', 'MODERATION_PENDING'], ['uncertain', 'SUBMIT_UNCONFIRMED'], ['rejected', 'SUBMIT_REJECTED'], ['restricted', 'PERMISSION_REQUIRED'], ['published', undefined]]) {
@@ -449,12 +467,14 @@ for (const [status, expected] of [['moderation', 'MODERATION_PENDING'], ['uncert
 }
 
 test('retains a verified permalink during a backend outage and retries only reporting', async () => {
-  const { state, worker } = setup();
+  const { state, worker, chrome } = setup();
   state.directResult = { status: 'published', url: 'http://forum.test/t/created/42' };
   state.reportOffline = true;
   await worker.start({ ...job, autoSubmit: true });
   assert.equal((await worker.getTasks())[1].phase, 'reporting');
   assert.equal(state.fills, 0); assert.equal(state.reports.length, 0);
+  await Promise.all(chrome.tabs.onRemoved.listeners.map(listener => listener(1)));
+  assert.equal((await worker.getTasks())[1].phase, 'reporting');
   state.reportOffline = false;
   await worker.sweep();
   assert.equal(state.reports[0].url, state.directResult.url);
@@ -480,7 +500,7 @@ async function patchTask(chrome, tabId, patch) {
   await chrome.storage.session.set({ tasks });
 }
 
-test('five tabs waiting for the operator never stop new posts; submitted ones are released first and do not reserve their forum', async () => {
+test('waiting tabs stay tracked and prevent additional tabs once the budget is reached', async () => {
   const { state, worker, chrome } = setup();
   const now = Date.now();
   const waiting = (id, index, postSubmit) => ({
@@ -492,17 +512,13 @@ test('five tabs waiting for the operator never stop new posts; submitted ones ar
   state.result = { status: 'filled' };
 
   await worker.tick();
-  await settleUntil(() => state.fills === 1);
-
   const tracked = Object.values(await worker.getTasks()).map(task => task.job.jobId);
-  assert.ok(tracked.includes('next'), 'a new post was claimed while five tabs were waiting');
-  assert.ok(!tracked.includes('tinhte'), 'the oldest submitted tab was released');
+  assert.equal(state.claims, 0);
+  assert.equal(state.fills, 0);
+  assert.ok(!tracked.includes('next'));
+  assert.ok(tracked.includes('tinhte'), 'waiting tabs remain tracked');
   assert.ok(tracked.includes('serverfault') && tracked.includes('unix'), 'composers waiting before submission stay tracked');
-  const excluded = state.claimRequests[0].excludeOrigins;
-  assert.ok(excluded.includes('http://serverfault.test') && excluded.includes('http://unix.test'));
-  assert.ok(!excluded.includes('http://dzone.test') && !excluded.includes('http://quora.test'));
-  const { history } = await chrome.storage.local.get('history');
-  assert.ok(history.some(entry => entry.jobId === 'tinhte' && entry.outcome === 'RELEASED'));
+  assert.equal(tracked.length, 5);
 });
 
 test('a progress notice after submit is not a rejection and the post is confirmed later', async () => {

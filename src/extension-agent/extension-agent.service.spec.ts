@@ -4,7 +4,7 @@ import { sha256 } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { createHash } from 'node:crypto';
-import { EXTENSION_RESULT_UNKNOWN, ExtensionAgentService, threadIdFromUrl } from './extension-agent.service';
+import { EXTENSION_RESULT_UNKNOWN, ExtensionAgentService, forumPost, threadIdFromUrl } from './extension-agent.service';
 
 const device = { id: 'dev-1', ownerId: 'owner-1', name: 'Chrome' };
 const settings = { delivery: 'extension', extensionEngine: 'xenforo', extensionTargetUrl: 'https://voz.vn/f/a.17/post-thread', extensionAutoSubmit: true };

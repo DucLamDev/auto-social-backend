@@ -1,4 +1,4 @@
-// Actual MV3 extension, three independent local forums, no external posting.
+// Actual MV3 extension, sequential local forums, no external posting.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -23,8 +23,6 @@ test('web queues three independent forum flows; CAPTCHA in one does not block th
   const submissions = [];
   const visited = new Set();
   const claimRequests = [];
-  let releaseVisits;
-  const allVisited = new Promise(resolve => { releaseVisits = resolve; });
   const serve = async handler => {
     const server = http.createServer(handler);
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -40,14 +38,10 @@ test('web queues three independent forum flows; CAPTCHA in one does not block th
         if (url.pathname === '/posted') {
           let body = ''; for await (const chunk of request) body += chunk;
           submissions.push({ id, ...JSON.parse(body) });
-          // A globally serial worker deadlocks here: all three forms must have
-          // opened before any successful forum returns its topic URL.
-          await allVisited;
           json(response, { url: engine === 'xenforo' ? '/threads/new-post.42/' : '/t/new-post/42' });
           return;
         }
         visited.add(id);
-        if (visited.size === 3) releaseVisits();
         const fields = engine === 'discourse'
           ? '<div id="reply-control"><input id="reply-title"><textarea class="d-editor-input"></textarea><button class="create">Post</button></div>'
           : '<form action="/forums/general.1/post-thread"><input name="title"><div class="fr-element" contenteditable="true"></div><button type="submit" class="button--primary">Post</button></form>';
@@ -90,8 +84,13 @@ test('web queues three independent forum flows; CAPTCHA in one does not block th
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`],
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+    const controller = await context.newPage();
+    await controller.goto(`chrome-extension://${new URL(worker.url()).host}/diagnostics.html`);
     await worker.evaluate(apiUrl => chrome.storage.local.set({ apiUrl, token: 'local-only' }), apiUrl);
-    for (let i = 0; i < 60 && reports.length < 3; i++) await new Promise(resolve => setTimeout(resolve, 500));
+    for (let i = 0; i < 60 && reports.length < 3; i++) {
+      await controller.evaluate(() => chrome.runtime.sendMessage({ type: 'tick-now' }));
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
     assert.equal(visited.size, 3);
     assert.equal(reports.length, 3);
     assert.deepEqual(reports.map(report => [report.id, report.outcome]).sort(), [
@@ -103,12 +102,12 @@ test('web queues three independent forum flows; CAPTCHA in one does not block th
       assert.equal(submission.title, expected.find(job => job.jobId === submission.id).post.title);
       assert.equal(submission.body, expected.find(job => job.jobId === submission.id).post.body);
     }
-    assert.equal(claimRequests[2].excludeOrigins.length, 2);
+    assert.equal(claimRequests[2].excludeOrigins.length, 1);
     const { tasks } = await worker.evaluate(() => chrome.storage.session.get('tasks'));
     assert.deepEqual(Object.values(tasks).map(task => task.job.jobId), ['nginx-fixture']);
     assert.ok(context.pages().every(page => !page.url().includes('/popup.html')));
+    assert.ok(context.pages().every(page => !/\/threads\/new-post|\/t\/new-post/.test(page.url())), 'completed post tabs close');
   } finally {
-    releaseVisits();
     await context?.close();
     for (const server of servers) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
     const resolved = path.resolve(workspace);

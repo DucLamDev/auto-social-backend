@@ -422,6 +422,9 @@ model Campaign {
   automationKey         String?
   automationRequestHash String?
   automationErrorCode   String?
+  automationState       String?
+  automationRequest     Json?
+  automationVariantIds  String[]         @default([]) @db.Uuid
   status                CampaignStatus   @default(DRAFT)
   scheduledAt           DateTime?
   timezone              String           @default("UTC")
@@ -433,6 +436,7 @@ model Campaign {
 
   @@unique([ownerId, automationKey])
   @@index([status, scheduledAt])
+  @@index([automationState, updatedAt])
   @@map("campaigns")
 }
 

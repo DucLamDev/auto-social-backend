@@ -1,6 +1,6 @@
 // Service worker: polls the backend for posts, drives forum tabs and reports
-// the outcome. Different forums run concurrently; tabs waiting for
-// the operator (CAPTCHA, "check then click Post") do not block the queue.
+// the outcome. One publishing flow runs at a time, with a bounded number of
+// owned tabs waiting for the operator (CAPTCHA, "check then click Post").
 // State lives in chrome.storage because MV3 service workers stop when idle.
 import { canFillPage, fillAndSubmit, readErrors, readModeration, readPublishedPost } from './page-actions.js';
 import { fillSocialAndSubmit, readSocialPublishedPost } from './social-actions.js';
@@ -21,12 +21,12 @@ const ERROR_CONFIRM_MS = 8_000;
 const WAIT_USER_MS = 30 * 60_000;
 // After a submission the tab is only kept for a late confirmation.
 const AFTER_SUBMIT_WAIT_MS = 10 * 60_000;
-// Tracked tabs waiting for the operator. Beyond this the oldest is released
-// (left open, no longer tracked) so new posts never wait behind them.
-const MAX_WAITING_TABS = 5;
+// Keep drafts/challenges available, but stop claiming when the tab budget is
+// exhausted. Never release an open tab and then keep opening replacements.
+const MAX_OWNED_TABS = 3;
 const MAX_REPORT_MESSAGE = 450;
-const MAX_ACTIVE_FLOWS = 3;
-const MAX_LOGIN_CHECKS = 3;
+const MAX_ACTIVE_FLOWS = 1;
+const MAX_LOGIN_CHECKS = 1;
 const LOG_LIMIT = 20;
 const SUPPORTED_ENGINES = ['discourse', 'xenforo', 'phpbb', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'];
 
@@ -417,8 +417,7 @@ async function fill(task) {
       await finishReport(task, 'NEEDS_ACTION', { reason: 'MODERATION_PENDING', message: result.message });
       return;
     case 'restricted':
-      await report(task, 'FAILED', { reason: 'PERMISSION_REQUIRED', message: result.message });
-      await setTask(task.tabId, null);
+      await finishReport(task, 'FAILED', { reason: 'PERMISSION_REQUIRED', message: result.message }, true);
       return;
     case 'submitted':
       await setTask(task.tabId, { ...task, beforeUrls: result.beforeUrls ?? [], phase: 'submitted', submittedAt: now, deadline: now + SUBMIT_CONFIRM_MS });
@@ -442,17 +441,16 @@ async function fill(task) {
     }
     case 'login':
       await report(task, 'FAILED', { reason: 'LOGIN_REQUIRED', message: result.message });
-      await setTask(task.tabId, null);
+      await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'LOGIN_REQUIRED', deadline: now + WAIT_USER_MS });
       await focusTab(task.tabId);
       return;
     case 'mediaRequired':
     case 'unavailable':
-      await report(task, 'FAILED', { reason: result.status === 'mediaRequired' ? 'MEDIA_REQUIRED' : 'PLATFORM_UNAVAILABLE', message: result.message });
-      await setTask(task.tabId, null);
+      await finishReport(task, 'FAILED', { reason: result.status === 'mediaRequired' ? 'MEDIA_REQUIRED' : 'PLATFORM_UNAVAILABLE', message: result.message }, true);
       return;
     default:
       await report(task, 'FAILED', { reason: 'EDITOR_NOT_FOUND', message: result?.message ?? 'Không nhận diện được trang' });
-      await setTask(task.tabId, null);
+      await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'EDITOR_NOT_FOUND', deadline: now + WAIT_USER_MS });
       await focusTab(task.tabId);
   }
 }
@@ -484,13 +482,14 @@ async function focusTab(tabId) {
 }
 
 async function published(task, url) {
-  await finishReport(task, 'PUBLISHED', { url }, task.phase !== 'waitingUser');
+  await finishReport(task, 'PUBLISHED', { url }, true);
 }
 
 async function finishReport(task, outcome, extra, closeTab = false) {
   if (finishing.has(task.job.jobId)) return;
   finishing.add(task.job.jobId);
   try {
+    closeTab = closeTab || outcome === 'PUBLISHED' || extra.reason === 'MODERATION_PENDING';
     // Retain the verified receipt across transient backend outages. A retry of
     // this phase only reports the result; it never fills or submits again.
     await setTask(task.tabId, { ...task, phase: 'reporting', pendingReport: { outcome, extra, closeTab } });
@@ -630,17 +629,6 @@ async function watchSubmitted(tabId, jobId) {
   finally { watching.delete(jobId); }
 }
 
-/** Waiting tabs never stop new posts: release the oldest beyond the limit, post-submit ones first. */
-async function releaseWaitingOverflow() {
-  const waiting = Object.values(await getTasks()).filter(isWaiting)
-    .sort((a, b) => Number(isPostSubmit(b)) - Number(isPostSubmit(a)) || (a.waitingSince ?? 0) - (b.waitingSince ?? 0));
-  for (const task of waiting.slice(0, Math.max(0, waiting.length - (MAX_WAITING_TABS - 1)))) {
-    await setTask(task.tabId, null);
-    await log({ jobId: task.job.jobId, account: task.job.account.name, platform: task.job.account.platform, outcome: 'RELEASED',
-      message: 'Ngừng theo dõi tab chờ cũ để nhận bài khác. Tab vẫn mở; bài vẫn ở Cần thao tác trên web.' });
-  }
-}
-
 async function sweep() {
   const now = Date.now();
   for (const task of Object.values(await getTasks())) {
@@ -653,8 +641,7 @@ async function sweep() {
       continue;
     }
     if (task.phase === 'waitingAuth') {
-      if (now >= task.deadline) await setTask(task.tabId, null);
-      else if (now - (task.lastIdentityCheck ?? 0) >= 30_000) {
+      if (now - (task.lastIdentityCheck ?? 0) >= 30_000) {
         await setTask(task.tabId, { ...task, lastIdentityCheck: now });
         try {
           const identity = await verifyOwnIdentity(task);
@@ -677,9 +664,7 @@ async function sweep() {
     } else if (now >= task.deadline && task.phase === 'filling' && !filling.has(task.job.jobId)) {
       await report(task, 'NEEDS_ACTION', { reason: 'SUBMIT_UNCONFIRMED', message: 'Tiện ích khởi động lại khi đang thao tác. Kiểm tra tab và bài đã đăng trước khi thử lại.' });
       await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'SUBMIT_UNCONFIRMED', waitingSince: now, deadline: now + AFTER_SUBMIT_WAIT_MS });
-    } else if (now >= task.deadline && task.phase === 'waitingUser') {
-      await setTask(task.tabId, null); // the job stays in "Cần xử lý" on the dashboard
-    }
+    } // Waiting drafts stay tracked until the operator completes or closes them.
   }
 }
 
@@ -687,8 +672,7 @@ async function checkLoading(task) {
   await tryFill(task);
   const current = (await getTasks())[task.tabId];
   if (current?.phase === 'loading' && Date.now() >= current.deadline && !probing.has(task.job.jobId)) {
-    await report(task, 'FAILED', { reason: 'PAGE_LOAD_FAILED', message: current.probeError ? `Không kiểm tra được form: ${current.probeError}` : 'Trang diễn đàn không tải xong' });
-    await setTask(task.tabId, null);
+    await finishReport(task, 'FAILED', { reason: 'PAGE_LOAD_FAILED', message: current.probeError ? `Không kiểm tra được form: ${current.probeError}` : 'Trang diễn đàn không tải xong' }, true);
   }
 }
 
@@ -728,8 +712,7 @@ async function runTick() {
     for (let picked = 0; !paused && picked < Math.min(MAX_ACTIVE_FLOWS, beat.waiting ?? 0); picked++) {
       const tasks = Object.values(await getTasks());
       const active = tasks.filter((task) => ['loading', 'authenticating', 'filling', 'submitted', 'verifying', 'reporting'].includes(task.phase));
-      if (active.length >= MAX_ACTIVE_FLOWS) break;
-      await releaseWaitingOverflow();
+      if (active.length >= MAX_ACTIVE_FLOWS || tasks.length >= MAX_OWNED_TABS) break;
       // A composer waiting before submission owns this forum's draft; a second
       // tab on the origin could overwrite it. A submitted post has no draft.
       const reserved = (await getTasks());
@@ -809,6 +792,9 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   if (parent) await setTask(parent.tabId, { ...parent, authTabId: null });
   const task = (await getTasks())[tabId];
   if (!task) return;
+  // Keep a confirmed receipt when the operator closes a tab while offline.
+  // The next sweep reports it without submitting a second time.
+  if (task.phase === 'reporting') return;
   if (task.phase === 'loading') {
     await report(task, 'FAILED', { reason: 'CANCELLED', message: 'Tab bị đóng trước khi điền nội dung' });
   } else if (task.phase === 'authenticating') {

@@ -287,7 +287,9 @@ export class AiContentService {
     contentId: string,
     platformSlugs: string[],
     requestedProvider?: AiProvider,
+    assertOwnership?: () => Promise<void>,
   ) {
+    await assertOwnership?.();
     const provider = this.resolveProvider(requestedProvider);
     await this.assertConfigured(provider);
     const content = await this.prisma.content.findFirstOrThrow({ where: { id: contentId, ownerId } });
@@ -318,6 +320,7 @@ export class AiContentService {
         return { platform, generated };
         })));
       }
+      await assertOwnership?.();
       return await this.prisma.$transaction(async (transaction) => {
         const results = [];
         for (const { platform, generated } of generatedByPlatform) {
@@ -352,6 +355,10 @@ export class AiContentService {
         return results;
       });
     } catch (error) {
+      // A replaced background worker must not reset the new worker's claim.
+      if (assertOwnership) {
+        try { await assertOwnership(); } catch { throw error; }
+      }
       await this.prisma.content.updateMany({
         where: { id: contentId, ownerId, status: ContentStatus.AI_GENERATING },
         data: { status: content.status },

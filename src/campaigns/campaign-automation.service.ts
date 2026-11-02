@@ -20,6 +20,8 @@ import { isExtensionDelivery } from '../connectors/extension/extension-delivery'
 import { CONTENT_REVIEW_REQUIRED_CODE } from '../publishing/publishing.constants';
 import { CampaignsService } from './campaigns.service';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
+import { ApproveAiCampaignDto } from './dto/approve-ai-campaign.dto';
+import { ReviewExistingContentDto } from './dto/review-existing-content.dto';
 
 const AUTOMATION_STALE_AFTER_MS = 20 * 60 * 1000;
 const MAX_PLATFORMS_PER_AUTOMATION = 50;
@@ -66,6 +68,7 @@ export class CampaignAutomationService {
     dto: AutomateCampaignDto,
     rawIdempotencyKey: string | undefined,
     requestId?: string,
+    background?: { enqueue?: boolean; processingId?: string; assertOwnership?: () => Promise<void> },
   ) {
     const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
     const name = dto.name.trim();
@@ -80,7 +83,7 @@ export class CampaignAutomationService {
     }
     const scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : new Date();
     if (Number.isNaN(scheduledAt.getTime())) throw new BadRequestException('scheduledAt must be a valid date');
-    const publishImmediately = dto.publishImmediately ?? true;
+    const publishImmediately = background ? false : dto.publishImmediately ?? true;
     const aiProvider = this.ai.resolveProvider(dto.aiProvider);
     const mediaAssetIds = [...(dto.mediaAssetIds ?? [])].sort();
     const automationKey = stableIdempotencyKey('campaign-automation', ownerId, idempotencyKey);
@@ -93,6 +96,7 @@ export class CampaignAutomationService {
       scheduledAt: dto.scheduledAt ?? null,
       timezone,
       publishImmediately,
+      ...(background ? { reviewRequired: true } : {}),
     }));
 
     const alreadyReserved = await this.findReservation(ownerId, automationKey);
@@ -106,6 +110,9 @@ export class CampaignAutomationService {
         after: { errorCode: ErrorCode.CONFLICT, stage: 'idempotency' },
       });
       throw new ConflictException('Idempotency-Key was already used with a different automation request');
+    }
+    if (background?.enqueue && alreadyReserved?.automationState) {
+      return this.result(ownerId, alreadyReserved.id);
     }
     if (alreadyReserved?.targets.length) {
       return this.replayCompleted(ownerId, alreadyReserved, publishImmediately, requestId);
@@ -146,6 +153,7 @@ export class CampaignAutomationService {
         brief,
         scheduledAt,
         timezone,
+        ...(background?.enqueue ? { backgroundRequest: { ...dto, aiProvider, publishImmediately: false, idempotencyKey } } : {}),
       });
 
     if (reservation.campaign.automationRequestHash !== requestHash) {
@@ -156,7 +164,11 @@ export class CampaignAutomationService {
       return this.replayCompleted(ownerId, reservation.campaign, publishImmediately, requestId);
     }
 
-    if (!reservation.created) await this.claimRetry(ownerId, reservation.campaign);
+    if (background?.enqueue) return this.result(ownerId, reservation.campaign.id);
+    if (background?.processingId && background.processingId !== reservation.campaign.id) {
+      throw new ConflictException('Background task does not match its campaign');
+    }
+    if (!reservation.created && !background?.processingId) await this.claimRetry(ownerId, reservation.campaign);
 
     await this.audit.recordBestEffort({
       actorId: ownerId,
@@ -200,10 +212,21 @@ export class CampaignAutomationService {
       }
       const variants = reusableByPlatform.size === platformSlugs.length
         ? [...reusableByPlatform.values()]
-        : await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider);
+        : background?.assertOwnership
+          ? await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider, background.assertOwnership)
+          : await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider);
       const variantByPlatform = new Map(variants.map((variant) => [variant.platformId, variant]));
       if (variantByPlatform.size !== platformSlugs.length) {
         throw new ConflictException('AI did not generate exactly one variant for every selected platform');
+      }
+
+      if (background?.processingId) {
+        await background.assertOwnership?.();
+        await this.prisma.campaign.update({
+          where: { id: reservation.campaign.id },
+          data: { automationState: 'WAITING_REVIEW', automationErrorCode: null, automationVariantIds: variants.map((variant) => variant.id) },
+        });
+        return this.result(ownerId, reservation.campaign.id);
       }
 
       // Credentials and account state can change while the model is generating.
@@ -299,6 +322,94 @@ export class CampaignAutomationService {
       });
       throw error;
     }
+  }
+
+  async approveExistingContent(ownerId: string, contentId: string, dto: ReviewExistingContentDto) {
+    const automationKey = stableIdempotencyKey('review-existing-content', ownerId, contentId, ...[...dto.variantIds].sort(), ...[...dto.platformAccountIds].sort());
+    const existing = await this.prisma.campaign.findFirst({ where: { ownerId, automationKey } });
+    if (existing) return this.approve(ownerId, existing.id, dto);
+    const content = await this.prisma.content.findFirstOrThrow({ where: { id: contentId, ownerId } });
+    const accounts = await this.loadConnectedAccounts(ownerId, dto.platformAccountIds);
+    const variants = await this.prisma.contentVariant.findMany({
+      where: { id: { in: dto.variantIds }, contentId, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
+    });
+    const platforms = new Set(variants.map((variant) => variant.platformId));
+    if (variants.length !== dto.variantIds.length || platforms.size !== variants.length || accounts.some((account) => !platforms.has(account.platformId))) {
+      throw new ConflictException('Choose one unused variant per destination platform');
+    }
+    const campaign = await this.prisma.campaign.upsert({
+      where: { ownerId_automationKey: { ownerId, automationKey } }, update: {},
+      create: {
+        ownerId, contentId, name: content.title, status: CampaignStatus.DRAFT,
+        automationKey, automationState: 'WAITING_REVIEW', automationVariantIds: dto.variantIds,
+        automationRequest: { name: content.title, brief: content.body, platformAccountIds: dto.platformAccountIds, publishImmediately: false },
+      },
+    });
+    return this.approve(ownerId, campaign.id, dto);
+  }
+
+  async approve(ownerId: string, id: string, dto: ApproveAiCampaignDto = {}) {
+    const campaign = await this.prisma.campaign.findFirstOrThrow({ where: { id, ownerId } });
+    if (campaign.automationState === 'APPROVED') {
+      if (campaign.status === CampaignStatus.DRAFT) await this.campaigns.publish(ownerId, id);
+      return this.result(ownerId, id);
+    }
+    if (campaign.automationState !== 'WAITING_REVIEW') throw new ConflictException('Campaign is not waiting for review');
+    const scheduledAt = dto.publishMode === 'SCHEDULED' ? new Date(dto.scheduledAt ?? '') : new Date();
+    if (dto.publishMode === 'SCHEDULED' && (!dto.scheduledAt || !/[zZ]|[+-]\d{2}:?\d{2}$/.test(dto.scheduledAt) || !Number.isFinite(scheduledAt.getTime()) || scheduledAt <= new Date())) {
+      throw new BadRequestException('Choose a future scheduledAt with an explicit UTC offset');
+    }
+    const request = campaign.automationRequest as unknown as AutomateCampaignDto;
+    const accounts = await this.loadConnectedAccounts(ownerId, request.platformAccountIds);
+    await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.campaign.updateMany({
+        where: { id, ownerId, status: CampaignStatus.DRAFT, automationState: 'WAITING_REVIEW' },
+        data: { automationState: 'APPROVED', scheduledAt },
+      });
+      if (!claimed.count) throw new ConflictException('Campaign review has already changed');
+      const variants = await tx.contentVariant.findMany({
+        where: { id: { in: campaign.automationVariantIds }, contentId: campaign.contentId, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
+      });
+      const byPlatform = new Map(variants.map((variant) => [variant.platformId, variant]));
+      if (variants.length !== campaign.automationVariantIds.length || accounts.some((account) => !byPlatform.get(account.platformId)?.body.trim())) {
+        throw new ConflictException('Every destination needs a non-empty generated variant. Review the content again.');
+      }
+      await tx.contentVariant.updateMany({ where: { id: { in: variants.map((variant) => variant.id) } }, data: { status: VariantStatus.APPROVED } });
+      for (const account of accounts) {
+        const variant = byPlatform.get(account.platformId)!;
+        const target = await tx.campaignTarget.create({ data: {
+          campaignId: id, platformAccountId: account.id, contentVariantId: variant.id, overrides: {},
+        } });
+        await tx.publishJob.create({ data: {
+          campaignTargetId: target.id, platformAccountId: account.id,
+          idempotencyKey: stableIdempotencyKey(id, account.id, variant.id),
+          scheduledAt, status: PublishJobStatus.SCHEDULED,
+        } });
+      }
+      await tx.content.update({ where: { id: campaign.contentId }, data: { status: ContentStatus.APPROVED } });
+    });
+    await this.audit.recordBestEffort({ actorId: ownerId, action: 'CAMPAIGN_AI_APPROVED', entityType: 'campaigns', entityId: id });
+    await this.campaigns.publish(ownerId, id);
+    return this.result(ownerId, id);
+  }
+
+  async retry(ownerId: string, id: string) {
+    const updated = await this.prisma.campaign.updateMany({
+      where: { id, ownerId, automationState: 'FAILED', targets: { none: {} } },
+      data: { automationState: 'QUEUED', automationErrorCode: null },
+    });
+    if (!updated.count) throw new ConflictException('Only failed AI tasks can be retried');
+    return this.result(ownerId, id);
+  }
+
+  async reject(ownerId: string, id: string) {
+    const updated = await this.prisma.campaign.updateMany({
+      where: { id, ownerId, automationState: 'WAITING_REVIEW', targets: { none: {} } },
+      data: { automationState: 'REJECTED' },
+    });
+    if (!updated.count) throw new ConflictException('Only content waiting for review can be rejected');
+    await this.audit.recordBestEffort({ actorId: ownerId, action: 'CAMPAIGN_AI_REJECTED', entityType: 'campaigns', entityId: id });
+    return this.result(ownerId, id);
   }
 
   private async loadConnectedAccounts(ownerId: string, accountIds: string[]): Promise<ConnectedAccount[]> {
@@ -419,6 +530,7 @@ export class CampaignAutomationService {
     brief: string;
     scheduledAt: Date;
     timezone: string;
+    backgroundRequest?: AutomateCampaignDto & { idempotencyKey: string };
   }) {
     const existing = await this.findReservation(input.ownerId, input.automationKey);
     if (existing) return { campaign: existing, created: false };
@@ -448,6 +560,10 @@ export class CampaignAutomationService {
             status: CampaignStatus.DRAFT,
             automationKey: input.automationKey,
             automationRequestHash: input.requestHash,
+            ...(input.backgroundRequest ? {
+              automationState: 'QUEUED',
+              automationRequest: input.backgroundRequest as unknown as Prisma.InputJsonObject,
+            } : {}),
           },
           include: { content: true, targets: { include: { publishJobs: true } } },
         });
@@ -524,7 +640,7 @@ export class CampaignAutomationService {
     return {
       campaign,
       content,
-      generatedVariants: new Set(targetList.map((target) => target.contentVariantId)).size,
+      generatedVariants: campaign.automationVariantIds?.length || new Set(targetList.map((target) => target.contentVariantId)).size,
       jobsCreated: targetList.reduce((total, target) => total + target.publishJobs.length, 0),
       activated: campaign.status !== CampaignStatus.DRAFT,
     };

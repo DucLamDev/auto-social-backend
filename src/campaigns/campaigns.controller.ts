@@ -15,6 +15,8 @@ import {
 } from '../common/swagger/api-contract.dto';
 import { CampaignAutomationService } from './campaign-automation.service';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
+import { ApproveAiCampaignDto } from './dto/approve-ai-campaign.dto';
+import { ReviewExistingContentDto } from './dto/review-existing-content.dto';
 
 type RequestWithId = Request & { requestId?: string };
 
@@ -30,6 +32,17 @@ export class CampaignsController {
   @Get()
   @ApiOkEnvelope(CampaignContractDto, true)
   list(@CurrentUser() user: AuthenticatedUser) { return this.campaigns.list(user.id); }
+
+  @Get('ai-review')
+  @ApiOkEnvelope(CampaignContractDto, true)
+  listAiReview(@CurrentUser() user: AuthenticatedUser) { return this.campaigns.listAiReview(user.id); }
+
+  @Post('review-content/:contentId')
+  @ApiCreatedEnvelope(AutomatedCampaignContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  reviewContent(@CurrentUser() user: AuthenticatedUser, @Param('contentId', ParseUUIDPipe) contentId: string, @Body() dto: ReviewExistingContentDto) {
+    return this.automation.approveExistingContent(user.id, contentId, dto);
+  }
 
   @Get(':id')
   @ApiOkEnvelope(CampaignContractDto)
@@ -54,8 +67,23 @@ export class CampaignsController {
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Req() request: RequestWithId,
   ) {
-    return this.automation.automate(user.id, dto, idempotencyKey, request.requestId);
+    return this.automation.automate(user.id, dto, idempotencyKey, request.requestId, { enqueue: true });
   }
+
+  @Post(':id/approve')
+  @ApiCreatedEnvelope(AutomatedCampaignContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  approve(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ApproveAiCampaignDto) { return this.automation.approve(user.id, id, dto); }
+
+  @Post(':id/retry-generation')
+  @ApiCreatedEnvelope(AutomatedCampaignContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  retry(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) { return this.automation.retry(user.id, id); }
+
+  @Post(':id/reject')
+  @ApiCreatedEnvelope(AutomatedCampaignContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  reject(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) { return this.automation.reject(user.id, id); }
 
   @Post(':id/publish')
   @ApiCreatedEnvelope(CampaignContractDto)

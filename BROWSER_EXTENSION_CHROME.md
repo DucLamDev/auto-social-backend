@@ -426,6 +426,8 @@ Get-Content scripts/sync-social-api-platforms.cjs -Raw -Encoding UTF8 | docker c
 
 ## Demo / kiểm thử không cần Docker
 
+Từ bản 1.7.5, extension chỉ chạy một lượt đăng tại một thời điểm. Tab đã xác nhận đăng thành công hoặc được nền tảng nhận để kiểm duyệt sẽ tự đóng sau khi báo kết quả về backend. Tab CAPTCHA/bản nháp cần người xử lý vẫn được theo dõi; khi có ba tab tác vụ đang giữ, extension ngừng mở thêm cho đến khi có chỗ trống. Sau khi cập nhật thư mục extension, Reload tại `chrome://extensions` để nạp mã mới; trang `reload.html` của extension chờ lượt đang chạy xong và giữ checkpoint trước khi reload.
+
 `INLINE_PUBLISH_WORKER=true` (chỉ khi `NODE_ENV` khác `production`) cho API tự chạy worker trong cùng tiến trình;
 kèm `SKIP_INFRA_CONNECT=true` thì chỉ cần PostgreSQL. Bộ kiểm thử đầu-cuối ở `scripts/extension-e2e/`:
 

@@ -33,6 +33,8 @@ Các connector chưa được coi là “đã kiểm chứng production” cho �
 
 ## Chạy local
 
+Luồng AI chạy ngầm: `POST /campaigns/automate` lưu tác vụ vào database và trả về ngay. Cron của API xử lý lần lượt dưới Redis lease, khôi phục tác vụ sau khi API khởi động lại và giữ kết quả ở `WAITING_REVIEW`. Chỉ `POST /campaigns/:id/approve` mới tạo và kích hoạt publish jobs; body nhận `publishMode: NOW` hoặc `publishMode: SCHEDULED` kèm `scheduledAt` trong tương lai. `/reject` từ chối bản nháp; `/retry-generation` đưa lượt lỗi trở lại hàng đợi. Cần chạy migration `20261102100000_background_ai_review` trước khi khởi động mã mới (Compose tự chạy `prisma:deploy`).
+
 Yêu cầu Node.js 22+, Corepack và Docker.
 
 ```powershell
