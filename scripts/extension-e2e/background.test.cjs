@@ -44,7 +44,7 @@ function setup() {
         if (state.probeError) throw new Error(state.probeError);
         return [{ result: state.ready }];
       }
-      if (injection.func.name === 'fillAndSubmit') {
+      if (injection.func.name === 'fillAndSubmit' || injection.func.name === 'fillSocialAndSubmit') {
         state.fills++;
         if (state.fillResult) return [{ result: await state.fillResult(injection.args[0]) }];
         if (state.result instanceof Error) throw state.result;
@@ -52,7 +52,8 @@ function setup() {
       }
       if (injection.func.name === 'submitDiscoursePost') return [{ result: state.directResult ?? { status: 'fallback' } }];
       if (injection.func.name === 'readModeration') return [{ result: state.moderation ?? null }];
-      if (injection.func.name === 'readPublishedPost') return [{ result: state.publishedUrl ?? null }];
+      if (injection.func.name === 'readPublishedPost' || injection.func.name === 'readSocialPublishedPost') return [{ result: state.publishedUrl ?? null }];
+      if (injection.func.name === 'readErrors') return [{ result: state.errorText ?? null }];
       if (injection.func.name === 'accountAuthStep') {
         if (state.authError) throw new Error(state.authError);
         const result = typeof state.authResult === 'function' ? state.authResult(injection.args[0]) : state.authResult;
@@ -73,6 +74,7 @@ function setup() {
     fetch: async (url, options) => {
       if (url.endsWith('/result')) {
         if (state.reportOffline) throw new Error('Backend offline');
+        if (state.reportStatus) return { ok: false, status: state.reportStatus, json: async () => ({ success: false, error: { message: 'Job already finished' } }) };
         state.reports.push(JSON.parse(options.body));
       }
       let data = {};
@@ -458,4 +460,143 @@ test('retains a verified permalink during a backend outage and retries only repo
   assert.equal(state.reports[0].url, state.directResult.url);
   assert.equal(Object.keys(await worker.getTasks()).length, 0);
   assert.equal(state.injections.filter(i => i.func.name === 'submitDiscoursePost').length, 1);
+});
+
+// ---- queue never blocked by waiting tabs; confirmation after submit -----------
+
+const socialJob = (id, origin = 'https://www.quora.com', extra = {}) => ({
+  ...job, jobId: id, targetOrigin: origin, openUrl: `${origin}/`,
+  account: { name: `Social ${id}`, platform: 'Social' },
+  recipe: { engine: 'quora', workflow: 'social', successUrlPattern: '^https://[^/]+/profile/[^/]+/[^/?#]+$' }, ...extra,
+});
+
+async function seedTasks(chrome, tasks) {
+  await chrome.storage.session.set({ tasks: Object.fromEntries(tasks.map(task => [task.tabId, task])) });
+}
+
+async function patchTask(chrome, tabId, patch) {
+  const { tasks } = await chrome.storage.session.get('tasks');
+  tasks[tabId] = { ...tasks[tabId], ...patch };
+  await chrome.storage.session.set({ tasks });
+}
+
+test('five tabs waiting for the operator never stop new posts; submitted ones are released first and do not reserve their forum', async () => {
+  const { state, worker, chrome } = setup();
+  const now = Date.now();
+  const waiting = (id, index, postSubmit) => ({
+    job: socialJob(id, `http://${id}.test`), tabId: 100 + index, phase: 'waitingUser', waitingSince: now - (10 - index) * 60_000,
+    deadline: now + 60_000, ...(postSubmit ? { submittedAt: now - 300_000, waitingReason: 'SUBMIT_UNCONFIRMED' } : { waitingReason: 'WAITING_USER' }),
+  });
+  await seedTasks(chrome, [waiting('tinhte', 0, true), waiting('dzone', 1, true), waiting('quora', 2, true), waiting('serverfault', 3, false), waiting('unix', 4, false)]);
+  state.jobs = [socialJob('next', 'http://next.test')];
+  state.result = { status: 'filled' };
+
+  await worker.tick();
+  await settleUntil(() => state.fills === 1);
+
+  const tracked = Object.values(await worker.getTasks()).map(task => task.job.jobId);
+  assert.ok(tracked.includes('next'), 'a new post was claimed while five tabs were waiting');
+  assert.ok(!tracked.includes('tinhte'), 'the oldest submitted tab was released');
+  assert.ok(tracked.includes('serverfault') && tracked.includes('unix'), 'composers waiting before submission stay tracked');
+  const excluded = state.claimRequests[0].excludeOrigins;
+  assert.ok(excluded.includes('http://serverfault.test') && excluded.includes('http://unix.test'));
+  assert.ok(!excluded.includes('http://dzone.test') && !excluded.includes('http://quora.test'));
+  const { history } = await chrome.storage.local.get('history');
+  assert.ok(history.some(entry => entry.jobId === 'tinhte' && entry.outcome === 'RELEASED'));
+});
+
+test('a progress notice after submit is not a rejection and the post is confirmed later', async () => {
+  const { state, worker, chrome } = setup();
+  const now = Date.now();
+  await seedTasks(chrome, [{ job: socialJob('tinhte', 'https://tinhte.vn'), tabId: 7, phase: 'submitted', submittedAt: now - 20_000, deadline: now + 160_000, beforeUrls: [] }]);
+  state.currentUrl = 'https://tinhte.vn/editorv2/create/767/';
+  state.errorText = 'Đang tạo bài viết đợi xíu nhé';
+
+  await worker.sweep();
+  assert.equal(state.reports.length, 0);
+  assert.equal((await worker.getTasks())[7].phase, 'submitted');
+
+  state.errorText = null;
+  state.currentUrl = 'https://tinhte.vn/thread/chia-se-kinh-nghiem.123456/';
+  state.publishedUrl = state.currentUrl;
+  await worker.sweep();
+  assert.deepEqual(state.reports.map(report => report.outcome), ['PUBLISHED']);
+  assert.equal(state.reports[0].url, 'https://tinhte.vn/thread/chia-se-kinh-nghiem.123456/');
+});
+
+test('an error banner counts as a rejection only when it is still shown on a later check', async () => {
+  const { state, worker, chrome } = setup();
+  const now = Date.now();
+  await seedTasks(chrome, [{ job: socialJob('dzone', 'https://dzone.com'), tabId: 8, phase: 'submitted', submittedAt: now - 20_000, deadline: now + 160_000, beforeUrls: [] }]);
+  state.currentUrl = 'https://dzone.com/content/article/post.html';
+  state.errorText = 'Title must be at least 10 characters';
+
+  await worker.sweep();
+  assert.equal(state.reports.length, 0, 'a banner seen once is not yet a rejection');
+  await patchTask(chrome, 8, { errorSeen: { text: state.errorText, at: Date.now() - 9_000 } });
+  await worker.sweep();
+  assert.deepEqual(state.reports.map(report => [report.reason, report.message]), [['SUBMIT_REJECTED', 'Title must be at least 10 characters']]);
+  assert.equal((await worker.getTasks())[8].waitingReason, 'SUBMIT_REJECTED');
+});
+
+test('after the confirmation window the own profile is checked read-only before asking the operator', async () => {
+  const { state, worker, chrome } = setup();
+  const now = Date.now();
+  const quora = socialJob('quora', 'https://www.quora.com', { auth: { profileUrl: 'https://www.quora.com/profile/VPSTTT' } });
+  await seedTasks(chrome, [{ job: quora, tabId: 9, phase: 'submitted', submittedAt: now - 200_000, deadline: now - 1_000, beforeUrls: [] }]);
+  state.currentUrl = 'https://www.quora.com/';
+
+  await worker.sweep();
+  assert.equal(state.reports.length, 0);
+  assert.equal((await worker.getTasks())[9].phase, 'verifying');
+  assert.equal(state.openedUrls.at(-1), 'https://www.quora.com/profile/VPSTTT/posts');
+  assert.equal(state.fills, 0, 'verification never fills or submits again');
+
+  state.currentUrl = 'https://www.quora.com/profile/VPSTTT/posts';
+  state.publishedUrl = 'https://www.quora.com/profile/VPSTTT/Lam-the-nao-de-chon-VPS';
+  await Promise.all(chrome.tabs.onUpdated.listeners.map(listener => listener(9, { url: state.currentUrl }, { url: state.currentUrl })));
+  assert.deepEqual(state.reports.map(report => [report.outcome, report.url]), [['PUBLISHED', 'https://www.quora.com/profile/VPSTTT/Lam-the-nao-de-chon-VPS']]);
+});
+
+test('a profile check that finds nothing hands the post to the operator once, without a second profile visit', async () => {
+  const { state, worker, chrome } = setup();
+  const now = Date.now();
+  const quora = socialJob('quora', 'https://www.quora.com', { auth: { profileUrl: 'https://www.quora.com/profile/VPSTTT' } });
+  await seedTasks(chrome, [{ job: quora, tabId: 9, phase: 'verifying', profileChecked: true, submittedAt: now - 300_000, deadline: now - 1_000, beforeUrls: [] }]);
+  state.currentUrl = 'https://www.quora.com/profile/VPSTTT/posts';
+
+  await worker.sweep();
+  await worker.sweep();
+  assert.deepEqual(state.reports.map(report => report.reason), ['SUBMIT_UNCONFIRMED']);
+  const task = (await worker.getTasks())[9];
+  assert.equal(task.phase, 'waitingUser');
+  assert.equal(task.waitingReason, 'SUBMIT_UNCONFIRMED');
+  assert.ok(task.deadline - Date.now() <= 10 * 60_000, 'a submitted tab is tracked only for a late confirmation');
+});
+
+test('without a profile URL the post is handed to the operator when the window ends', async () => {
+  const { state, worker, chrome } = setup();
+  const now = Date.now();
+  await seedTasks(chrome, [{ job: socialJob('dzone', 'https://dzone.com'), tabId: 8, phase: 'submitted', submittedAt: now - 200_000, deadline: now - 1_000, beforeUrls: [] }]);
+  state.currentUrl = 'https://dzone.com/content/article/post.html';
+  await worker.sweep();
+  assert.deepEqual(state.reports.map(report => report.reason), ['SUBMIT_UNCONFIRMED']);
+  assert.equal(state.openedUrls.length, 0);
+});
+
+test('a report refused by the backend stops retrying, and long messages are shortened', async () => {
+  const { state, worker, chrome } = setup();
+  await seedTasks(chrome, [{ job: socialJob('done', 'http://done.test'), tabId: 5, phase: 'reporting',
+    pendingReport: { outcome: 'NEEDS_ACTION', extra: { reason: 'SUBMIT_REJECTED', message: 'x'.repeat(1000) }, closeTab: false } }]);
+  state.reportStatus = 409;
+  await worker.sweep();
+  assert.equal(Object.keys(await worker.getTasks()).length, 0, 'the slot is freed instead of retrying forever');
+  const { history } = await chrome.storage.local.get('history');
+  assert.equal(history[0].outcome, 'REPORT_REJECTED');
+
+  state.reportStatus = 0;
+  await seedTasks(chrome, [{ job: socialJob('long', 'http://long.test'), tabId: 6, phase: 'reporting',
+    pendingReport: { outcome: 'NEEDS_ACTION', extra: { reason: 'SUBMIT_REJECTED', message: 'y'.repeat(1000) }, closeTab: false } }]);
+  await worker.sweep();
+  assert.ok(state.reports[0].message.length <= 450);
 });

@@ -1,8 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
+import { runAccountUploadParser } from '../common/utils/account-upload-parser';
 import { PrismaService } from '../database/prisma.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { CredentialEncryptionService } from '../credentials/credential-encryption.service';
@@ -34,33 +33,15 @@ export const LOGIN_URLS: Record<string, string> = {
   'redis-community-forum': 'https://forum.redis.io/login', tinhte: 'https://tinhte.vn/login/',
 };
 
-// The parser receives bytes through stdin, never a shell command or a temporary
-// credential file. Its private stdout is decoded here and is never logged.
-export function parseAccountUpload(buffer: Buffer, extension: string): Promise<AccountImportRow[]> {
-  if (!['xlsx', 'csv', 'tsv'].includes(extension) || buffer.length > 2 * 1024 * 1024) throw new BadRequestException('Chọn file XLSX, CSV hoặc TSV tối đa 2 MiB.');
-  return new Promise((done, reject) => {
-    const child = spawn(process.platform === 'win32' ? 'python' : 'python3', [resolve('scripts/parse-account-upload.py'), extension], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    let output = '', settled = false;
-    const fail = () => { if (!settled) { settled = true; clearTimeout(timer); child.kill(); reject(new BadRequestException('Không đọc được file. Cần cột Social Network, User/Email; Pass, 2FA, URL Profile và URL đăng bài là tùy chọn.')); } };
-    const timer = setTimeout(fail, 10_000);
-    child.on('error', fail); child.stdin.on('error', fail);
-    child.stderr.on('data', () => { /* Parser errors contain no cell values. */ });
-    child.stdout.on('data', (data: Buffer) => { output += data.toString(); if (output.length > 8 * 1024 * 1024) fail(); });
-    child.on('close', code => {
-      if (settled) return;
-      if (code !== 0) return fail();
-      try {
-        const rows: unknown = JSON.parse(output);
-        if (!Array.isArray(rows) || !rows.length || rows.length > 500 || !rows.every((row: unknown): row is AccountImportRow => {
-          const values = object(row);
-          return ['source', 'platform', 'label', 'loginUsername', 'password', 'totpSecret', 'profileUrl', 'expectedUsername'].every(key => typeof values[key] === 'string')
-            && ['google', 'password'].includes(String(values.provider));
-        })) return fail();
-        settled = true; clearTimeout(timer); done(rows);
-      } catch { fail(); }
+export async function parseAccountUpload(buffer: Buffer, extension: string): Promise<AccountImportRow[]> {
+  const rows = await runAccountUploadParser(buffer, extension, 'login',
+    'Không đọc được file. Cần cột Social Network, User/Email; Pass, 2FA, URL Profile và URL đăng bài là tùy chọn.',
+    (row) => {
+      const values = object(row);
+      return ['source', 'platform', 'label', 'loginUsername', 'password', 'totpSecret', 'profileUrl', 'expectedUsername'].every(key => typeof values[key] === 'string')
+        && ['google', 'password'].includes(String(values.provider));
     });
-    child.stdin.end(buffer);
-  });
+  return rows as AccountImportRow[];
 }
 
 /** Credentials of the Google account shared by the import dialog; never derived from a row. */

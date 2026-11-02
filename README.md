@@ -84,6 +84,46 @@ Kết quả phụ thuộc loại connector:
 - `MANUAL`: worker tuyệt đối không mô phỏng đăng nhập. Job chủ động dừng ở `NEEDS_ACTION`; `GET /api/v1/publish-jobs/:id/manual-payload` trả title/body/hashtags/canonical URL/media và editor URL để giao diện **Copy & mở**. Sau khi người dùng đăng thật, endpoint mark-published lưu external ID/URL và chuyển job sang `PUBLISHED`.
 - Media chỉ được gửi khi connector khai báo capability phù hợp. Với kênh manual, media vẫn nằm trong handoff để người dùng tải/chèn bằng editor chính thức.
 
+### Chất lượng nội dung AI
+
+Mỗi bài AI viết đi qua bốn lớp kiểm soát:
+
+1. **Quy cách nơi đăng.** Phần này do mã tự ghép vào prompt, lấy từ `src/platforms/platform-contract.ts`. Gồm:
+   - Ngôn ngữ người đọc: diễn đàn và cộng đồng lập trình quốc tế dùng tiếng Anh; Tinhte và Voz dùng tiếng Việt; các nơi còn lại theo ngôn ngữ của mô tả.
+   - Định dạng: Markdown, văn bản thường, hoặc HTML cho WordPress / Blogger.
+   - Giới hạn ký tự, tính cả hashtag và link. X tính chữ có dấu tiếng Việt là 2 ký tự.
+   - Cách dùng hashtag và việc có cần tiêu đề hay không.
+2. **Hồ sơ thương hiệu.** ADMIN lưu một lần bằng `PUT /api/v1/settings/ai.brand-profile`, body `{ "value": { … } }`. Các trường:
+   - `brandName`, `oneLiner`, `audience`, `voice`
+   - `facts[]`: sản phẩm, số liệu, bằng chứng có thật
+   - `links[]`: mỗi mục gồm `label` và `url`
+   - `disclosure`: câu tự giới thiệu khi đăng diễn đàn
+   - `avoid[]`: điều cấm nói
+   - `defaultLanguage`: `vi` hoặc `en`
+   - `platformLanguages`: ngôn ngữ riêng theo nền tảng, ví dụ `{ "quora": "vi" }`
+
+   Thông tin về thương hiệu (giá, số liệu, khách hàng, ưu đãi) chỉ được lấy từ mô tả hoặc hồ sơ này. Hồ sơ thiếu hay sai thì bị bỏ qua và ghi cảnh báo, không chặn việc tạo bài.
+3. **Kiểm tra máy.** Kiểm độ dài sau khi dựng văn bản cuối, đúng ngôn ngữ, đủ tiêu đề, không còn Markdown ở nơi cần HTML, số hashtag và câu sáo.
+4. **AI chấm điểm.** AI chấm từ 1 đến 10 cho câu mở đầu, độ cụ thể, độ hợp nền tảng và độ tự nhiên, rồi liệt kê các thông tin chưa có căn cứ.
+   - Đạt khi điểm từ 7 trở lên, đúng ngôn ngữ và không có thông tin chưa có căn cứ.
+   - Chưa đạt thì AI viết lại đúng một lần.
+   - Vẫn chưa đạt, hoặc AI tự đánh giá bài không hợp nơi đăng: biến thể giữ `recommended=false` cùng nhận xét. Job chuyển `NEEDS_ACTION` với mã `CONTENT_REVIEW_REQUIRED`, không tự đăng.
+   - Người vận hành duyệt bằng `POST /api/v1/publish-jobs/:id/approve-content`, có thể kèm `title`, `body`, `hashtags` đã sửa. Hệ thống tạo phiên bản biến thể mới đã duyệt và xếp lịch lại job. Không có gì đã gửi đi nên không lo đăng trùng.
+
+Mỗi nền tảng tốn từ 2 lượt gọi AI (viết và chấm) tới 4 lượt (khi phải viết lại). Lỗi tạm thời của nhà cung cấp AI (429, 5xx, hết thời gian, JSON sai) được thử lại một lần sau 2 giây. Nếu chỉ riêng bước chấm lỗi, bài vẫn được lưu với ghi chú "AI chưa chấm được" và vẫn qua kiểm tra máy.
+
+Prompt mặc định hiện là phiên bản 3 (`src/prompts/default-prompts.ts`). Cài mới thì seed tạo sẵn. Với database đang chạy, đồng bộ riêng prompt mà không chạy lại seed:
+
+```powershell
+Get-Content scripts/sync-ai-prompts.cjs -Raw -Encoding UTF8 | docker compose exec -T api node -
+Get-Content scripts/sync-ai-prompts.cjs -Raw -Encoding UTF8 | docker compose exec -T api node - --apply
+# Quay lại prompt cũ nếu cần:
+Get-Content scripts/sync-ai-prompts.cjs -Raw -Encoding UTF8 | docker compose exec -T api node - --rollback 2 --apply
+```
+
+- Lệnh đầu chỉ xem trước. `--apply` tạo hoặc cập nhật bản v3 rồi bật nó lên; các bản cũ chỉ bị tắt, không bị xoá.
+- Nếu một phiên bản cùng số đã được tạo trên web, script dừng lại, không ghi đè.
+
 Medium thuộc nhánh manual. Ảnh RapidAPI chỉ minh họa endpoint đọc không chính thức và làm lộ credential trên màn hình; project không dùng endpoint/key đó để publish. Hãy revoke/rotate mọi key từng được dán vào chat hoặc xuất hiện trong ảnh chụp trước khi dùng tài khoản thật.
 
 Nếu vừa cập nhật source hoặc AI key nhưng UI vẫn không thấy OpenAI/DeepSeek/Gemini, hãy build lại image thay vì chỉ restart container:
@@ -165,6 +205,7 @@ ContentSource → SourceArticle → Content → AI ContentVariant
 - [DEPLOYMENT.md](DEPLOYMENT.md)
 - [SOCIAL_CONFIGURATION.md](SOCIAL_CONFIGURATION.md)
 - [SOCIAL_API_SETUP_GUIDE.md](SOCIAL_API_SETUP_GUIDE.md) — lấy token/key từng nền tảng và điền vào form
+  (hoặc nhập cả loạt bằng file: mục **Nhập nhiều tài khoản bằng file**, `POST /api/v1/platform-accounts/import-api`)
 - [OPERATIONS_REVIEW.md](OPERATIONS_REVIEW.md) — rà soát vận hành và kế hoạch hoàn thiện
 - [DISCOURSE_CONFIGURATION.md](DISCOURSE_CONFIGURATION.md)
 - [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md)

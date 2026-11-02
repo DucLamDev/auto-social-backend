@@ -63,6 +63,58 @@ sau đó bật **Enabled**. Form không bao giờ tải secret cũ về: muốn 
 
 ---
 
+## Nhập nhiều tài khoản bằng file
+
+Các kênh dùng khoá dán một lần có thể nhập cả loạt bằng một file thay vì điền form từng tài khoản: dev.to, Mastodon,
+Bluesky, Discord, Discourse, WordPress tự cài. Mỗi nền tảng vẫn cần lấy khoá như hướng dẫn ở mục tương ứng bên dưới.
+
+1. Đăng nhập bằng tài khoản `ADMIN` → **Tài khoản** → **Nhập file cấu hình API** → tải **file mẫu**
+   (`/templates/api-accounts.csv`).
+2. Điền mỗi tài khoản một dòng. File XLSX, CSV hoặc TSV, tối đa 2 MiB và 500 dòng; ô có công thức Excel bị bỏ qua.
+3. Chọn file → **Nhập & kiểm tra**. Hệ thống tạo hoặc cập nhật tài khoản, lưu khoá đã mã hoá, rồi kiểm tra kết nối từng
+   dòng giống nút **Lưu & kiểm tra**.
+4. **Xoá file** sau khi nhập vì file chứa khoá. Hệ thống không bao giờ trả khoá lại.
+
+| Cột | Ý nghĩa |
+|---|---|
+| Nền tảng | Tên hoặc mã nền tảng: `dev.to`, `Mastodon.social`, `social.vivaldi.net`, `Mastodon`, `Bluesky`, `Discord`, `Discourse` hoặc tên diễn đàn Discourse trong danh mục (vd. `NGINX Community`), `WordPress` |
+| Tên hiển thị | Tuỳ chọn; để trống thì tự đặt theo nền tảng và username |
+| URL | Instance Mastodon, PDS Bluesky, URL diễn đàn Discourse, Site URL WordPress, Forem API của dev.to |
+| Username / Handle | Username dev.to / Mastodon, handle Bluesky, API Username Discourse, username WordPress, tên webhook Discord |
+| Khoá bí mật | API key, access token, App Password, Webhook URL hoặc Application Password |
+| Category ID | Chỉ Discourse: số ở cuối URL chuyên mục `/c/<slug>/<số>` |
+| Tags | Chỉ Discourse: tag có sẵn, cách nhau bằng dấu phẩy |
+| Đăng ngay | `có` / `không`: dev.to xuất bản ngay hay lưu nháp, WordPress `publish` hay `draft` |
+| Chế độ hiển thị | Chỉ Mastodon: `public`, `unlisted`, `private`, `direct` |
+
+| Nền tảng | Cột bắt buộc |
+|---|---|
+| dev.to | Username, Khoá bí mật |
+| Mastodon.social / social.vivaldi.net | Username, Khoá bí mật (URL để trống; instance khác thì ghi nền tảng `Mastodon` kèm URL) |
+| Mastodon | URL, Username, Khoá bí mật |
+| Bluesky | Handle, App Password dạng `xxxx-xxxx-xxxx-xxxx` (không nhận mật khẩu đăng nhập) |
+| Discord | Webhook URL `https://discord.com/api/webhooks/<số>/<mã>` |
+| Discourse | URL (diễn đàn trong danh mục đã có sẵn), API Username, Khoá bí mật, Category ID |
+| WordPress | Site URL HTTPS, Username, Application Password |
+
+Kết quả từng dòng:
+
+- **Đã kết nối**: kiểm tra đạt, tài khoản dùng được ngay.
+- **Kiểm tra lỗi**: khoá bị từ chối, thiếu quyền hoặc nền tảng không trả lời; lý do hiện cạnh dòng.
+- **Cần bấm Kết nối**: Instagram, Threads, Blogger, LinkedIn, Tumblr. Nền tảng bắt chính chủ đăng nhập và đồng ý quyền
+  nên file không thay được bước này.
+- **Dòng không hợp lệ**: thiếu cột bắt buộc, URL không phải HTTPS, nền tảng không nhận ra.
+- **Chưa hỗ trợ**: X và các nền tảng không có API; dùng tiện ích Chrome.
+- **Trùng dòng**: cùng tài khoản đã có ở dòng trước trong file.
+- **Đang bận**: tài khoản còn bài chờ đăng hoặc đang kiểm tra; nhập lại sau.
+
+Nhập lại cùng file sẽ cập nhật khoá của đúng tài khoản đó, không tạo bản trùng. Nếu đã có tài khoản đăng qua **tiện ích
+Chrome** cùng nền tảng và cùng username (dev.to, Bluesky, Mastodon.social, social.vivaldi.net), khoá được gắn vào chính
+tài khoản đó. Khi kiểm tra đạt, tài khoản chuyển sang đăng bằng API; kiểm tra lỗi thì vẫn đăng qua tiện ích như cũ.
+Người phát triển: `POST /api/v1/platform-accounts/import-api`, multipart, trường `file`.
+
+---
+
 ## 1. dev.to — API key (10 account)
 
 **Lấy key** (làm cho từng account)

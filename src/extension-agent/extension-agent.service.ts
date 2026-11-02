@@ -13,9 +13,11 @@ import {
   parseExtensionDeliverySettings,
 } from '../connectors/extension/extension-delivery';
 import { PrismaService } from '../database/prisma.service';
+import { renderForExtension } from '../platforms/post-text';
 import { EXTENSION_FAILED_REASONS, ExtensionDeliveryDto, ExtensionTaskResultDto } from './extension-agent.dto';
 import { extensionFlowForPlatform, validateExtensionFlow } from '../connectors/extension/extension-flows';
 import { deviceCanRunAccount, sessionOf } from './extension-account-session.service';
+import { repairEscapedNewlines } from '../common/utils/escaped-text';
 
 export const EXTENSION_TOKEN_PREFIX = 'spx_';
 /** A claimed task without any report after this long is treated as "result unknown". */
@@ -50,7 +52,7 @@ export function threadIdFromUrl(url: string): string {
 
 /** Turns the AI variant into what a forum composer expects: title + plain paragraphs. */
 export function forumPost(variant: { title: string | null; body: string; hashtags: string[] }, canonicalUrl: string | null) {
-  const body = variant.body.trim();
+  const body = repairEscapedNewlines(variant.body).trim();
   const firstLine = body.split('\n').find((line) => line.trim())?.trim() ?? '';
   const title = (variant.title?.trim() || firstLine).slice(0, 150);
   const extras = [canonicalUrl ? `Nguồn: ${canonicalUrl}` : '', variant.hashtags.length ? variant.hashtags.map((tag) => `#${tag.replace(/^#/, '')}`).join(' ') : '']
@@ -358,10 +360,7 @@ export class ExtensionAgentService {
     if (session && session.deviceId !== device.id) throw new UnauthorizedException('Account was assigned to another Chrome profile');
     const variant = job.target.contentVariant;
     const flow = validateExtensionFlow(job.platformAccount.platform.slug, settings);
-    const post = forumPost(variant, variant.content.canonicalUrl);
-    if (EXTENSION_RECIPES[settings.engine].workflow === 'social') {
-      post.title = variant.title?.trim() || variant.body.split('\n').find(line => line.trim())?.trim() || '';
-    }
+    const post = renderForExtension(variant, job.platformAccount.platform.slug, settings.engine, variant.content.canonicalUrl);
     const requiredMedia = EXTENSION_RECIPES[settings.engine].requiredMedia;
     const variantMedia = (variant.media ?? []).filter(asset => asset.type.toLowerCase() === requiredMedia);
     const media = requiredMedia ? (variantMedia.length ? variantMedia : (variant.content.media ?? []).filter(asset => asset.type.toLowerCase() === requiredMedia))

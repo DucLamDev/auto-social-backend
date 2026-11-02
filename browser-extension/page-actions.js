@@ -223,11 +223,18 @@ export function readErrors(recipe) {
 /** A successful submission can enter moderation instead of yielding a URL. */
 export function readModeration(recipe) {
   if (recipe.engine !== 'discourse' && recipe.workflow !== 'social') return null;
-  for (const dialog of document.querySelectorAll('.d-modal__container, .modal-inner-container, .dialog-container, dialog[open], [role="alert"], [role="status"]')) {
+  // Social editors announce a queued submission in different words (DZone
+  // "submitted to moderation", Stack Exchange "Staging Ground"). Help text such
+  // as "your article will be reviewed" describes the future and does not count.
+  const subject = /\b(?:post|article|story|question)\b|bài viết|bài đăng|câu hỏi/i;
+  const queued = /submitted\s+(?:for|to)\s+(?:review|moderation|approval|(?:the\s+)?staging\s+ground)|sent\s+(?:for|to)\s+(?:review|moderation|approval)|(?:pending|awaiting|under|in)\s+(?:review|moderation|approval)|chờ\s+(?:kiểm\s+)?duyệt|đã\s+gửi\s+(?:đi\s+)?(?:kiểm\s+)?duyệt/i;
+  const future = /\bwill\s+be\b|\bonce\b|\bafter\s+you\b|\bsẽ\s+(?:được\s+)?/i;
+  for (const dialog of document.querySelectorAll('.d-modal__container, .modal-inner-container, .dialog-container, dialog[open], [role="alert"], [role="status"], .toast, .alert, .notification, [class*="toast" i], [class*="snackbar" i]')) {
     if (!dialog.getClientRects().length || getComputedStyle(dialog).visibility === 'hidden') continue;
     const text = dialog.textContent.replace(/\s+/g, ' ').trim();
     if ((/post needs approval/i.test(text) && /received your new post/i.test(text)
-      && /approved by a moderator/i.test(text)) || (recipe.workflow === 'social' && /(?:post|article|bài viết).{0,100}(?:submitted for review|pending approval|pending review|chờ duyệt)/i.test(text))) {
+      && /approved by a moderator/i.test(text))
+      || (recipe.workflow === 'social' && text.length <= 600 && subject.test(text) && queued.test(text) && !future.test(text))) {
       return 'Diễn đàn đã nhận bài và đang chờ quản trị viên duyệt. Không gửi lại bài này.';
     }
   }
