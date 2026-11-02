@@ -334,3 +334,15 @@ test('Quora reads the profile handle from the account menu on an allowed locale 
     assert.equal((await page.evaluate(accountAuthStep, { job: quoraJob })).state, 'mismatch');
   } finally { await page.close(); }
 });
+
+test('a suspended account is reported as suspended, not as a wrong password, and nothing is submitted', async () => {
+  const page = await pageAt('https://discuit.org/login', '<form><label>Username<input autocomplete="username" value="vpsttt"></label><label>Password<input type="password"></label><div class="form-error">@vpsttt is suspended.</div><button type="submit">Login</button></form>');
+  try {
+    await page.evaluate(() => { window.submits = 0; document.querySelector('form').onsubmit = event => { event.preventDefault(); window.submits++; }; });
+    const result = await page.evaluate(accountAuthStep, { job: { ...job, targetOrigin: 'https://discuit.org', recipe: { engine: 'discuit' } }, action: 'password', payload: { username: 'vpsttt', password: 'fixture' } });
+    assert.equal(result.state, 'challenge');
+    assert.match(result.message, /đình chỉ hoặc khoá \(không phải sai mật khẩu\)/);
+    assert.equal(await page.locator('input[type=password]').inputValue(), '');
+    assert.equal(await page.evaluate(() => window.submits), 0);
+  } finally { await page.close(); }
+});

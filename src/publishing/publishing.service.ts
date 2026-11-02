@@ -27,6 +27,7 @@ import { RedisService } from '../queue/redis.service';
 import { RedisLockLease } from '../queue/redis-lock-lease';
 import { DeadLetterDeliveryError } from '../queue/queue.types';
 import { sha256 } from '../common/utils/crypto.utils';
+import { repairEscapedNewlines } from '../common/utils/escaped-text';
 import {
   STALE_DELIVERY_AFTER_MS,
   WORKER_CRASH_UNCERTAIN_RESULT_CODE,
@@ -470,7 +471,7 @@ export class PublishingService {
         );
         const payload: PostPayload = {
           title: variant.title ?? undefined,
-          body: variant.body,
+          body: repairEscapedNewlines(variant.body),
           summary: variant.summary ?? undefined,
           hashtags: variant.hashtags,
           canonicalUrl: variant.content.canonicalUrl ?? undefined,

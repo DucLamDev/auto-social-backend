@@ -15,20 +15,38 @@ export async function fillSocialAndSubmit(job) {
   };
   const all = selector => roots().flatMap(root => [...root.querySelectorAll(selector)]);
   const visible = node => node && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
-  const enabled = node => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true';
+  const enabled = node => visible(node) && !node.disabled && !node.readOnly && node.getAttribute('aria-disabled') !== 'true';
+  const contains = (root, node) => {
+    while (node) {
+      if (root.contains(node)) return true;
+      node = node.getRootNode().host;
+    }
+    return false;
+  };
+  let composerForm = null;
+  const activeScope = () => {
+    const dialogs = all('[role="dialog"], .modal.show, .compose-modal-component, m-composer__modal').filter(visible);
+    // Nested dialogs are common; unrelated simultaneous dialogs are ambiguous.
+    const leaves = dialogs.filter(node => !dialogs.some(other => other !== node && contains(node, other)));
+    return leaves.length === 1 ? leaves[0] : leaves.length ? false
+      : composerForm?.isConnected ? composerForm : document;
+  };
   const pick = selectors => {
+    const scope = activeScope();
+    if (!scope) return null;
     for (const selector of selectors ?? []) {
-      const found = all(selector).filter(visible);
+      const found = all(selector).filter(node => visible(node) && contains(scope, node));
       if (found.length === 1) return found[0];
+      if (found.length > 1) return null;
     }
     return null;
   };
   const button = labels => {
-    const dialogs = all('[role="dialog"], .modal.show, .compose-modal-component, m-composer__modal').filter(visible);
-    const candidates = all('button, [role="button"], [role="tab"], input[type="submit"], a').filter(enabled);
+    const scope = activeScope();
+    if (!scope) return null;
+    const candidates = all('button, [role="button"], [role="tab"], input[type="submit"], a').filter(node => enabled(node) && contains(scope, node));
     const matches = candidates.filter(node => labels.some(label => [node.innerText, node.getAttribute('aria-label'), node.value].some(text => normalize(text).toLowerCase() === label.toLowerCase())));
-    const scoped = dialogs.length ? matches.filter(node => dialogs.at(-1).contains(node)) : [];
-    return (scoped.length === 1 ? scoped : matches).length === 1 ? (scoped.length === 1 ? scoped[0] : matches[0]) : null;
+    return matches.length === 1 ? matches[0] : null;
   };
   const wait = async (find, timeout = 20_000) => {
     const end = Date.now() + timeout;
@@ -71,6 +89,10 @@ export async function fillSocialAndSubmit(job) {
     return { status: 'restricted', message: 'DEV đã đình chỉ tài khoản này và hạn chế đăng bài. Cần giải quyết với DEV trước khi thử lại.' };
   }
   if (captcha()) return { status: 'captcha', message: 'Nền tảng yêu cầu CAPTCHA. Hoàn thành trong tab rồi tiếp tục từ web.' };
+  const notices = all('[role="alert"], .alert, .error, .form-error, [class*="error" i], form').filter(visible).map(node => node.innerText).join(' ');
+  if (/@\S+\s+is\s+(?:suspended|banned)|account\s+(?:has\s+been\s+|is\s+)?(?:suspended|banned|disabled|deactivated)|tài\s+khoản\s+(?:của\s+bạn\s+)?(?:đã\s+)?bị\s+(?:khoá|khóa|đình\s+chỉ|cấm)/i.test(notices)) {
+    return { status: 'restricted', message: 'Nền tảng báo tài khoản đã bị đình chỉ hoặc khoá. Cần giải quyết với nền tảng hoặc dùng tài khoản khác; chưa đăng bài.' };
+  }
   if ((recipe.loginSelectors ?? []).some(selector => all(selector).some(visible))) return { status: 'login', message: 'Đăng nhập tài khoản trong Chrome trước khi chạy luồng.' };
   if (/you must be logged in|please sign in to continue|bạn (?:cần|phải) đăng nhập/i.test(document.body.innerText)) return { status: 'login', message: 'Nền tảng yêu cầu đăng nhập trước khi tạo bài.' };
   if (engine === 'slideshare' && /(?:uploads?|uploading).{0,80}(?:unavailable|disabled|temporarily suspended)/i.test(document.body.innerText)) {
@@ -78,6 +100,19 @@ export async function fillSocialAndSubmit(job) {
   }
 
   const quoraPersonal = engine === 'quora' && new URL(job.openUrl).hostname === 'www.quora.com';
+  if (engine === 'reddit' && !pick(bodySelectors)) {
+    // A submit page can initially show the link/media tab. Only switch an
+    // explicit text tab, never a generic Post action that could submit a draft.
+    const textTab = await wait(() => {
+      const body = pick(bodySelectors);
+      if (body) return body;
+      const scope = activeScope();
+      const tabs = all('[role="tab"]').filter(node => scope && enabled(node) && contains(scope, node))
+        .filter(node => ['text', 'văn bản'].includes(normalize(node.innerText || node.getAttribute('aria-label')).toLowerCase()));
+      return tabs.length === 1 ? tabs[0] : null;
+    }, 3000);
+    if (textTab?.getAttribute('role') === 'tab' && textTab.getAttribute('aria-selected') !== 'true') textTab.click();
+  }
   if (engine === 'linkedin' && !pick(bodySelectors)) {
     const open = await wait(() => button(['Start a post', 'Start a post, try writing with AI', 'Bắt đầu bài đăng']));
     if (!open) return fail('Không thấy Start a post của LinkedIn.');
@@ -104,12 +139,17 @@ export async function fillSocialAndSubmit(job) {
     const current = value(pick(bodySelectors)).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
     if (current && current !== normalize(expectedBody)) return fail('Quora đang có bản nháp khác trong khung soạn. Lưu hoặc đóng bản nháp đó trước khi chạy bài mới.');
   }
-  const mindsChannelMatches = () => engine !== 'minds' || all('m-composer__modal *').some(node => visible(node) && !node.closest('m-composer__textarea') && normalize(node.innerText) === 'My Channel');
+  // The modal composer names its audience ("My Channel"). The newsfeed's inline
+  // "Speak your mind…" composer has no audience picker and posts to the signed-in channel.
+  const mindsChannelMatches = () => engine !== 'minds' || (all('m-composer__modal').some(visible)
+    ? all('m-composer__modal *').some(node => visible(node) && !node.closest('m-composer__textarea') && normalize(node.innerText) === 'My Channel')
+    : location.pathname.startsWith('/newsfeed'));
   if (engine === 'minds') {
     if (!pick(bodySelectors)) {
-      const open = await wait(() => button(['Create', 'Create your first post']));
-      if (!open) return fail('Không thấy nút Create của Minds.');
-      open.click();
+      const open = await wait(() => button(['Create', 'Create your first post'])
+        ?? pick(['m-composer textarea', 'textarea[placeholder*="speak your mind" i]', '[contenteditable="true"][data-placeholder*="speak your mind" i]']));
+      if (!open) return fail('Không thấy khung "Speak your mind" hoặc nút Create của Minds.');
+      open.click(); open.focus?.();
     }
     if (!await wait(() => pick(bodySelectors), 8000)) return fail('Chưa mở được Compose trên Minds.');
     if (!mindsChannelMatches()) return fail('Minds chưa chọn My Channel; chưa điền hoặc gửi bài.');
@@ -149,14 +189,22 @@ export async function fillSocialAndSubmit(job) {
     }
   }
 
-  const body = await wait(() => pick(bodySelectors), recipe.requiredMedia ? 45_000 : 20_000);
-  let title = pick(recipe.titleSelectors);
-  if (!body) return fail('Không nhận diện được trình soạn thảo của nền tảng; chưa bấm đăng.');
-  if (['stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'].includes(engine)) {
-    const current = value(body);
-    if (current && current !== normalize(expectedBody)) return fail('Trình soạn đang chứa bản nháp khác; chưa ghi đè nội dung.');
+  const fields = await wait(() => {
+    const body = pick(bodySelectors), title = pick(recipe.titleSelectors);
+    const writable = node => enabled(node) && (node.isContentEditable || node.matches('input, textarea'));
+    return writable(body) && (!recipe.titleSelectors.length || writable(title)) && body !== title ? { body, title } : null;
+  }, recipe.requiredMedia ? 45_000 : 20_000);
+  if (!fields) return fail('Không xác định được một khung soạn có đủ ô tiêu đề/nội dung cho phép nhập. Kiểm tra trang tạo bài, hộp thoại đang mở và quyền đăng; chưa bấm đăng.');
+  const { body } = fields;
+  let { title } = fields;
+  const form = body.closest('form');
+  if (form && (!title || contains(form, title))) composerForm = form;
+  // Check every field before writing any of them, including short-post engines.
+  const bodyText = engine === 'medium' && title && body.contains(title)
+    ? normalize([...body.children].filter(node => !node.contains(title)).map(node => node.innerText).join(' ')) : value(body);
+  if ((bodyText && bodyText !== normalize(expectedBody)) || (title && value(title) && value(title) !== normalize(post.title))) {
+    return fail('Trình soạn đang chứa bản nháp khác; chưa ghi đè tiêu đề hoặc nội dung.');
   }
-  if (recipe.titleSelectors.length && !title) return fail('Không xác định được ô tiêu đề duy nhất; chưa gửi bài.');
   if (title && !write(title, post.title)) return fail('Không điền được tiêu đề.');
   if (engine === 'medium' && title && body.contains(title)) {
     // Medium's title and body share a contenteditable section. Preserve the
@@ -230,9 +278,24 @@ export async function fillSocialAndSubmit(job) {
   if (engine === 'stackexchange') {
     if (!options.tags?.length) return needs('Câu hỏi cần ít nhất một tag. Điền tags trong cấu hình trên web.');
     const tags = pick(['#tagnames']);
+    // Selected tags render as ".s-tag" chips ("nginx ×"); suggestions also show counts.
+    const chipName = node => normalize(node.innerText).replace(/\s*[×✕✖]\s*$/, '').toLowerCase();
+    const hasChip = tag => all('.s-tag, .post-tag, .js-tag').some(node => visible(node) && !node.closest('[role="option"], [role="listbox"]') && chipName(node) === tag.toLowerCase());
     if (tags) write(tags, options.tags.join(' '));
     else for (const tag of options.tags) {
-      if (!await choose(tag, ['input#filterInput[aria-label="tags"]'], [])) return needs(`Không chọn được tag ${tag} trên Stack Overflow.`);
+      if (hasChip(tag)) continue;
+      const input = pick(['input#filterInput[aria-label="tags"]', 'input[aria-label="tags" i]', '#tageditor-replacing-tagnames--input']);
+      if (!input || !write(input, tag)) return needs(`Không tìm thấy ô nhập tag trên ${location.hostname}.`);
+      const suggestion = await wait(() => {
+        const rows = all('[role="option"]').filter(visible).filter(node => {
+          const label = node.querySelector('.s-tag, .post-tag');
+          return (label ? chipName(label) : normalize(node.innerText).toLowerCase().split(/\s+/)[0]) === tag.toLowerCase();
+        });
+        return rows.length === 1 ? rows[0] : null;
+      }, 3000);
+      if (suggestion) suggestion.click();
+      else for (const type of ['keydown', 'keypress', 'keyup']) input.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+      if (!await wait(() => hasChip(tag), 3000)) return needs(`Không chọn được tag ${tag} trên ${location.hostname}. Kiểm tra tag có tồn tại trên trang này.`);
     }
   }
   if (engine === 'reddit' && !await choose(options.flair, ['[role="dialog"] input[placeholder*="Search" i]', '[role="dialog"] input[type="search"]'], ['Add flair and tags', 'Add tags and flair', 'Add tags and flairs', 'Flair', 'Thêm flair'])) return needs('Không chọn được flair của subreddit.');
@@ -291,7 +354,15 @@ export async function fillSocialAndSubmit(job) {
     tinhte: ['Đăng', 'Đăng bài', 'Đăng bài viết', 'Xuất bản'], pixelfed: ['Post', 'Share', 'Publish', 'Đăng'],
     mastodon: ['Publish!', 'Publish', 'Post', 'Đăng', 'Đăng bài'], bluesky: ['Post', 'Đăng'], tumblr: ['Post', 'Post now', 'Đăng'], devto: ['Publish', 'Xuất bản'],
   }[engine];
-  const submit = await wait(() => { const target = pick(recipe.submitSelectors); return target && enabled(target) ? target : button(finalLabels ?? []); }, 5000);
+  const submit = await wait(() => {
+    const target = pick(recipe.submitSelectors);
+    if (target) return enabled(target) ? target : null;
+    const scope = activeScope();
+    // A known but ambiguous/disabled submit must not fall through to another
+    // action with the same label (e.g. a comment or a different post type).
+    if (!scope || (recipe.submitSelectors ?? []).some(selector => all(selector).some(node => visible(node) && contains(scope, node)))) return null;
+    return button(finalLabels ?? []);
+  }, 5000);
   if (!submit) return needs('Nút đăng chưa sẵn sàng. Kiểm tra các trường bắt buộc hoặc quyền của tài khoản.');
   if (!['medium', 'substack'].includes(engine) && !validContent()) return needs('Nội dung không còn khớp với bài trên web; chưa đăng.');
   if (!mindsChannelMatches()) return needs('Nơi đăng Minds đã thay đổi; chưa gửi bài.');
@@ -318,18 +389,22 @@ export async function readSocialPublishedPost(task) {
   const words = text => (String(text ?? '').normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(' ');
   const expectedTitle = words(job.post.title);
   const body = job.recipe.engine === 'quora' && job.post.title ? `${job.post.title}\n\n${job.post.body}` : job.post.body;
-  const expectedBody = words(body.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')).split(' ').slice(0, 40).join(' ');
-  if (!expectedBody) return null;
+  // Feeds truncate long posts ("(more)"), and Quora shows the title apart from
+  // the text: match the first words of the body itself, not the whole post.
+  const expectedLead = words(job.post.body.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')).split(' ').slice(0, 12).join(' ');
+  if (!expectedLead) return null;
   const pattern = new RegExp(job.recipe.successUrlPattern);
-  const validUrl = value => {
+  // A post-shaped link on this site, new or old.
+  const permalink = value => {
     try { const url = new URL(value, location.href); return url.href !== job.openUrl && url.origin === job.targetOrigin && pattern.test(url.href)
-      && !(task.beforeUrls ?? []).includes(url.href) && !/\/(publish|edit|draft|create|upload)(?:\/|$)/.test(url.pathname) ? url.href : null; }
+      && !/\/(publish|edit|draft|create|upload)(?:\/|$)/.test(url.pathname) ? url.href : null; }
     catch { return null; }
   };
+  const validUrl = value => { const url = permalink(value); return url && !(task.beforeUrls ?? []).includes(url) ? url : null; };
   const titleRequired = (job.recipe.publishedTitleSelectors ?? []).length > 0;
   const titleMatches = !titleRequired || job.recipe.publishedTitleSelectors.some(selector => all(selector).some(node => visible(node) && words(node.innerText) === expectedTitle));
   const publishedBodySelectors = [...(job.recipe.publishedBodySelectors ?? []), ...(job.recipe.engine === 'pixelfed' ? ['.timeline-status-component .status-text .read-more-component'] : [])];
-  const matchingBodies = publishedBodySelectors.flatMap(all).filter(node => visible(node) && words(node.innerText).includes(expectedBody));
+  const matchingBodies = publishedBodySelectors.flatMap(all).filter(node => visible(node) && words(node.innerText).includes(expectedLead));
   const matchesAuthor = url => {
     if (job.recipe.engine !== 'pixelfed') return true;
     const author = /^\/p\/([^/]+)\/\d+/.exec(new URL(url).pathname)?.[1];
@@ -342,10 +417,28 @@ export async function readSocialPublishedPost(task) {
   // matching post, never a global unrelated link or an existing pre-submit post.
   if (!titleRequired) for (const node of matchingContent) {
     const article = node.closest('article, .status, .post, .feed-card, .timeline-status-component, m-activity, [data-post-id], [data-testid="post"]');
-    if (!article) continue;
-    for (const selector of job.recipe.publishedLinkSelectors ?? []) for (const link of article.querySelectorAll(selector)) {
+    if (article) for (const selector of job.recipe.publishedLinkSelectors ?? []) for (const link of article.querySelectorAll(selector)) {
       const url = validUrl(link.href); if (url && matchesAuthor(url)) return url;
     }
+    // Apps without semantic post containers (Quora): climb to the smallest
+    // ancestor holding a permalink. Stop at the first one found, even an old
+    // (pre-submit) one: climbing further would reach other people's posts.
+    let container = node;
+    for (let depth = 0; depth < 8 && container.parentElement; depth++) {
+      container = container.parentElement;
+      const permalinks = [...new Set((job.recipe.publishedLinkSelectors?.length ? job.recipe.publishedLinkSelectors : ['a[href]'])
+        .flatMap(selector => [...container.querySelectorAll(selector)]).map(link => permalink(link.href)).filter(Boolean))];
+      if (!permalinks.length) continue;
+      const fresh = permalinks.length === 1 ? validUrl(permalinks[0]) : null;
+      if (fresh && matchesAuthor(fresh)) return fresh;
+      break;
+    }
+  }
+  // Lists (profile, "your posts", a redirect to the author page) link the new
+  // post by its exact title. Accept a single new permalink with that text.
+  if (expectedTitle.split(' ').length >= 3) {
+    const titled = [...new Set(all('a[href]').filter(link => visible(link) && words(link.innerText) === expectedTitle).map(link => validUrl(link.href)).filter(Boolean))];
+    if (titled.length === 1 && matchesAuthor(titled[0])) return titled[0];
   }
   // Mastodon's redesigned /publish page clears the composer without rendering
   // the new status. Read the public own timeline, scoped to this submission's

@@ -1,4 +1,5 @@
-import { AccountStatus, CampaignStatus, MediaType, PublishJobStatus } from '@prisma/client';
+import { ConflictException } from '@nestjs/common';
+import { AccountStatus, CampaignStatus, MediaType, Prisma, PublishJobStatus } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { PublishQueueService } from '../queue/publish-queue.service';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
@@ -214,6 +215,79 @@ describe('PublishJobsService', () => {
       data: { status: CampaignStatus.RUNNING },
     });
     expect(enqueue).toHaveBeenCalledWith('job-1', 'x');
+  });
+
+  describe('approving content held by the AI quality check', () => {
+    const previous = {
+      id: 'variant-1', contentId: 'content-1', platformId: 'platform-1', title: 'Tiêu đề AI', body: 'Nội dung AI',
+      summary: null, hashtags: ['vps'], cta: null, mediaRecommendation: null, media: [],
+    };
+    const heldJob = {
+      id: 'job-1', status: PublishJobStatus.NEEDS_ACTION, lastErrorCode: 'CONTENT_REVIEW_REQUIRED', platformAccountId: 'account-1',
+      campaignTargetId: 'target-1', target: { campaignId: 'campaign-1', contentVariant: previous }, _count: { attempts: 0 },
+    };
+
+    function setup(job: Record<string, unknown>, released = 1) {
+      const transaction = {
+        contentVariant: {
+          aggregate: jest.fn().mockResolvedValue({ _max: { version: 2 } }),
+          create: jest.fn().mockResolvedValue({ id: 'variant-2' }),
+        },
+        publishJob: { updateMany: jest.fn().mockResolvedValue({ count: released }) },
+        campaignTarget: { update: jest.fn().mockResolvedValue({}) },
+        campaign: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      };
+      const findFirstOrThrow = jest.fn().mockResolvedValue(job);
+      const prisma = {
+        publishJob: { findFirstOrThrow },
+        $transaction: jest.fn((callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
+      } as unknown as PrismaService;
+      const service = new PublishJobsService(prisma, { enqueue: jest.fn() } as unknown as PublishQueueService, {} as CampaignStatusService);
+      return { service, transaction, findFirstOrThrow };
+    }
+
+    it('creates an approved variant with the operator edits, repoints the target and schedules the job', async () => {
+      const { service, transaction, findFirstOrThrow } = setup(heldJob);
+
+      await expect(service.approveContent('owner-1', 'job-1', { body: '  Nội dung đã sửa  ', hashtags: ['#VPS', 'vps', ' linux '] }))
+        .resolves.toEqual({ queued: true, contentVariantId: 'variant-2' });
+
+      expect(findFirstOrThrow).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'job-1', target: { campaign: { ownerId: 'owner-1' } } } }));
+      expect(transaction.contentVariant.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          contentId: 'content-1', platformId: 'platform-1', title: 'Tiêu đề AI', body: 'Nội dung đã sửa',
+          hashtags: ['VPS', 'linux'], status: 'APPROVED', recommended: true, version: 3,
+        }) as unknown,
+      });
+      expect(transaction.publishJob.updateMany).toHaveBeenCalledWith({
+        where: { id: 'job-1', status: PublishJobStatus.NEEDS_ACTION, lastErrorCode: 'CONTENT_REVIEW_REQUIRED', attempts: { none: {} } },
+        data: expect.objectContaining({ status: PublishJobStatus.SCHEDULED, lastErrorCode: null, lastErrorMessage: null }) as unknown,
+      });
+      expect(transaction.campaignTarget.update).toHaveBeenCalledWith({ where: { id: 'target-1' }, data: { contentVariantId: 'variant-2' } });
+      expect(transaction.campaign.updateMany).toHaveBeenCalledWith({
+        where: { id: 'campaign-1', status: CampaignStatus.PARTIAL },
+        data: { status: CampaignStatus.RUNNING },
+      });
+    });
+
+    it.each([
+      ['a job that is not held by the review', { ...heldJob, lastErrorCode: 'SUBMIT_UNCONFIRMED' }],
+      ['a job that was already attempted', { ...heldJob, _count: { attempts: 1 } }],
+      ['a failed job', { ...heldJob, status: PublishJobStatus.FAILED }],
+      ['a variant with its own media', { ...heldJob, target: { ...heldJob.target, contentVariant: { ...previous, media: [{ id: 'asset-1' }] } } }],
+    ])('refuses %s', async (_label, job) => {
+      const { service, transaction } = setup(job);
+      await expect(service.approveContent('owner-1', 'job-1', {})).rejects.toThrow();
+      expect(transaction.contentVariant.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a blank body and a job that changed concurrently', async () => {
+      await expect(setup(heldJob).service.approveContent('owner-1', 'job-1', { body: '   ' })).rejects.toThrow('body must not be blank');
+      await expect(setup(heldJob, 0).service.approveContent('owner-1', 'job-1', {})).rejects.toThrow('changed while it was being approved');
+      const raced = setup(heldJob);
+      raced.transaction.contentVariant.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'test' }));
+      await expect(raced.service.approveContent('owner-1', 'job-1', {})).rejects.toBeInstanceOf(ConflictException);
+    });
   });
 
   it('does not overwrite a worker-claimed retry job after an ambiguous enqueue failure', async () => {

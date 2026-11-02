@@ -24,6 +24,11 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
   if (location.hostname === 'www.blogger.com' && /\/onboarding\/?$/.test(location.pathname)) return challenge('Google đã đăng nhập, nhưng Blogger còn ở bước tạo hồ sơ/blog. Cần có blog đích trước khi đăng bài.');
   if (location.hostname === 'huggingface.co' && location.pathname === '/email_confirmation') return challenge('Hugging Face yêu cầu xác minh email trước khi tạo bài. Mở email xác minh và kiểm tra quyền tạo blog của tài khoản.');
   if (/^error$/i.test(document.title.trim()) && !all('input,button,[role="button"]').some(visible)) return challenge('Nền tảng trả về trang Error, không có form đăng nhập. Chưa gửi thông tin đăng nhập.');
+  // A suspended or banned account is not a wrong password: stop and say so ("@vpsttt is suspended." on Discuit).
+  const notices = all('[role="alert"], .alert, .error, .form-error, [class*="error" i], form').filter(visible).map(node => node.innerText).join(' ');
+  if (!google && /@\S+\s+is\s+(?:suspended|banned)|account\s+(?:has\s+been\s+|is\s+)?(?:suspended|banned|disabled|deactivated)|tài\s+khoản\s+(?:của\s+bạn\s+)?(?:đã\s+)?bị\s+(?:khoá|khóa|đình\s+chỉ|cấm)/i.test(notices)) {
+    return challenge('Nền tảng báo tài khoản đã bị đình chỉ hoặc khoá (không phải sai mật khẩu). Cần giải quyết với nền tảng hoặc dùng tài khoản khác; đã dừng, không thử đăng nhập lại.');
+  }
   if (job.recipe.engine === 'discourse') {
     const notice = all('#login-alert, .login-modal .alert-error, .login-page .alert-error, [role="alert"]').filter(visible).map(n => n.innerText).join(' ');
     if (/incorrect username,? email or password|incorrect username or password|password is incorrect|không đúng tài khoản,? email hoặc mật khẩu/i.test(notice)) return challenge('Diễn đàn từ chối email/username hoặc mật khẩu đã lưu. Cần cập nhật thông tin đăng nhập; chưa thử lại.');

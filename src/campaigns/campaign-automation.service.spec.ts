@@ -96,6 +96,8 @@ describe('CampaignAutomationService', () => {
         id: variantId,
         platformId: account.platformId,
         status: VariantStatus.GENERATED,
+        recommended: true,
+        reason: 'Đạt',
       }]),
     };
     const campaigns = {
@@ -308,7 +310,7 @@ describe('CampaignAutomationService', () => {
       },
       platformAccount: { findMany: jest.fn().mockResolvedValue([account]) },
       contentVariant: {
-        findMany: jest.fn().mockResolvedValue([{ id: variantId, platformId: account.platformId }]),
+        findMany: jest.fn().mockResolvedValue([{ id: variantId, platformId: account.platformId, recommended: true, reason: 'Đạt' }]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       campaignTarget: { create: jest.fn().mockResolvedValue({ id: 'target-1' }) },
@@ -345,6 +347,56 @@ describe('CampaignAutomationService', () => {
     expect(ai.generate).not.toHaveBeenCalled();
     expect(prisma.campaignTarget.create).toHaveBeenCalledTimes(1);
     expect(prisma.publishJob.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds drafts that failed the AI quality check in needs-action instead of approving them', async () => {
+    const reason = 'Cần xem lại (AI chấm 5/10): Mở bài chung chung';
+    const prisma = {
+      platformAccount: { findMany: jest.fn().mockResolvedValue([account]) },
+      campaign: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation((input: { data: { automationRequestHash: string } }) => ({
+          id: campaignId, ownerId, contentId, status: CampaignStatus.DRAFT, automationRequestHash: input.data.automationRequestHash,
+          automationErrorCode: null, updatedAt: new Date(), content: { id: contentId }, targets: [],
+        })),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      content: {
+        create: jest.fn().mockResolvedValue({ id: contentId }),
+        update: jest.fn().mockResolvedValue({}),
+        findFirstOrThrow: jest.fn().mockResolvedValue({ id: contentId, status: ContentStatus.APPROVED }),
+      },
+      contentVariant: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+      campaignTarget: { create: jest.fn().mockResolvedValue({ id: 'target-1' }) },
+      publishJob: { create: jest.fn().mockResolvedValue({ id: 'job-1' }) },
+    };
+    Object.assign(prisma, {
+      $transaction: jest.fn((callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma)),
+    });
+    const ai = {
+      resolveProvider: providerResolver(),
+      assertReady: jest.fn().mockResolvedValue(undefined),
+      generate: jest.fn().mockResolvedValue([{
+        id: variantId, platformId: account.platformId, status: VariantStatus.GENERATED, recommended: false, reason,
+      }]),
+    };
+    const service = new CampaignAutomationService(
+      prisma as unknown as PrismaService,
+      ai as unknown as AiContentService,
+      { publish: jest.fn().mockResolvedValue(undefined), get: jest.fn().mockResolvedValue(resultCampaign()) } as unknown as CampaignsService,
+      { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+    );
+
+    await service.automate(ownerId, dto, 'request-key-456');
+
+    expect(prisma.content.create).toHaveBeenCalledWith({ data: expect.objectContaining({ aiAnalysis: { kind: 'brief' } }) as unknown });
+    expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: { in: [] } }) as unknown,
+    }));
+    expect(prisma.publishJob.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ status: 'NEEDS_ACTION', lastErrorCode: 'CONTENT_REVIEW_REQUIRED', lastErrorMessage: reason }) as unknown,
+    });
   });
 
   it('rejects reuse of an idempotency key with a different payload', async () => {

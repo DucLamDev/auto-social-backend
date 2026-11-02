@@ -295,6 +295,7 @@ export class MutationResultContractDto {
   @ApiPropertyOptional() loggedOut?: boolean;
   @ApiPropertyOptional() queued?: boolean;
   @ApiPropertyOptional() published?: boolean;
+  @ApiPropertyOptional({ format: 'uuid' }) contentVariantId?: string;
 }
 
 export class ConnectionTestContractDto {
