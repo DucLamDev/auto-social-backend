@@ -1111,6 +1111,121 @@
         ]
       }
     },
+    "/api/v1/platform-accounts/import-api": {
+      "post": {
+        "operationId": "PlatformAccounts_importApi",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ApiImportResultContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "platform-accounts"
+        ]
+      }
+    },
     "/api/v1/platform-accounts": {
       "get": {
         "operationId": "PlatformAccounts_list",
@@ -8866,6 +8981,78 @@
           "platform",
           "mode",
           "capability"
+        ]
+      },
+      "ApiImportRowContractDto": {
+        "type": "object",
+        "properties": {
+          "row": {
+            "type": "number",
+            "description": "Row number in the uploaded file"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string",
+            "description": "Catalog slug when the platform was recognised"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CONNECTED",
+              "CHECK_FAILED",
+              "OAUTH_REQUIRED",
+              "INVALID_ROW",
+              "NOT_SUPPORTED",
+              "ACCOUNT_BUSY",
+              "DUPLICATE_ROW"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Operator-facing reason; never contains the secret"
+          },
+          "accountId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "row",
+          "platform",
+          "name",
+          "status",
+          "message"
+        ]
+      },
+      "ApiImportResultContractDto": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number"
+          },
+          "connected": {
+            "type": "number"
+          },
+          "needsAttention": {
+            "type": "number"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiImportRowContractDto"
+            }
+          }
+        },
+        "required": [
+          "total",
+          "connected",
+          "needsAttention",
+          "rows"
         ]
       },
       "PlatformSummaryContractDto": {

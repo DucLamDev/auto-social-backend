@@ -205,6 +205,7 @@ ContentSource → SourceArticle → Content → AI ContentVariant
 - [DEPLOYMENT.md](DEPLOYMENT.md)
 - [SOCIAL_CONFIGURATION.md](SOCIAL_CONFIGURATION.md)
 - [SOCIAL_API_SETUP_GUIDE.md](SOCIAL_API_SETUP_GUIDE.md) — lấy token/key từng nền tảng và điền vào form
+  (hoặc nhập cả loạt bằng file: mục **Nhập nhiều tài khoản bằng file**, `POST /api/v1/platform-accounts/import-api`)
 - [OPERATIONS_REVIEW.md](OPERATIONS_REVIEW.md) — rà soát vận hành và kế hoạch hoàn thiện
 - [DISCOURSE_CONFIGURATION.md](DISCOURSE_CONFIGURATION.md)
 - [BROWSER_AUTOMATION.md](BROWSER_AUTOMATION.md)
