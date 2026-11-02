@@ -6,6 +6,7 @@ import { zodResponseFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
+import { repairEscapedNewlines } from '../common/utils/escaped-text';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
 import {
   AI_PROVIDER_IDS,
@@ -250,7 +251,7 @@ export class AiContentService {
               contentId,
               platformId: platform.id,
               title: generated.title,
-              body: generated.body,
+              body: repairEscapedNewlines(generated.body),
               summary: generated.summary,
               hashtags: generated.hashtags,
               cta: generated.cta,

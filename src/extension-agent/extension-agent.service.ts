@@ -16,6 +16,7 @@ import { PrismaService } from '../database/prisma.service';
 import { EXTENSION_FAILED_REASONS, ExtensionDeliveryDto, ExtensionTaskResultDto } from './extension-agent.dto';
 import { extensionFlowForPlatform, validateExtensionFlow } from '../connectors/extension/extension-flows';
 import { deviceCanRunAccount, sessionOf } from './extension-account-session.service';
+import { repairEscapedNewlines } from '../common/utils/escaped-text';
 
 export const EXTENSION_TOKEN_PREFIX = 'spx_';
 /** A claimed task without any report after this long is treated as "result unknown". */
@@ -50,7 +51,7 @@ export function threadIdFromUrl(url: string): string {
 
 /** Turns the AI variant into what a forum composer expects: title + plain paragraphs. */
 export function forumPost(variant: { title: string | null; body: string; hashtags: string[] }, canonicalUrl: string | null) {
-  const body = variant.body.trim();
+  const body = repairEscapedNewlines(variant.body).trim();
   const firstLine = body.split('\n').find((line) => line.trim())?.trim() ?? '';
   const title = (variant.title?.trim() || firstLine).slice(0, 150);
   const extras = [canonicalUrl ? `Nguồn: ${canonicalUrl}` : '', variant.hashtags.length ? variant.hashtags.map((tag) => `#${tag.replace(/^#/, '')}`).join(' ') : '']
