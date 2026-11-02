@@ -3,6 +3,14 @@
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
 
+## 1.2.0 · 02/11/2026
+### Tính năng
+- Mật khẩu và khoá TOTP Google dùng chung khi nhập file tài khoản
+  Hộp "Nhập file tài khoản" có thêm hai ô Mật khẩu Google và Khoá TOTP Google cạnh email Google dùng chung. Nhập một
+  lần, hệ thống lưu mã hoá và áp cho mọi dòng đăng nhập bằng Google đó, nên tiện ích tự đăng nhập Google và tự điền mã
+  2 bước khi phiên hết hạn. Khoá TOTP là khoá thiết lập hoặc chuỗi otpauth:// (xuất được từ extension Authenticator),
+  không phải mã 6 số; khoá sai bị báo ngay trước khi nhập.
+
 ## 1.1.1 · 01/11/2026
 ### Sửa lỗi
 - Tiện ích Chrome 1.7.3 chọn ô nhập và nút đăng trong hộp soạn đang mở, hỗ trợ cả Shadow DOM; không chọn nút ngoài hộp khi nút đăng chưa sẵn sàng.
