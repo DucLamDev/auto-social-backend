@@ -10,10 +10,21 @@ import { showPublishNotice } from './publish-notice.js';
 
 const TICK_ALARM = 'tick';
 const LOAD_TIMEOUT_MS = 90_000;
-const SUBMIT_CONFIRM_MS = 60_000;
+// Some editors (Tinhte, DZone, Quora) take well over a minute to create and
+// render a post; confirmation polls every few seconds within this window.
+const SUBMIT_CONFIRM_MS = 180_000;
+const SUBMIT_POLL_MS = 5_000;
+const PROFILE_VERIFY_MS = 60_000;
 const ERROR_CHECK_AFTER_MS = 12_000;
+// An error banner must still be there this long after it was first seen.
+const ERROR_CONFIRM_MS = 8_000;
 const WAIT_USER_MS = 30 * 60_000;
+// After a submission the tab is only kept for a late confirmation.
+const AFTER_SUBMIT_WAIT_MS = 10 * 60_000;
+// Tracked tabs waiting for the operator. Beyond this the oldest is released
+// (left open, no longer tracked) so new posts never wait behind them.
 const MAX_WAITING_TABS = 5;
+const MAX_REPORT_MESSAGE = 450;
 const MAX_ACTIVE_FLOWS = 3;
 const MAX_LOGIN_CHECKS = 3;
 const LOG_LIMIT = 20;
@@ -25,6 +36,25 @@ const filling = new Set();
 const probing = new Set();
 const finishing = new Set();
 const verifying = new Set();
+const concluding = new Set();
+const watching = new Set();
+
+// Progress and success toasts share alert containers with real errors
+// ("Đang tạo bài viết đợi xíu nhé"). They never mean the post was rejected.
+const TRANSIENT_NOTICE = /(?:đang\s+(?:tạo|đăng|lưu|gửi|xử\s+lý|tải)|đợi\s+(?:xíu|chút|một\s+chút)|vui\s+lòng\s+(?:chờ|đợi)|please\s+wait|loading|saving|posting|publishing|processing|uploading|submitting|thành\s+công|đã\s+(?:đăng|lưu|xuất\s+bản|gửi)|success|published|posted|saved)/i;
+
+function isTransientNotice(text) {
+  return TRANSIENT_NOTICE.test(String(text ?? ''));
+}
+
+/** The post may already exist: never refill, and no draft to protect on this origin. */
+function isPostSubmit(task) {
+  return Boolean(task.submittedAt) || ['SUBMIT_UNCONFIRMED', 'SUBMIT_REJECTED'].includes(task.waitingReason);
+}
+
+function isWaiting(task) {
+  return task.phase === 'waitingUser' || task.phase === 'waitingAuth';
+}
 const authenticating = new Set();
 
 // ---- storage helpers --------------------------------------------------------
@@ -110,12 +140,21 @@ async function api(path, body, method = 'POST') {
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload?.success) {
     const message = payload?.error?.message ?? `HTTP ${response.status}`;
-    throw new Error(response.status === 401 ? 'Mã ghép nối không hợp lệ hoặc đã bị thu hồi' : message);
+    const error = new Error(response.status === 401 ? 'Mã ghép nối không hợp lệ hoặc đã bị thu hồi' : message);
+    error.status = response.status;
+    throw error;
   }
   return payload.data;
 }
 
+/**
+ * True once retrying is pointless: delivered, or refused by the backend (4xx,
+ * e.g. the job was already finished on the web). False on transient failures.
+ */
 async function report(task, outcome, extra = {}) {
+  if (typeof extra.message === 'string' && extra.message.length > MAX_REPORT_MESSAGE) {
+    extra = { ...extra, message: `${extra.message.slice(0, MAX_REPORT_MESSAGE - 1)}…` };
+  }
   try {
     if (task.job.kind === 'LOGIN_CHECK') {
       await api(`login-checks/${task.job.jobId}/result`, { outcome, message: extra.message,
@@ -124,8 +163,10 @@ async function report(task, outcome, extra = {}) {
     await log({ jobId: task.job.jobId, account: task.job.account.name, platform: task.job.account.platform, outcome, ...extra });
     return true;
   } catch (error) {
-    await log({ jobId: task.job.jobId, account: task.job.account.name, platform: task.job.account.platform, outcome: 'REPORT_FAILED', message: String(error.message ?? error) });
-    return false;
+    const rejected = error.status >= 400 && error.status < 500 && ![401, 408, 429].includes(error.status);
+    await log({ jobId: task.job.jobId, account: task.job.account.name, platform: task.job.account.platform,
+      outcome: rejected ? 'REPORT_REJECTED' : 'REPORT_FAILED', message: String(error.message ?? error) });
+    return rejected;
   }
 }
 
@@ -343,7 +384,7 @@ async function fill(task) {
       if (identity?.state !== 'authenticated') {
         await report(task, 'NEEDS_ACTION', { reason: identity?.state === 'mismatch' ? 'ACCOUNT_MISMATCH' : 'AUTH_REQUIRED', message: 'Phiên thay đổi trước khi điền bài. Kiểm tra đúng tài khoản trong hồ sơ Chrome.' });
         filling.delete(task.job.jobId);
-        await setTask(task.tabId, { ...task, phase: 'waitingAuth', deadline: Date.now() + WAIT_USER_MS });
+        await setTask(task.tabId, { ...task, phase: 'waitingAuth', waitingSince: Date.now(), deadline: Date.now() + WAIT_USER_MS });
         return;
       }
       task = { ...task, job: { ...task.job, verifiedSessionUsername: identity.detectedUsername || task.job.auth.expectedUsername } };
@@ -382,6 +423,7 @@ async function fill(task) {
     case 'submitted':
       await setTask(task.tabId, { ...task, beforeUrls: result.beforeUrls ?? [], phase: 'submitted', submittedAt: now, deadline: now + SUBMIT_CONFIRM_MS });
       if (task.job.recipe.workflow === 'social') void checkPublished((await getTasks())[task.tabId]);
+      void watchSubmitted(task.tabId, task.job.jobId);
       return;
     case 'captcha':
     case 'uncertain':
@@ -392,8 +434,9 @@ async function fill(task) {
         reason: captcha ? 'CAPTCHA_REQUIRED' : result.status === 'uncertain' ? 'SUBMIT_UNCONFIRMED' : result.status === 'rejected' ? 'SUBMIT_REJECTED' : 'WAITING_USER',
         message: result.message ?? (captcha ? 'Hoàn thành CAPTCHA rồi bấm Đăng trong tab vừa mở' : 'Kiểm tra nội dung rồi bấm Đăng trong tab vừa mở'),
       });
-      await setTask(task.tabId, { ...task, beforeUrls: result.beforeUrls ?? [], phase: 'waitingUser', waitingMessage: result.message,
-        waitingReason: captcha ? 'CAPTCHA_REQUIRED' : result.status === 'filled' ? 'WAITING_USER' : result.status === 'rejected' ? 'SUBMIT_REJECTED' : 'SUBMIT_UNCONFIRMED', deadline: now + WAIT_USER_MS });
+      const waitingReason = captcha ? 'CAPTCHA_REQUIRED' : result.status === 'filled' ? 'WAITING_USER' : result.status === 'rejected' ? 'SUBMIT_REJECTED' : 'SUBMIT_UNCONFIRMED';
+      await setTask(task.tabId, { ...task, beforeUrls: result.beforeUrls ?? [], phase: 'waitingUser', waitingMessage: result.message, waitingReason,
+        waitingSince: now, deadline: now + (['SUBMIT_REJECTED', 'SUBMIT_UNCONFIRMED'].includes(waitingReason) ? AFTER_SUBMIT_WAIT_MS : WAIT_USER_MS) });
       await focusTab(task.tabId);
       return;
     }
@@ -494,18 +537,108 @@ async function checkModeration(task) {
 async function checkSubmitted(task) {
   const now = Date.now();
   if (now - task.submittedAt < ERROR_CHECK_AFTER_MS && now < task.deadline) return;
-  let errorText = null;
+  if (concluding.has(task.job.jobId)) return;
+  concluding.add(task.job.jobId);
   try {
-    if (await checkModeration(task)) return;
-    [{ result: errorText }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: readErrors, args: [task.job.recipe] });
-  } catch { /* page still navigating */ }
-  if (!errorText && now < task.deadline) return;
-  // Possibly posted, possibly rejected: never resubmit, hand it to the operator.
-  await report(task, 'NEEDS_ACTION', errorText
-    ? { reason: 'SUBMIT_REJECTED', message: errorText }
-    : { reason: 'SUBMIT_UNCONFIRMED', message: 'Đã bấm Đăng nhưng không thấy bài mới. Kiểm tra tab diễn đàn.' });
-  await setTask(task.tabId, { ...task, phase: 'waitingUser', deadline: now + WAIT_USER_MS });
+    let errorText = null;
+    try {
+      if (await checkModeration(task)) return;
+      [{ result: errorText }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: readErrors, args: [task.job.recipe] });
+    } catch { /* page still navigating */ }
+    if (isTransientNotice(errorText)) errorText = null;
+    const current = (await getTasks())[task.tabId];
+    if (!current || current.job.jobId !== task.job.jobId || current.phase !== 'submitted') return;
+    if (errorText) {
+      // A banner can flash while the editor saves. Only a banner that stays is a rejection.
+      if (current.errorSeen?.text !== errorText) {
+        await setTask(task.tabId, { ...current, errorSeen: { text: errorText, at: now } });
+        return;
+      }
+      if (now - current.errorSeen.at < ERROR_CONFIRM_MS) return;
+    } else if (now < current.deadline) {
+      if (current.errorSeen) await setTask(task.tabId, { ...current, errorSeen: null });
+      return;
+    } else if (await startProfileVerification(current)) return;
+    await concludeUnconfirmed(current, errorText
+      ? { reason: 'SUBMIT_REJECTED', message: errorText }
+      : { reason: 'SUBMIT_UNCONFIRMED', message: 'Đã bấm Đăng nhưng chưa thấy bài mới sau 3 phút. Kiểm tra tab hoặc trang cá nhân trên nền tảng rồi bấm Đã đăng.' });
+  } finally {
+    concluding.delete(task.job.jobId);
+  }
+}
+
+// Possibly posted, possibly rejected: never resubmit, hand it to the operator.
+async function concludeUnconfirmed(task, extra) {
+  const now = Date.now();
+  await report(task, 'NEEDS_ACTION', extra);
+  await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: extra.reason, waitingMessage: extra.message,
+    waitingSince: now, deadline: now + AFTER_SUBMIT_WAIT_MS });
   await focusTab(task.tabId);
+}
+
+/** The account's own posts page, when the Chrome session settings name it on this site. */
+function profileCheckUrl(job) {
+  if (job.recipe.workflow !== 'social' || !job.auth?.profileUrl) return null;
+  try {
+    const url = new URL(job.auth.profileUrl);
+    if (url.origin !== job.targetOrigin || url.username || url.password) return null;
+    if (job.recipe.engine === 'quora' && /^\/profile\/[^/]+\/?$/.test(url.pathname)) url.pathname = `${url.pathname.replace(/\/$/, '')}/posts`;
+    url.hash = '';
+    return url.toString();
+  } catch { return null; }
+}
+
+// Read-only fallback: open the account's own profile in the same tab and look
+// for the new post there. The composer was already submitted; nothing is sent.
+async function startProfileVerification(task) {
+  const url = profileCheckUrl(task.job);
+  if (!url || task.profileChecked) return false;
+  const now = Date.now();
+  await setTask(task.tabId, { ...task, phase: 'verifying', profileChecked: true, deadline: now + PROFILE_VERIFY_MS });
+  try { await chrome.tabs.update(task.tabId, { url }); } catch { /* tab closed: onRemoved reports it */ }
+  void watchSubmitted(task.tabId, task.job.jobId);
+  return true;
+}
+
+async function checkVerifying(task) {
+  if (Date.now() < task.deadline || concluding.has(task.job.jobId)) return;
+  concluding.add(task.job.jobId);
+  try {
+    const current = (await getTasks())[task.tabId];
+    if (current?.phase !== 'verifying' || current.job.jobId !== task.job.jobId) return;
+    await concludeUnconfirmed(current, { reason: 'SUBMIT_UNCONFIRMED',
+      message: 'Đã bấm Đăng nhưng không thấy bài mới, kể cả trên trang cá nhân. Kiểm tra nền tảng rồi bấm Đã đăng hoặc Giao lại cho tiện ích.' });
+  } finally {
+    concluding.delete(task.job.jobId);
+  }
+}
+
+// Polls a submitted tab every few seconds instead of waiting for the 30-second alarm.
+async function watchSubmitted(tabId, jobId) {
+  if (watching.has(jobId)) return;
+  watching.add(jobId);
+  try {
+    for (;;) {
+      await new Promise(resolve => { const timer = setTimeout(resolve, SUBMIT_POLL_MS); timer?.unref?.(); });
+      const task = (await getTasks())[tabId];
+      if (!task || task.job.jobId !== jobId || !['submitted', 'verifying'].includes(task.phase)) return;
+      if (await checkPublished(task)) return;
+      if (task.phase === 'submitted') await checkSubmitted(task);
+      else await checkVerifying(task);
+    }
+  } catch { /* the alarm sweep keeps checking */ }
+  finally { watching.delete(jobId); }
+}
+
+/** Waiting tabs never stop new posts: release the oldest beyond the limit, post-submit ones first. */
+async function releaseWaitingOverflow() {
+  const waiting = Object.values(await getTasks()).filter(isWaiting)
+    .sort((a, b) => Number(isPostSubmit(b)) - Number(isPostSubmit(a)) || (a.waitingSince ?? 0) - (b.waitingSince ?? 0));
+  for (const task of waiting.slice(0, Math.max(0, waiting.length - (MAX_WAITING_TABS - 1)))) {
+    await setTask(task.tabId, null);
+    await log({ jobId: task.job.jobId, account: task.job.account.name, platform: task.job.account.platform, outcome: 'RELEASED',
+      message: 'Ngừng theo dõi tab chờ cũ để nhận bài khác. Tab vẫn mở; bài vẫn ở Cần thao tác trên web.' });
+  }
 }
 
 async function sweep() {
@@ -537,12 +670,13 @@ async function sweep() {
     }
     if (task.phase !== 'loading' && await checkPublished(task)) continue;
     if (task.phase === 'waitingUser' && await checkModeration(task)) continue;
-    if (task.phase === 'submitted') await checkSubmitted(task);
+    if (task.phase === 'submitted') { await checkSubmitted(task); void watchSubmitted(task.tabId, task.job.jobId); }
+    else if (task.phase === 'verifying') await checkVerifying(task);
     else if (task.phase === 'loading') {
       void checkLoading(task);
     } else if (now >= task.deadline && task.phase === 'filling' && !filling.has(task.job.jobId)) {
       await report(task, 'NEEDS_ACTION', { reason: 'SUBMIT_UNCONFIRMED', message: 'Tiện ích khởi động lại khi đang thao tác. Kiểm tra tab và bài đã đăng trước khi thử lại.' });
-      await setTask(task.tabId, { ...task, phase: 'waitingUser', deadline: now + WAIT_USER_MS });
+      await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'SUBMIT_UNCONFIRMED', waitingSince: now, deadline: now + AFTER_SUBMIT_WAIT_MS });
     } else if (now >= task.deadline && task.phase === 'waitingUser') {
       await setTask(task.tabId, null); // the job stays in "Cần xử lý" on the dashboard
     }
@@ -593,11 +727,13 @@ async function runTick() {
     if (loginChecksOnly || Object.values(await getTasks()).some(item => item.job.kind === 'LOGIN_CHECK')) { await updateBadge(); return; }
     for (let picked = 0; !paused && picked < Math.min(MAX_ACTIVE_FLOWS, beat.waiting ?? 0); picked++) {
       const tasks = Object.values(await getTasks());
-      const active = tasks.filter((task) => ['loading', 'authenticating', 'filling', 'submitted', 'reporting'].includes(task.phase));
-      if (active.length >= MAX_ACTIVE_FLOWS || tasks.filter((task) => ['waitingUser', 'waitingAuth'].includes(task.phase)).length >= MAX_WAITING_TABS) break;
-      // A waiting composer also owns this forum's draft. Other origins can
-      // continue, but a second tab on this origin could overwrite that draft.
-      const excludeOrigins = [...new Set(tasks.map((task) => task.job.targetOrigin))];
+      const active = tasks.filter((task) => ['loading', 'authenticating', 'filling', 'submitted', 'verifying', 'reporting'].includes(task.phase));
+      if (active.length >= MAX_ACTIVE_FLOWS) break;
+      await releaseWaitingOverflow();
+      // A composer waiting before submission owns this forum's draft; a second
+      // tab on the origin could overwrite it. A submitted post has no draft.
+      const reserved = (await getTasks());
+      const excludeOrigins = [...new Set(Object.values(reserved).filter(task => !(isWaiting(task) && isPostSubmit(task))).map((task) => task.job.targetOrigin))];
       const { task: job } = await api('claim', { excludeOrigins, supportedEngines: SUPPORTED_ENGINES, authProtocol: 1 });
       if (!job) break;
       // The backend skips these origins before claiming, so a second job for a
@@ -677,7 +813,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     await report(task, 'FAILED', { reason: 'CANCELLED', message: 'Tab bị đóng trước khi điền nội dung' });
   } else if (task.phase === 'authenticating') {
     await report(task, 'NEEDS_ACTION', { reason: 'AUTH_REQUIRED', message: 'Tab đăng nhập đã đóng trước khi xác nhận đúng tài khoản.' });
-  } else if (task.phase === 'submitted' || task.phase === 'filling') {
+  } else if (task.phase === 'submitted' || task.phase === 'filling' || task.phase === 'verifying') {
     await report(task, 'NEEDS_ACTION', { reason: 'SUBMIT_UNCONFIRMED', message: 'Tab bị đóng ngay sau khi bấm Đăng. Kiểm tra diễn đàn.' });
   }
   await setTask(tabId, null);

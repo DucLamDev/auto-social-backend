@@ -46,7 +46,9 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
     publishedBodySelectors: ['.feed-shared-update-v2__description'], publishedLinkSelectors: ['a[href*="/feed/update/"]', 'a[href*="/posts/"]'],
   }),
   minds: recipe('minds', {
-    readySelectors: ['m-composer__textarea textarea'], bodySelectors: ['m-composer__textarea textarea.m-composerTextarea__message'],
+    // Newsfeed shows an inline "Speak your mind…" composer; older layouts open a modal.
+    readySelectors: ['m-composer__textarea textarea', 'textarea[placeholder*="Speak your mind" i]'],
+    bodySelectors: ['m-composer__textarea textarea.m-composerTextarea__message', 'm-composer__textarea textarea', 'textarea[placeholder*="Speak your mind" i]'],
     submitSelectors: ['m-composer__modal m-composer__postbutton button'],
     successUrlPattern: '/newsfeed/\\d+(?:[?#].*)?$',
     publishedBodySelectors: ['m-activity__content', '.m-activityContent__message'], publishedLinkSelectors: ['a[href*="/newsfeed/"]'],

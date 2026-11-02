@@ -230,3 +230,45 @@ test('same title with different content is not a successful publish', async () =
     assert.equal(await page.evaluate(readSocialPublishedPost, { job, beforeUrls: result.beforeUrls }), null);
   } finally { await page.close(); }
 });
+
+test('a truncated Quora feed post without an article container is matched by its first words and its own permalink', async () => {
+  const page = await browser.newPage();
+  const longBody = 'Chọn VPS cho công việc proxy cần nhìn vào băng thông, vị trí máy chủ và giới hạn kết nối đồng thời. '
+    + 'Phần còn lại của bài viết giải thích từng tiêu chí với ví dụ cụ thể và cấu hình mẫu cho người mới bắt đầu.';
+  const job = { recipe: EXTENSION_RECIPES.quora, targetOrigin: 'https://www.quora.com', openUrl: 'https://www.quora.com/',
+    post: { title: 'Làm thế nào để lựa chọn VPS và Proxy phù hợp', body: longBody } };
+  const permalink = 'https://www.quora.com/profile/VPSTTT/Lam-the-nao-de-lua-chon-VPS-va-Proxy';
+  try {
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<main></main>' }));
+    await page.goto('https://www.quora.com/');
+    await page.evaluate(({ permalink }) => {
+      document.body.innerHTML = `
+        <div class="q-box"><div class="q-box"><span class="q-text qu-display--block">Làm thế nào để lựa chọn VPS và Proxy phù hợp</span>
+          <div class="q-text qu-display--block">Chọn VPS cho công việc proxy cần nhìn vào băng thông, vị trí máy chủ và giới hạn kết nối… (more)</div></div>
+          <a href="https://www.quora.com/profile/VPSTTT">VPSTTT</a><a class="q-box" href="${permalink}">Just now</a></div>
+        <div class="q-box"><div class="q-text qu-display--block">An unrelated older answer</div><a class="q-box" href="https://www.quora.com/profile/Other/Older-post">2y</a></div>`;
+    }, { permalink });
+    assert.equal(await page.evaluate(readSocialPublishedPost, { job, beforeUrls: [] }), permalink);
+    assert.equal(await page.evaluate(readSocialPublishedPost, { job, beforeUrls: [permalink] }), null);
+  } finally { await page.close(); }
+});
+
+test('a profile list links the new post by its exact title; an unrelated or pre-existing link is never accepted', async () => {
+  const page = await browser.newPage();
+  const job = { recipe: EXTENSION_RECIPES.tinhte, targetOrigin: 'https://tinhte.vn', openUrl: 'https://tinhte.vn/editorv2/create/767/',
+    post: { title: 'Chia sẻ kinh nghiệm chọn VPS và Proxy', body: 'Nội dung bài viết về VPS và Proxy cho công việc kỹ thuật hằng ngày của đội vận hành.' } };
+  const permalink = 'https://tinhte.vn/thread/chia-se-kinh-nghiem-chon-vps-va-proxy.4123456/';
+  try {
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<main></main>' }));
+    await page.goto('https://tinhte.vn/members/vpsttt.1/');
+    await page.evaluate(({ permalink }) => {
+      document.body.innerHTML = `<h1>vpsttt</h1><ul>
+        <li><a href="${permalink}">Chia sẻ kinh nghiệm chọn VPS và Proxy</a></li>
+        <li><a href="https://tinhte.vn/thread/bai-cu.100/">Một bài viết cũ hơn về VPS</a></li></ul>`;
+    }, { permalink });
+    assert.equal(await page.evaluate(readSocialPublishedPost, { job, beforeUrls: [] }), permalink);
+    assert.equal(await page.evaluate(readSocialPublishedPost, { job, beforeUrls: [permalink] }), null);
+    await page.evaluate(() => { document.querySelector('a').textContent = 'Chia sẻ kinh nghiệm chọn VPS'; });
+    assert.equal(await page.evaluate(readSocialPublishedPost, { job, beforeUrls: [] }), null);
+  } finally { await page.close(); }
+});
