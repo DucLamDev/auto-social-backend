@@ -42,7 +42,7 @@ CREATE TABLE "extension_selector_suggestions" (
 
 CREATE INDEX "extension_ui_hints_publishJobId_createdAt_idx" ON "extension_ui_hints"("publishJobId", "createdAt");
 CREATE INDEX "extension_ui_hints_ownerId_createdAt_idx" ON "extension_ui_hints"("ownerId", "createdAt");
-CREATE UNIQUE INDEX "extension_selector_suggestions_ownerId_engine_origin_field_selector_key" ON "extension_selector_suggestions"("ownerId", "engine", "origin", "field", "selector");
+CREATE UNIQUE INDEX "extension_selector_suggestions_ownerId_engine_origin_field__key" ON "extension_selector_suggestions"("ownerId", "engine", "origin", "field", "selector");
 CREATE INDEX "extension_selector_suggestions_ownerId_status_updatedAt_idx" ON "extension_selector_suggestions"("ownerId", "status", "updatedAt");
 CREATE INDEX "extension_selector_suggestions_ownerId_engine_origin_status_idx" ON "extension_selector_suggestions"("ownerId", "engine", "origin", "status");
 
