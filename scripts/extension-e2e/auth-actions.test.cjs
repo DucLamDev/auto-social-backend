@@ -398,3 +398,52 @@ test('the own profile link matches the saved profile URL whatever its letter cas
     assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
   } finally { await page.close(); }
 });
+
+test('Hugging Face reads the signed-in user from its session endpoint', async () => {
+  const page = await pageAt('https://huggingface.co/', '<header><button class="avatar"></button></header><main>Welcome to Hugging Face</main>');
+  const scoped = { ...job, targetOrigin: 'https://huggingface.co', recipe: { engine: 'generic' }, auth: { ...job.auth, expectedUsername: 'VPSTTT', profileUrl: 'https://huggingface.co/VPSTTT' } };
+  try {
+    await page.route('**/api/whoami-v2', route => route.fulfill({ json: { name: 'VPSTTT', type: 'user' } }));
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+    await page.route('**/api/whoami-v2', route => route.fulfill({ json: { name: 'someone-else' } }));
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'mismatch');
+  } finally { await page.close(); }
+});
+
+test('a site without a known marker is identified by its own profile link in the navigation', async () => {
+  const page = await pageAt('https://daily.dev/', '<aside><a href="/vpsttt"><img alt="" style="width:20px;height:20px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"></a></aside><main><a href="/someone">someone</a></main>');
+  const scoped = { ...job, targetOrigin: 'https://daily.dev', recipe: { engine: 'generic' }, auth: { ...job.auth, provider: 'google', expectedUsername: 'vpsttt', profileUrl: 'https://daily.dev/vpsttt' } };
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+  } finally { await page.close(); }
+});
+
+test('on the configured profile page only owner controls count as the signed-in account', async () => {
+  const owner = await pageAt('https://www.tumblr.com/vpsttt', '<main><h1>vpsttt</h1><button>Modifier l\'apparence</button></main>');
+  const visitor = await pageAt('https://www.tumblr.com/vpsttt', '<main><h1>vpsttt</h1><button>Suivre</button></main>');
+  const scoped = { ...job, targetOrigin: 'https://www.tumblr.com', recipe: { engine: 'tumblr' }, auth: { ...job.auth, expectedUsername: 'vpsttt', profileUrl: 'https://www.tumblr.com/vpsttt' } };
+  try {
+    assert.equal((await owner.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+    assert.equal((await visitor.evaluate(accountAuthStep, { job: scoped })).state, 'unknown');
+  } finally { await owner.close(); await visitor.close(); }
+});
+
+test('Bluesky identifies the signed-in account from its own session storage, never returning tokens', async () => {
+  const page = await pageAt('https://bsky.app/', '<nav><a href="/profile/someone.bsky.social">someone</a></nav>');
+  const scoped = { ...job, targetOrigin: 'https://bsky.app', recipe: { engine: 'bluesky' },
+    auth: { ...job.auth, expectedUsername: 'old-handle.bsky.social', profileUrl: 'https://bsky.app/profile/old-handle.bsky.social', loginUsername: 'owner@example.test', allowIdentityByEmail: true } };
+  const store = (handle, email) => page.evaluate(([h, e]) => localStorage.setItem('BSKY_STORAGE', JSON.stringify({ session: {
+    accounts: [{ did: 'did:plc:abc', handle: h, email: e, accessJwt: 'secret-access-jwt', refreshJwt: 'secret-refresh-jwt' }],
+    currentAccount: { did: 'did:plc:abc', accessJwt: 'secret-access-jwt' } } })), [handle, email]);
+  try {
+    await store('new-handle.bsky.social', 'owner@example.test');
+    const own = await page.evaluate(accountAuthStep, { job: scoped });
+    assert.equal(own.state, 'authenticated', 'the configured login email proves the account even after a handle change');
+    assert.equal(own.detectedUsername, 'new-handle.bsky.social');
+    assert.ok(!JSON.stringify(own).includes('secret'));
+    await store('stranger.bsky.social', 'stranger@example.test');
+    const other = await page.evaluate(accountAuthStep, { job: scoped });
+    assert.equal(other.state, 'mismatch');
+    assert.equal(other.detectedUsername, 'stranger.bsky.social');
+  } finally { await page.close(); }
+});

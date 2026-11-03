@@ -1,6 +1,20 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.6.2 · 03/11/2026
+### Sửa lỗi
+- Nhập file tài khoản từ giao diện web cũ báo lỗi dễ hiểu thay vì "Too many fields"
+  Khi backend đã lên 1.6.1 mà giao diện web chưa cập nhật, hộp Nhập file còn ô "Google dùng chung" và lần nhập bị từ chối
+  với chữ "Too many fields". Nay nếu các ô đó còn điền, hệ thống báo rõ ô Google dùng chung đã bỏ, cần xoá trống ba ô
+  hoặc tải lại trang sau khi cập nhật giao diện 1.4.1; để trống thì nhập bình thường bằng tài khoản của từng dòng.
+- Kiểm tra đăng nhập nhận ra tài khoản đã đăng nhập trên daily.dev, Tumblr, Hugging Face (tiện ích 1.8.2)
+  daily.dev đã chuyển từ app.daily.dev sang daily.dev nên trước đây bị báo "tên miền chưa được cấu hình"; nay tài khoản
+  đã nhập tự dùng tên miền mới, không cần nhập lại. Với trang chưa có cách nhận diện riêng, tiện ích nhận tài khoản khi
+  thấy link tới đúng URL hồ sơ đã khai trong thanh điều hướng, hoặc tự mở URL hồ sơ đó một lần và thấy nút chỉ chủ tài
+  khoản mới có (Edit profile, Modifier l'apparence…). Hugging Face đọc tên tài khoản đang đăng nhập từ chính trang.
+  Bluesky đọc handle và email của phiên đang đăng nhập: email trùng email đăng nhập đã khai thì nhận đúng tài khoản và
+  tự cập nhật handle mới. Khi Chrome đăng nhập tài khoản khác, lời báo ghi rõ @handle đang đăng nhập và @handle đã cấu
+  hình để sửa đúng chỗ.
 ## 1.6.1 · 03/11/2026
 ### Sửa lỗi
 - Kiểm tra đăng nhập hàng loạt đóng tab, nhận đúng tài khoản và không đứng im (tiện ích 1.8.1)

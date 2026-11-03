@@ -40,6 +40,8 @@ const UI_HINT_FIELDS = ['title', 'body', 'submit', 'opener'];
 // A Google-login account on a page that only offers the site's own form: give a
 // late-rendered Google button this long before reporting it.
 const NO_GOOGLE_GRACE_MS = 6_000;
+// An unrecognized signed-in page is given this long before the profile page is opened.
+const PROFILE_CHECK_AFTER_MS = 2_000;
 const LOG_LIMIT = 20;
 const SUPPORTED_ENGINES = ['discourse', 'xenforo', 'phpbb', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'];
 
@@ -322,6 +324,19 @@ async function authenticateTask(task) {
           await new Promise(resolve => setTimeout(resolve, 1500));
           continue;
         }
+        // Open the configured profile page once: the owner-only controls there
+        // identify the account on sites without a known account marker.
+        const profileUrl = task.job.auth.profileUrl;
+        let profileOrigin = '';
+        try { profileOrigin = profileUrl ? new URL(profileUrl).origin : ''; } catch { /* invalid URL: skip */ }
+        if (profileOrigin && !current.authProfileVisited && current.authUnknownSince && Date.now() - current.authUnknownSince > PROFILE_CHECK_AFTER_MS
+          && [task.job.targetOrigin, ...(task.job.auth.allowedOrigins ?? [])].includes(profileOrigin)) {
+          current = { ...current, authProfileVisited: true, authUnknownSince: null };
+          await setTask(task.tabId, current);
+          try { await chrome.tabs.update(tabId, { url: profileUrl }); } catch { /* closed: reported on the next round */ }
+          await new Promise(resolve => setTimeout(resolve, 2_000));
+          continue;
+        }
         if (current.authUnknownSince && Date.now() - current.authUnknownSince > 8_000) return stop('Trang đã tải nhưng chưa nhận diện được form đăng nhập hoặc đúng tài khoản. Cần cập nhật luồng của nền tảng này.');
         if (!current.authUnknownSince) { current = { ...current, authUnknownSince: Date.now() }; await setTask(task.tabId, current); }
       } else if (current.authUnknownSince) { current = { ...current, authUnknownSince: null }; await setTask(task.tabId, current); }
@@ -349,7 +364,8 @@ async function authenticateTask(task) {
           return true;
         }
       } else if (result?.state === 'mismatch') {
-        return stop('Chrome đang đăng nhập tài khoản khác. Kiểm tra hồ sơ đã gán trên web; chưa điền hoặc đăng bài.', 'ACCOUNT_MISMATCH', false, false, result.detectedUsername);
+        const detected = String(result.detectedUsername ?? '').trim().slice(0, 80);
+        return stop(`Chrome đang đăng nhập tài khoản khác${detected ? ` (@${detected.replace(/^@/, '')})` : ''}, không phải tài khoản đã cấu hình${task.job.auth.expectedUsername ? ` (@${String(task.job.auth.expectedUsername).replace(/^@/, '')})` : ''}. Đúng là tài khoản cần dùng thì sửa Username và URL hồ sơ ở Phiên Chrome / 2FA; chưa điền hoặc đăng bài.`, 'ACCOUNT_MISMATCH', false, false, result.detectedUsername);
       } else if (result?.state === 'challenge') {
         return stop(result.message, 'AUTH_REQUIRED', false, result.googleBlocked === true);
       } else if (['identifier', 'password', 'totp', 'google', 'chooser', 'alternate', 'totpChoice', 'openLogin', 'sso', 'accountMenu', 'usePassword'].includes(result?.state)) {

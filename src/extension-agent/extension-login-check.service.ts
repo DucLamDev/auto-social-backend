@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { freshTotp } from '../auth/totp-provider';
-import { object, sessionOf, sessionScope } from './extension-account-session.service';
+import { movedUrl, object, sessionOf, sessionScope } from './extension-account-session.service';
 import type { AuthenticatedDevice } from './extension-agent.service';
 import { ExtensionAuthStepDto } from './extension-agent.dto';
 import { extensionFlowAudit } from '../connectors/extension/extension-flow-audit';
@@ -17,7 +17,7 @@ export function loginSession(settings: unknown, method = 'configured') {
   const config = object(object(object(settings).extensionLoginMethods)[method]);
   return { ...base, provider: method as 'password' | 'google', autoLogin: base.autoLogin && config.available === true,
     autoTotp: config.autoTotp === true, loginUsername: String(config.username ?? ''),
-    loginUrl: String(config.loginUrl || base.loginUrl || base.origin) };
+    loginUrl: movedUrl(String(config.loginUrl || base.loginUrl || base.origin)) };
 }
 
 @Injectable()
@@ -102,7 +102,7 @@ export class ExtensionLoginCheckService {
     const won = await tx.extensionLoginCheck.updateMany({ where: { id: check.id, status: 'QUEUED' }, data: { status: 'RUNNING', startedAt: new Date() } });
     if (!won.count) return null;
     const target = object(object(check.account.settings).extensionLoginTarget);
-    return { kind: 'LOGIN_CHECK', jobId: check.id, targetOrigin: auth.origin, openUrl: target.url ?? auth.origin,
+    return { kind: 'LOGIN_CHECK', jobId: check.id, targetOrigin: auth.origin, openUrl: movedUrl(typeof target.url === 'string' ? target.url : auth.origin),
       auth: check.verifyOnly ? { ...auth, autoLogin: false, autoTotp: false } : auth,
       account: { id: check.account.id, name: check.account.name, platform: check.account.platform.name },
       recipe: { engine: target.engine ?? object(check.account.settings).extensionEngine ?? 'generic', workflow: 'login' } };

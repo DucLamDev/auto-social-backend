@@ -1,5 +1,18 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.8.2: nhận ra thêm tài khoản đã đăng nhập
+
+- **daily.dev**: trang đã chuyển từ `app.daily.dev` sang `daily.dev`; tài khoản đã nhập tự dùng tên miền mới (backend
+  1.6.2). Cấp quyền `https://daily.dev` trong Cài đặt tiện ích nếu được hỏi.
+- **Trang chưa có cách nhận diện riêng** (daily.dev, Tumblr…): tiện ích coi là đúng tài khoản khi thanh điều hướng có
+  link tới đúng **URL hồ sơ** đã khai, hoặc tự mở URL hồ sơ đó một lần và thấy nút chỉ chủ tài khoản mới có (Edit
+  profile, Edit appearance, Modifier l'apparence, Chỉnh sửa hồ sơ…). Vì vậy cần khai đúng URL hồ sơ cho từng tài khoản.
+- **Hugging Face**: đọc tên tài khoản đang đăng nhập từ trang (`/api/whoami-v2`), không cần mở menu avatar.
+- **Bluesky**: đọc handle và email của phiên đang đăng nhập (chỉ hai trường này, không đọc token). Email trùng email
+  đăng nhập đã khai thì nhận đúng tài khoản dù handle đã đổi; backend lưu handle mới.
+- **"Chrome đang đăng nhập tài khoản khác"** giờ ghi rõ `@handle` đang đăng nhập và `@handle` đã cấu hình.
+- Nạp lại extension trong `chrome://extensions` để dùng bản 1.8.2.
+
 ## Bản 1.8.1: kiểm tra đăng nhập gọn và đúng hơn
 
 - **Kiểm tra đăng nhập xong là đóng tab**, kể cả popup đăng nhập Google, dù thành công hay cần thao tác. Kết quả xem

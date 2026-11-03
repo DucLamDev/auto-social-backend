@@ -24,13 +24,29 @@ export interface ExtensionSession {
   allowIdentityByEmail?: boolean;
   allowedOrigins?: string[];
 }
+/**
+ * Sites that moved their web app to another origin. Sessions saved before the
+ * move keep working: the extension is sent the new origin and login URL.
+ */
+export const MOVED_ORIGINS: Readonly<Record<string, string>> = { 'https://app.daily.dev': 'https://daily.dev' };
+
+export function movedUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const target = MOVED_ORIGINS[parsed.origin];
+    return target ? `${target}${parsed.pathname}${parsed.search}${parsed.hash}` : url;
+  } catch { return url; }
+}
+
 export function sessionOf(settings: unknown): ExtensionSession | undefined {
   const session = object(object(settings).extensionSession);
-  return typeof session.deviceId === 'string' && typeof session.expectedUsername === 'string' ? session as unknown as ExtensionSession : undefined;
+  if (typeof session.deviceId !== 'string' || typeof session.expectedUsername !== 'string') return undefined;
+  const stored = session as unknown as ExtensionSession;
+  return MOVED_ORIGINS[stored.origin] ? { ...stored, origin: MOVED_ORIGINS[stored.origin]!, loginUrl: movedUrl(stored.loginUrl) } : stored;
 }
 export function sessionScope(settings: unknown): string {
   const loginTarget = object(object(settings).extensionLoginTarget);
-  const url = new URL(typeof loginTarget.url === 'string' ? loginTarget.url : parseExtensionDeliverySettings(settings).targetUrl);
+  const url = new URL(movedUrl(typeof loginTarget.url === 'string' ? loginTarget.url : parseExtensionDeliverySettings(settings).targetUrl));
   if (url.hostname.endsWith('.quora.com')) return 'https://quora.com';
   if (url.hostname.endsWith('.substack.com')) return 'https://substack.com';
   return url.origin;
@@ -61,7 +77,7 @@ export class ExtensionAccountSessionService {
       const settings = object(account.settings);
       if (!dto.expectedUsername.trim()) throw new BadRequestException('Platform username is required');
       const loginTarget = object(settings.extensionLoginTarget);
-      const target = new URL(typeof loginTarget.url === 'string' ? loginTarget.url : parseExtensionDeliverySettings(settings).targetUrl);
+      const target = new URL(movedUrl(typeof loginTarget.url === 'string' ? loginTarget.url : parseExtensionDeliverySettings(settings).targetUrl));
       const device = await tx.extensionDevice.findFirst({ where: { id: dto.deviceId, ownerId, revokedAt: null }, select: { id: true } });
       if (!device) throw new BadRequestException('Choose an active paired Chrome profile owned by you');
       const busy = await tx.publishJob.count({ where: { platformAccountId: accountId, status: PublishJobStatus.NEEDS_ACTION,
