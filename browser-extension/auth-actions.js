@@ -108,6 +108,18 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
       } catch { /* Other identity markers may still be available. */ }
     } else if (job.recipe.engine === 'reddit') {
       try { const r = await fetch('/api/v1/me', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) }); if (r.ok) identity = (await r.json()).name; } catch { /* DOM fallback */ }
+    } else if (location.hostname === 'bsky.app') {
+      // The Bluesky web app keeps the signed-in account in localStorage
+      // (BSKY_STORAGE.session). Read only its handle and email, never its tokens.
+      try {
+        const stored = JSON.parse(localStorage.getItem('BSKY_STORAGE') || 'null');
+        const current = stored?.session?.currentAccount;
+        const saved = current ? (stored.session.accounts ?? []).find(account => account?.did === current.did) : null;
+        const handle = current?.handle || saved?.handle;
+        const email = current?.email || saved?.email;
+        if (typeof handle === 'string' && handle) identity = handle;
+        if (typeof email === 'string' && email) ownEmail = email;
+      } catch { /* DOM fallback */ }
     } else if (location.hostname === 'huggingface.co') {
       // The hub's own session endpoint names the signed-in user (the avatar menu is closed).
       try { const r = await fetch('/api/whoami-v2', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) }); if (r.ok) { const me = await r.json(); if (typeof me?.name === 'string') identity = me.name; } } catch { /* DOM fallback */ }

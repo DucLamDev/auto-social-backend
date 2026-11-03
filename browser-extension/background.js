@@ -364,7 +364,8 @@ async function authenticateTask(task) {
           return true;
         }
       } else if (result?.state === 'mismatch') {
-        return stop('Chrome đang đăng nhập tài khoản khác. Kiểm tra hồ sơ đã gán trên web; chưa điền hoặc đăng bài.', 'ACCOUNT_MISMATCH', false, false, result.detectedUsername);
+        const detected = String(result.detectedUsername ?? '').trim().slice(0, 80);
+        return stop(`Chrome đang đăng nhập tài khoản khác${detected ? ` (@${detected.replace(/^@/, '')})` : ''}, không phải tài khoản đã cấu hình${task.job.auth.expectedUsername ? ` (@${String(task.job.auth.expectedUsername).replace(/^@/, '')})` : ''}. Đúng là tài khoản cần dùng thì sửa Username và URL hồ sơ ở Phiên Chrome / 2FA; chưa điền hoặc đăng bài.`, 'ACCOUNT_MISMATCH', false, false, result.detectedUsername);
       } else if (result?.state === 'challenge') {
         return stop(result.message, 'AUTH_REQUIRED', false, result.googleBlocked === true);
       } else if (['identifier', 'password', 'totp', 'google', 'chooser', 'alternate', 'totpChoice', 'openLogin', 'sso', 'accountMenu', 'usePassword'].includes(result?.state)) {

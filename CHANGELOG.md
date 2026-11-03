@@ -12,6 +12,9 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   đã nhập tự dùng tên miền mới, không cần nhập lại. Với trang chưa có cách nhận diện riêng, tiện ích nhận tài khoản khi
   thấy link tới đúng URL hồ sơ đã khai trong thanh điều hướng, hoặc tự mở URL hồ sơ đó một lần và thấy nút chỉ chủ tài
   khoản mới có (Edit profile, Modifier l'apparence…). Hugging Face đọc tên tài khoản đang đăng nhập từ chính trang.
+  Bluesky đọc handle và email của phiên đang đăng nhập: email trùng email đăng nhập đã khai thì nhận đúng tài khoản và
+  tự cập nhật handle mới. Khi Chrome đăng nhập tài khoản khác, lời báo ghi rõ @handle đang đăng nhập và @handle đã cấu
+  hình để sửa đúng chỗ.
 ## 1.6.1 · 03/11/2026
 ### Sửa lỗi
 - Kiểm tra đăng nhập hàng loạt đóng tab, nhận đúng tài khoản và không đứng im (tiện ích 1.8.1)

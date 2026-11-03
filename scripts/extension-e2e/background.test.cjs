@@ -845,3 +845,11 @@ test('a profile on another site is never opened during a login check', async () 
   assert.deepEqual(state.openedUrls, []);
   assert.equal(state.reports[0].outcome, 'NEEDS_ACTION');
 });
+
+test('a different signed-in account is named in the message so the operator can fix the profile', async () => {
+  const { state, worker } = setup();
+  state.authResult = { state: 'mismatch', url: 'https://forum.test/', detectedUsername: 'real-handle' };
+  await worker.authenticateTask({ tabId: 8, job: loginCheck({ expectedUsername: 'configured-handle' }) });
+  assert.match(state.reports[0].message, /@real-handle/);
+  assert.match(state.reports[0].message, /@configured-handle/);
+});

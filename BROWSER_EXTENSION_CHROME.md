@@ -8,6 +8,9 @@
   link tới đúng **URL hồ sơ** đã khai, hoặc tự mở URL hồ sơ đó một lần và thấy nút chỉ chủ tài khoản mới có (Edit
   profile, Edit appearance, Modifier l'apparence, Chỉnh sửa hồ sơ…). Vì vậy cần khai đúng URL hồ sơ cho từng tài khoản.
 - **Hugging Face**: đọc tên tài khoản đang đăng nhập từ trang (`/api/whoami-v2`), không cần mở menu avatar.
+- **Bluesky**: đọc handle và email của phiên đang đăng nhập (chỉ hai trường này, không đọc token). Email trùng email
+  đăng nhập đã khai thì nhận đúng tài khoản dù handle đã đổi; backend lưu handle mới.
+- **"Chrome đang đăng nhập tài khoản khác"** giờ ghi rõ `@handle` đang đăng nhập và `@handle` đã cấu hình.
 - Nạp lại extension trong `chrome://extensions` để dùng bản 1.8.2.
 
 ## Bản 1.8.1: kiểm tra đăng nhập gọn và đúng hơn

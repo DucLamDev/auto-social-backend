@@ -427,3 +427,23 @@ test('on the configured profile page only owner controls count as the signed-in 
     assert.equal((await visitor.evaluate(accountAuthStep, { job: scoped })).state, 'unknown');
   } finally { await owner.close(); await visitor.close(); }
 });
+
+test('Bluesky identifies the signed-in account from its own session storage, never returning tokens', async () => {
+  const page = await pageAt('https://bsky.app/', '<nav><a href="/profile/someone.bsky.social">someone</a></nav>');
+  const scoped = { ...job, targetOrigin: 'https://bsky.app', recipe: { engine: 'bluesky' },
+    auth: { ...job.auth, expectedUsername: 'old-handle.bsky.social', profileUrl: 'https://bsky.app/profile/old-handle.bsky.social', loginUsername: 'owner@example.test', allowIdentityByEmail: true } };
+  const store = (handle, email) => page.evaluate(([h, e]) => localStorage.setItem('BSKY_STORAGE', JSON.stringify({ session: {
+    accounts: [{ did: 'did:plc:abc', handle: h, email: e, accessJwt: 'secret-access-jwt', refreshJwt: 'secret-refresh-jwt' }],
+    currentAccount: { did: 'did:plc:abc', accessJwt: 'secret-access-jwt' } } })), [handle, email]);
+  try {
+    await store('new-handle.bsky.social', 'owner@example.test');
+    const own = await page.evaluate(accountAuthStep, { job: scoped });
+    assert.equal(own.state, 'authenticated', 'the configured login email proves the account even after a handle change');
+    assert.equal(own.detectedUsername, 'new-handle.bsky.social');
+    assert.ok(!JSON.stringify(own).includes('secret'));
+    await store('stranger.bsky.social', 'stranger@example.test');
+    const other = await page.evaluate(accountAuthStep, { job: scoped });
+    assert.equal(other.state, 'mismatch');
+    assert.equal(other.detectedUsername, 'stranger.bsky.social');
+  } finally { await page.close(); }
+});
