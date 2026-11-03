@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { PublishJobStatus } from '@prisma/client';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
 import { sha256 } from '../common/utils/crypto.utils';
@@ -5,6 +6,8 @@ import { PrismaService } from '../database/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { createHash } from 'node:crypto';
 import { EXTENSION_RESULT_UNKNOWN, ExtensionAgentService, forumPost, threadIdFromUrl } from './extension-agent.service';
+import { EXTENSION_RECIPES } from '../connectors/extension/extension-delivery';
+import { ExtensionSelectorSuggestionService } from './ui-recovery/selector-suggestion.service';
 
 const device = { id: 'dev-1', ownerId: 'owner-1', name: 'Chrome' };
 const settings = { delivery: 'extension', extensionEngine: 'xenforo', extensionTargetUrl: 'https://voz.vn/f/a.17/post-thread', extensionAutoSubmit: true };
@@ -133,6 +136,28 @@ describe('ExtensionAgentService', () => {
     expect(task?.post).toEqual({ title: 'Tiêu đề', body: 'Nội dung', summary: '' });
     const claimCall = (prisma.publishJob.updateMany.mock.calls[1] as [{ where: Record<string, unknown> }])[0];
     expect(claimCall.where).toMatchObject({ id: 'job-1', lockedAt: null, lastErrorCode: null });
+  });
+
+  it('sends approved AI selectors for this destination ahead of the built-in ones, and the recovery flag', async () => {
+    const { prisma, campaignStatus, storage } = setup();
+    const approvedFor = jest.fn().mockResolvedValue([{ field: 'body', selector: 'div.new-editor' }, { field: 'submit', selector: 'button.new-post' }]);
+    const service = new ExtensionAgentService(
+      prisma as unknown as PrismaService, campaignStatus as unknown as CampaignStatusService, storage as unknown as StorageService,
+      { approvedFor } as unknown as ExtensionSelectorSuggestionService,
+      { get: (key: string) => key === 'EXTENSION_UI_RECOVERY_ENABLED' } as unknown as ConfigService,
+    );
+    prisma.publishJob.findFirst.mockResolvedValueOnce({ id: 'job-1' });
+    prisma.publishJob.findUniqueOrThrow.mockResolvedValue({
+      id: 'job-1',
+      platformAccount: { id: 'acc-1', name: 'Voz', settings, platform: { name: 'Voz Forums', slug: 'voz-forums' } },
+      target: { campaign: { name: 'C' }, contentVariant: { title: 'Tiêu đề', body: 'Nội dung', hashtags: [], content: { canonicalUrl: null } } },
+    });
+    const task = await service.claim(device);
+    expect(approvedFor).toHaveBeenCalledWith('owner-1', 'xenforo', 'https://voz.vn');
+    expect(task?.recipe.bodySelectors[0]).toBe('div.new-editor');
+    expect(task?.recipe.submitSelectors[0]).toBe('button.new-post');
+    expect(task?.uiRecovery).toEqual({ enabled: true });
+    expect(EXTENSION_RECIPES.xenforo.bodySelectors).not.toContain('div.new-editor');
   });
 
   it('completes a job only with a thread URL on the configured forum', async () => {

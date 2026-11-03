@@ -1,6 +1,15 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.5.0 · 03/11/2026
+### Tính năng
+- AI gợi ý ô và nút khi giao diện mạng xã hội thay đổi (phía máy chủ)
+  Khi tiện ích Chrome không tìm thấy ô tiêu đề, ô nội dung, nút mở khung soạn hoặc nút Đăng, nó có thể gửi danh sách
+  phần tử đang hiện (đã che email, số, chuỗi dài; không có giá trị ô nhập hay mật khẩu) để AI chọn đúng phần tử. Máy
+  chủ kiểm lại từng lựa chọn (đúng loại ô, nút Đăng không phải nút Huỷ / Xoá / Nháp, đủ độ tin cậy) và lưu thành gợi ý
+  chờ duyệt. Gợi ý chưa duyệt chỉ được dùng để điền sẵn, bạn tự bấm Đăng; ADMIN duyệt trên API hoặc qua Codex (MCP) thì
+  lần sau tiện ích tự đăng bằng selector đó. Tắt sẵn (EXTENSION_UI_RECOVERY_ENABLED); cần chạy migration mới. Phần tiện
+  ích dùng tính năng này ra ở bản tiện ích tiếp theo.
 ## 1.4.0 · 03/11/2026
 ### Tính năng
 - Codex xem và điều phối hệ thống qua MCP

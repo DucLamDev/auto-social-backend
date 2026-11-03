@@ -14,6 +14,7 @@ import { sha256 } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
 import { ExtensionAgentService } from '../extension-agent/extension-agent.service';
 import { ExtensionLoginCheckService } from '../extension-agent/extension-login-check.service';
+import { ExtensionSelectorSuggestionService } from '../extension-agent/ui-recovery/selector-suggestion.service';
 import { PlatformAccountsService } from '../platform-accounts/platform-accounts.service';
 import { ListPublishJobsQueryDto } from '../publishing/dto/list-publish-jobs-query.dto';
 import { PublishJobsService } from '../publishing/publish-jobs.service';
@@ -86,6 +87,7 @@ export class McpToolsService {
     private readonly campaigns: CampaignsService,
     private readonly automation: CampaignAutomationService,
     private readonly ai: AiContentService,
+    private readonly suggestions: ExtensionSelectorSuggestionService,
     @Optional() private readonly redis?: RedisService,
   ) {
     this.definitions = new Map(this.buildTools().map((definition) => [definition.name, definition]));
@@ -372,6 +374,36 @@ export class McpToolsService {
         input: z.object({}),
         access: 'read',
         run: () => this.ai.providers(),
+      }),
+      tool({
+        name: 'list_selector_suggestions',
+        title: 'List AI selector suggestions',
+        description: 'When the Chrome extension could not find a composer field after a site redesign, the AI proposed which element to use. Approved suggestions run with automatic submit; pending ones only pre-fill.',
+        input: z.object({
+          status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(),
+          engine: z.string().max(40).optional(),
+          limit: z.number().int().min(1).max(200).default(50),
+        }),
+        access: 'read',
+        run: ({ principal }, args) => this.suggestions.list(principal.ownerId, args),
+      }),
+      tool({
+        name: 'approve_selector_suggestion',
+        title: 'Approve a selector suggestion',
+        description: 'Let the extension use this AI-proposed selector with automatic submit on that site. Check sampleUrl and elementSummary first; only approve after a person confirmed it.',
+        input: z.object({ id }),
+        access: 'write',
+        roles: [RoleName.ADMIN],
+        run: ({ principal }, args) => this.suggestions.approve(principal.ownerId, args.id, principal.ownerId),
+      }),
+      tool({
+        name: 'reject_selector_suggestion',
+        title: 'Reject a selector suggestion',
+        description: 'Never offer this AI-proposed selector to the extension again.',
+        input: z.object({ id }),
+        access: 'write',
+        roles: [RoleName.ADMIN],
+        run: ({ principal }, args) => this.suggestions.reject(principal.ownerId, args.id, principal.ownerId),
       }),
       tool({
         name: 'create_ai_campaign_draft',

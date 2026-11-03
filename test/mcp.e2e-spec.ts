@@ -15,6 +15,7 @@ import { GlobalExceptionFilter } from '../src/common/filters/global-exception.fi
 import { PrismaService } from '../src/database/prisma.service';
 import { ExtensionAgentService } from '../src/extension-agent/extension-agent.service';
 import { ExtensionLoginCheckService } from '../src/extension-agent/extension-login-check.service';
+import { ExtensionSelectorSuggestionService } from '../src/extension-agent/ui-recovery/selector-suggestion.service';
 import { McpController } from '../src/mcp/mcp.controller';
 import { McpTokenGuard } from '../src/mcp/mcp-token.guard';
 import { McpTokenService } from '../src/mcp/mcp-token.service';
@@ -50,6 +51,7 @@ describe('MCP endpoint (e2e)', () => {
         { provide: CampaignsService, useValue: {} },
         { provide: CampaignAutomationService, useValue: {} },
         { provide: AiContentService, useValue: { providers: jest.fn().mockResolvedValue([]) } },
+        { provide: ExtensionSelectorSuggestionService, useValue: { list: jest.fn().mockResolvedValue([]) } },
       ],
     }).compile();
     app = module.createNestApplication();

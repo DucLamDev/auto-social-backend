@@ -8,6 +8,7 @@ import { CampaignsService } from '../campaigns/campaigns.service';
 import { PrismaService } from '../database/prisma.service';
 import { ExtensionAgentService } from '../extension-agent/extension-agent.service';
 import { ExtensionLoginCheckService } from '../extension-agent/extension-login-check.service';
+import { ExtensionSelectorSuggestionService } from '../extension-agent/ui-recovery/selector-suggestion.service';
 import { PlatformAccountsService } from '../platform-accounts/platform-accounts.service';
 import { PublishJobsService } from '../publishing/publish-jobs.service';
 import { RedisService } from '../queue/redis.service';
@@ -35,6 +36,7 @@ function setup(config: Record<string, unknown> = {}) {
       approve: jest.fn().mockResolvedValue({ campaign: { id: 'campaign-1', name: 'Launch', status: 'RUNNING', automationState: 'APPROVED', automationErrorCode: null } }),
     },
     ai: { providers: jest.fn().mockResolvedValue([]) },
+    suggestions: { list: jest.fn().mockResolvedValue([]), approve: jest.fn().mockResolvedValue({ id: 's-1', status: 'APPROVED' }), reject: jest.fn() },
     redis: { consumeRateLimit: jest.fn().mockResolvedValue({ allowed: true, remaining: 9 }) },
   };
   const configService = { get: jest.fn((key: string) => config[key]) } as unknown as ConfigService;
@@ -43,7 +45,8 @@ function setup(config: Record<string, unknown> = {}) {
     mocks.accounts as unknown as PlatformAccountsService, mocks.agent as unknown as ExtensionAgentService,
     mocks.loginChecks as unknown as ExtensionLoginCheckService, mocks.jobs as unknown as PublishJobsService,
     mocks.campaigns as unknown as CampaignsService, mocks.automation as unknown as CampaignAutomationService,
-    mocks.ai as unknown as AiContentService, mocks.redis as unknown as RedisService,
+    mocks.ai as unknown as AiContentService, mocks.suggestions as unknown as ExtensionSelectorSuggestionService,
+    mocks.redis as unknown as RedisService,
   );
   return { service, mocks };
 }
@@ -106,6 +109,15 @@ describe('McpToolsService', () => {
     expect(retryKey).toBe(key);
     expect(mocks.audit.recordBestEffort).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'owner-1', action: 'MCP_CREATE_AI_CAMPAIGN_DRAFT', after: { tokenId: 'token-1', outcome: 'OK' } }));
     expect(JSON.stringify(mocks.audit.recordBestEffort.mock.calls)).not.toContain('backup');
+  });
+
+  it('lets only an ADMIN approve AI selector suggestions', async () => {
+    const { service, mocks } = setup();
+    const editorTry = await service.call({ principal: editor }, 'approve_selector_suggestion', { id: ACCOUNT_ID });
+    expect(editorTry.isError).toBe(true);
+    expect(mocks.suggestions.approve).not.toHaveBeenCalled();
+    await service.call({ principal: { ...editor, roles: [RoleName.ADMIN] } }, 'approve_selector_suggestion', { id: ACCOUNT_ID });
+    expect(mocks.suggestions.approve).toHaveBeenCalledWith('owner-1', ACCOUNT_ID, 'owner-1');
   });
 
   it('validates arguments before calling a service', async () => {

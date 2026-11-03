@@ -176,6 +176,7 @@ Các key hiện có trong `.env.example`:
 | Encryption | `CREDENTIAL_ENCRYPTION_KEY` | Base64 của đúng 32 random bytes |
 | Encryption | `CREDENTIAL_ENCRYPTION_KEY_VERSION` | Bắt đầu `v1`; dùng cho migration/rotation |
 | AI | `OPENAI_*`, `DEEPSEEK_*`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL`, `AI_TIMEOUT_MS` | Server-side only; model phải được account cấp quyền |
+| Extension | `EXTENSION_UI_RECOVERY_ENABLED`, `EXTENSION_UI_HINT_PROVIDER`, `EXTENSION_UI_HINT_MIN_CONFIDENCE` | Khi tiện ích không thấy ô / nút đăng bài (giao diện đổi), AI chọn trong danh sách phần tử tiện ích gửi lên; mặc định tắt. Gợi ý chưa duyệt chỉ điền sẵn, không tự bấm Đăng. Cần migration `20261103110000_extension_ui_recovery` |
 | MCP | `MCP_ENABLED`, `MCP_ALLOW_PUBLISH`, `MCP_RATE_LIMIT_PER_MINUTE` | Endpoint `POST /mcp` cho Codex; mặc định tắt. `MCP_ALLOW_PUBLISH=true` mới có công cụ duyệt và đăng thật. Token tạo bằng `docker compose -f docker-compose.prod.yml --env-file .env exec api corepack pnpm mcp:token create --email <email> --name codex` |
 | AI | `VPSTTT_AI_BASE_URL`, `VPSTTT_AI_API_KEY`, `VPSTTT_AI_MODEL`, `VPSTTT_AI_TIMEOUT_MS`, `VPSTTT_AI_MAX_CONCURRENCY`, `VPSTTT_AI_RPM` | AI API của IDE công ty (`AI_DEFAULT_PROVIDER=vpsttt`). Địa chỉ https lấy trong mục AI API của IDE; key phải cho phép IP công khai của VPS. Giữ concurrency/RPM không vượt hạn mức của key |
 | Storage | `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_FORCE_PATH_STYLE` | MinIO nội bộ hoặc S3-compatible production; user/bucket riêng |

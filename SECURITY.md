@@ -19,6 +19,18 @@
 - VPSTTT AI (AI API của IDE công ty) nhận brief, nội dung nguồn và hồ sơ thương hiệu để viết bài; không gửi credential,
   cookie hay token. Key nằm trong `.env` backend, chỉ dùng qua https và phải khai báo IP được phép trong IDE.
 
+## Gợi ý ô / nút bằng AI cho tiện ích
+
+- Tắt mặc định (`EXTENSION_UI_RECOVERY_ENABLED=false`). Chỉ thiết bị đang giữ đúng việc gọi được, trang phải cùng origin
+  đích của việc, tối đa 2 lần mỗi việc và 20 lần/giờ mỗi thiết bị.
+- Rời trình duyệt: tối đa 60 phần tử hiển thị mô tả bằng tag, loại, role, nhãn / placeholder / chữ ngắn (che email, chuỗi
+  dài, dãy số dài) và đường dẫn CSS; không gửi giá trị ô nhập, ô mật khẩu, cookie hay nội dung bài. Backend che lại lần
+  nữa và không gửi đường dẫn CSS cho AI.
+- AI chỉ trả số thứ tự; backend kiểm loại phần tử (nút Đăng phải có chữ kiểu Đăng / Post / Publish, không phải Huỷ / Xoá
+  / Nháp), độ tin cậy, và selector luôn lấy từ danh sách gốc. Chữ trên trang được coi là dữ liệu không tin cậy.
+- Gợi ý chưa duyệt chỉ được dùng để điền sẵn, tiện ích không tự bấm Đăng; ADMIN duyệt (web hoặc MCP, có `AuditLog`) thì
+  mới dùng cùng tự đăng, và chỉ cho đúng chủ sở hữu, engine, origin đó. Gợi ý bị từ chối không được dùng lại.
+
 ## MCP (Codex)
 
 - `POST /mcp` tắt mặc định (`MCP_ENABLED=false` trả 404). Token `mcp_…` ngẫu nhiên 32 byte, chỉ lưu SHA-256, có quyền

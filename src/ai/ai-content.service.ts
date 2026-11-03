@@ -102,7 +102,7 @@ const RETRYABLE_GENERATION_STATUSES = new Set<number>([HttpStatus.TOO_MANY_REQUE
 const VPSTTT_MAX_TOTAL_CHARS = 100_000;
 const VPSTTT_CHAR_MARGIN = 500;
 
-interface StructuredSpec<T> {
+export interface StructuredSpec<T> {
   name: string;
   jsonSchema: Record<string, unknown>;
   zod: z.ZodType<T>;
@@ -391,6 +391,16 @@ export class AiContentService {
       });
       throw error;
     }
+  }
+
+  /**
+   * One structured answer from the chosen (or default) provider, validated
+   * against `spec`, with the same single retry as content generation.
+   */
+  async generateStructured<T>(spec: StructuredSpec<T>, instructions: string, input: string, requestedProvider?: AiProvider): Promise<T> {
+    const provider = this.resolveProvider(requestedProvider);
+    await this.assertConfigured(provider);
+    return this.withGenerationRetry(() => this.requestStructured(provider, instructions, input, spec));
   }
 
   parseOutput(value: string): GeneratedVariant {

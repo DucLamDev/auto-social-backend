@@ -141,6 +141,7 @@ model User {
   oauthStates      OAuthState[]
   extensionDevices ExtensionDevice[]
   mcpTokens        McpToken[]
+  selectorSuggestions ExtensionSelectorSuggestion[]
 
   @@map("users")
 }
@@ -480,6 +481,7 @@ model PublishJob {
   platformAccount   PlatformAccount  @relation(fields: [platformAccountId], references: [id], onDelete: Restrict)
   attempts          PublishAttempt[]
   publishedPost     PublishedPost?
+  uiHints           ExtensionUiHint[]
 
   @@index([status, scheduledAt])
   @@index([status, nextAttemptAt])
@@ -578,6 +580,7 @@ model ExtensionDevice {
   owner      User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   claimedJobs PublishJob[]
   loginChecks ExtensionLoginCheck[]
+  uiHints     ExtensionUiHint[]
 
   @@index([ownerId, revokedAt])
   @@map("extension_devices")
@@ -600,6 +603,62 @@ model McpToken {
 
   @@index([ownerId, revokedAt])
   @@map("mcp_tokens")
+}
+
+/// One request from the extension when a composer control was not found: the
+/// sanitized candidate elements it saw and what the AI picked (by index).
+model ExtensionUiHint {
+  id           String          @id @default(uuid()) @db.Uuid
+  ownerId      String          @db.Uuid
+  publishJobId String          @db.Uuid
+  deviceId     String          @db.Uuid
+  engine       String
+  origin       String
+  path         String
+  missing      String[]
+  candidates   Json
+  /// RUNNING | READY | FAILED
+  status       String          @default("RUNNING")
+  provider     String?
+  result       Json?
+  errorCode    String?
+  createdAt    DateTime        @default(now())
+  finishedAt   DateTime?
+  job          PublishJob      @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
+  device       ExtensionDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([publishJobId, createdAt])
+  @@index([ownerId, createdAt])
+  @@map("extension_ui_hints")
+}
+
+/// A selector the AI proposed for one control on one site. The extension uses
+/// it with automatic submit only after an ADMIN approved it.
+model ExtensionSelectorSuggestion {
+  id             String    @id @default(uuid()) @db.Uuid
+  ownerId        String    @db.Uuid
+  engine         String
+  origin         String
+  /// title | body | submit | opener
+  field          String
+  selector       String
+  /// PENDING | APPROVED | REJECTED
+  status         String    @default("PENDING")
+  sampleUrl      String
+  elementSummary Json
+  confidence     Float
+  seenCount      Int       @default(1)
+  lastHintId     String?   @db.Uuid
+  reviewedById   String?   @db.Uuid
+  reviewedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  owner          User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, engine, origin, field, selector])
+  @@index([ownerId, status, updatedAt])
+  @@index([ownerId, engine, origin, status])
+  @@map("extension_selector_suggestions")
 }
 
 /// Authentication-only work. These rows can never become publish jobs.

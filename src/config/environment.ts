@@ -34,6 +34,9 @@ export interface Environment {
   MCP_ENABLED: boolean;
   MCP_ALLOW_PUBLISH: boolean;
   MCP_RATE_LIMIT_PER_MINUTE: number;
+  EXTENSION_UI_RECOVERY_ENABLED: boolean;
+  EXTENSION_UI_HINT_PROVIDER?: AiProvider;
+  EXTENSION_UI_HINT_MIN_CONFIDENCE: number;
   S3_ENDPOINT: string;
   S3_PUBLIC_URL: string;
   S3_REGION: string;
@@ -211,6 +214,16 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   const mcpAllowPublish = parseBoolean(raw.MCP_ALLOW_PUBLISH, 'MCP_ALLOW_PUBLISH', false);
   const mcpRateLimitPerMinute = parsePositiveInteger(raw.MCP_RATE_LIMIT_PER_MINUTE, 'MCP_RATE_LIMIT_PER_MINUTE', 60);
   if (mcpRateLimitPerMinute > 600) throw new Error('MCP_RATE_LIMIT_PER_MINUTE must not exceed 600');
+  // AI-assisted recovery when a composer field is not found on a redesigned page.
+  const extensionUiRecoveryEnabled = parseBoolean(raw.EXTENSION_UI_RECOVERY_ENABLED, 'EXTENSION_UI_RECOVERY_ENABLED', false);
+  const uiHintProviderRaw = typeof raw.EXTENSION_UI_HINT_PROVIDER === 'string' ? raw.EXTENSION_UI_HINT_PROVIDER.trim().toLowerCase() : '';
+  if (uiHintProviderRaw && !isAiProvider(uiHintProviderRaw)) {
+    throw new Error(`EXTENSION_UI_HINT_PROVIDER must be one of: ${AI_PROVIDER_IDS.join(', ')}`);
+  }
+  const uiHintMinConfidence = raw.EXTENSION_UI_HINT_MIN_CONFIDENCE === undefined ? 0.6 : Number(raw.EXTENSION_UI_HINT_MIN_CONFIDENCE);
+  if (!Number.isFinite(uiHintMinConfidence) || uiHintMinConfidence < 0 || uiHintMinConfidence > 1) {
+    throw new Error('EXTENSION_UI_HINT_MIN_CONFIDENCE must be between 0 and 1');
+  }
   const logLevel = typeof raw.LOG_LEVEL === 'string' ? raw.LOG_LEVEL : 'info';
   if (!['error', 'warn', 'info', 'debug', 'verbose'].includes(logLevel)) {
     throw new Error('LOG_LEVEL must be error, warn, info, debug, or verbose');
@@ -281,6 +294,9 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
     MCP_ENABLED: mcpEnabled,
     MCP_ALLOW_PUBLISH: mcpAllowPublish,
     MCP_RATE_LIMIT_PER_MINUTE: mcpRateLimitPerMinute,
+    EXTENSION_UI_RECOVERY_ENABLED: extensionUiRecoveryEnabled,
+    EXTENSION_UI_HINT_PROVIDER: uiHintProviderRaw || undefined,
+    EXTENSION_UI_HINT_MIN_CONFIDENCE: uiHintMinConfidence,
     OPENAI_TIMEOUT_MS: legacyOpenAiTimeoutMs,
   };
 }

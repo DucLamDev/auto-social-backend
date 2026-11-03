@@ -123,6 +123,14 @@ describe('validateEnvironment', () => {
     expect(() => validateEnvironment({ ...productionEnvironment(), MCP_RATE_LIMIT_PER_MINUTE: '601' })).toThrow('MCP_RATE_LIMIT_PER_MINUTE');
   });
 
+  it('keeps AI-assisted UI recovery off by default and validates its provider and threshold', () => {
+    expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({ EXTENSION_UI_RECOVERY_ENABLED: false, EXTENSION_UI_HINT_MIN_CONFIDENCE: 0.6, EXTENSION_UI_HINT_PROVIDER: undefined });
+    expect(validateEnvironment({ ...productionEnvironment(), EXTENSION_UI_RECOVERY_ENABLED: 'true', EXTENSION_UI_HINT_PROVIDER: 'VPSTTT', EXTENSION_UI_HINT_MIN_CONFIDENCE: '0.75' }))
+      .toMatchObject({ EXTENSION_UI_RECOVERY_ENABLED: true, EXTENSION_UI_HINT_PROVIDER: 'vpsttt', EXTENSION_UI_HINT_MIN_CONFIDENCE: 0.75 });
+    expect(() => validateEnvironment({ ...productionEnvironment(), EXTENSION_UI_HINT_PROVIDER: 'other' })).toThrow('EXTENSION_UI_HINT_PROVIDER');
+    expect(() => validateEnvironment({ ...productionEnvironment(), EXTENSION_UI_HINT_MIN_CONFIDENCE: '1.5' })).toThrow('EXTENSION_UI_HINT_MIN_CONFIDENCE');
+  });
+
   it('uses the legacy OpenAI timeout when AI_TIMEOUT_MS is absent', () => {
     const environment = productionEnvironment();
     delete environment.AI_TIMEOUT_MS;

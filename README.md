@@ -182,7 +182,8 @@ trong Swagger) để Codex hoặc agent khác xem và điều phối hệ thốn
 
 Công cụ (quyền giống API web của chủ token, chỉ trả dữ liệu không bí mật): `list_accounts`, `list_extension_devices`,
 `list_login_checks`, `queue_login_checks` (ADMIN), `list_publish_jobs`, `get_publish_job`, `retry_publish_job`,
-`requeue_extension_job`, `list_campaigns`, `get_campaign`, `ai_providers`, `create_ai_campaign_draft` (AI viết bài,
+`requeue_extension_job`, `list_campaigns`, `get_campaign`, `ai_providers`, `list_selector_suggestions`,
+`approve_selector_suggestion` / `reject_selector_suggestion` (ADMIN), `create_ai_campaign_draft` (AI viết bài,
 dừng ở chờ duyệt, tối đa 10 lần/giờ). `approve_campaign` (duyệt và đăng thật) chỉ xuất hiện khi `MCP_ALLOW_PUBLISH=true`,
 bắt `confirm: true`, tối đa 5 lần/giờ. Lệnh ghi cần token có quyền `write` và vai trò ADMIN/EDITOR; mọi lệnh ghi, kể cả
 bị từ chối, được ghi `AuditLog` (`MCP_<TÊN_CÔNG_CỤ>`, không lưu tham số). Mỗi token tối đa `MCP_RATE_LIMIT_PER_MINUTE`
