@@ -1,6 +1,13 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.2.1 · 03/11/2026
+### Cải tiến
+- Tiện ích Chrome nhận bài kế tiếp ngay sau bài trước (bản 1.7.6)
+  Đăng xong một bài, hoặc bài chuyển sang chờ bạn xử lý (bản nháp chờ bấm Đăng, CAPTCHA, đăng nhập), tiện ích hỏi bài
+  tiếp theo sau khoảng 1 giây thay vì chờ chu kỳ 30 giây, nên hàng đợi nhiều bài chạy nhanh hơn. Vẫn chỉ một lượt đăng
+  tại một thời điểm, tối đa ba tab; tiện ích đang tạm dừng thì không nhận bài. Tệp VERSION được sửa lại còn đúng một
+  dòng. Nạp lại extension trong chrome://extensions để dùng bản mới.
 ## 1.2.0 · 02/11/2026
 ### Tính năng
 - Mật khẩu và khoá TOTP Google dùng chung khi nhập file tài khoản

@@ -11,8 +11,10 @@ const job = {
   recipe: { engine: 'discourse', successUrlPattern: '/t/[^/]+/\\d+' },
 };
 
-function setup() {
-  const state = { ready: true, fills: 0, result: { status: 'filled' }, reports: [], injections: [], openedUrls: [], claims: 0, waiting: false, alarm: null, alarmCreates: 0, jobs: null, claimRequests: [], nextTabId: 0 };
+// Existing cases drive polling by hand; the early next-job poll stays out of
+// their way unless a test asks for it.
+function setup({ nextJobDelay = 60_000 } = {}) {
+  const state ={ ready: true, fills: 0, result: { status: 'filled' }, reports: [], injections: [], openedUrls: [], claims: 0, waiting: false, alarm: null, alarmCreates: 0, jobs: null, claimRequests: [], nextTabId: 0 };
   const area = initial => {
     const data = structuredClone(initial);
     return {
@@ -63,7 +65,8 @@ function setup() {
     } },
   };
   const source = fs.readFileSync(path.join(__dirname, '../../browser-extension/background.js'), 'utf8')
-    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice)\.js';\r?\n/gm, '');
+    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice)\.js';\r?\n/gm, '')
+    .replace(/const NEXT_JOB_DELAY_MS = [\d_]+;/, `const NEXT_JOB_DELAY_MS = ${nextJobDelay};`);
   const context = vm.createContext({
     chrome, URL, Date, AbortSignal, setTimeout, clearTimeout,
     canFillPage: function canFillPage() {}, fillAndSubmit: function fillAndSubmit() {}, readErrors: function readErrors() {}, readModeration: function readModeration() {}, readPublishedPost: function readPublishedPost() {},
@@ -95,7 +98,7 @@ function setup() {
       return { ok: true, json: async () => ({ success: true, data }) };
     },
   });
-  vm.runInContext(source + '\nglobalThis.worker = { start, sweep, getTasks, tick, ensureAlarm, withDeadline, authenticateTask };', context);
+  vm.runInContext(source + '\nglobalThis.worker = { start, sweep, getTasks, tick, tickSoon, ensureAlarm, withDeadline, authenticateTask };', context);
   return { state, chrome, worker: context.worker };
 }
 
@@ -615,4 +618,59 @@ test('a report refused by the backend stops retrying, and long messages are shor
     pendingReport: { outcome: 'NEEDS_ACTION', extra: { reason: 'SUBMIT_REJECTED', message: 'y'.repeat(1000) }, closeTab: false } }]);
   await worker.sweep();
   assert.ok(state.reports[0].message.length <= 450);
+});
+
+// ---- next post starts right after the previous one frees its slot ----------
+const forumJob = host => ({ ...job, jobId: host, targetOrigin: `http://${host}.test`, openUrl: `http://${host}.test/new-topic` });
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+test('a published post starts the next queued post without waiting for the alarm', async () => {
+  const { state, worker } = setup({ nextJobDelay: 0 });
+  state.jobs = [forumJob('a'), forumJob('b')];
+  state.fillResult = async pending => ({ status: 'published', url: `${pending.targetOrigin}/t/post/1` });
+  await worker.tick();
+  for (let i = 0; i < 20 && state.fills < 2; i++) await pause(5);
+  assert.equal(state.claims, 2, 'the second post was claimed without a manual poll');
+  assert.equal(state.fills, 2);
+  assert.deepEqual(state.reports.map(report => report.outcome), ['PUBLISHED', 'PUBLISHED']);
+});
+
+test('a draft handed to the operator lets the next forum start right away', async () => {
+  const { state, worker } = setup({ nextJobDelay: 0 });
+  state.jobs = [forumJob('a'), forumJob('b')];
+  state.result = { status: 'filled' };
+  await worker.tick();
+  for (let i = 0; i < 20 && state.fills < 2; i++) await pause(5);
+  assert.equal(state.fills, 2);
+  const tasks = Object.values(await worker.getTasks());
+  assert.deepEqual(tasks.map(task => task.phase), ['waitingUser', 'waitingUser'], 'both drafts stay tracked for the operator');
+});
+
+test('a paused extension does not claim the next post after one finishes', async () => {
+  const { state, worker, chrome } = setup({ nextJobDelay: 0 });
+  state.jobs = [forumJob('a'), forumJob('b')];
+  state.fillResult = async pending => {
+    await chrome.storage.local.set({ paused: true });
+    return { status: 'published', url: `${pending.targetOrigin}/t/post/1` };
+  };
+  await worker.tick();
+  await settleUntil(() => state.reports.length === 1);
+  await pause(30);
+  assert.equal(state.claims, 1);
+  assert.deepEqual(state.jobs.map(item => item.jobId), ['b']);
+});
+
+test('the early poll never starts a second flow while one is still filling', async () => {
+  const { state, worker } = setup({ nextJobDelay: 0 });
+  state.jobs = [forumJob('a'), forumJob('b'), forumJob('c')];
+  let release;
+  state.fillResult = () => new Promise(resolve => { release = resolve; });
+  await worker.tick();
+  await settleUntil(() => state.fills === 1);
+  worker.tickSoon();
+  worker.tickSoon();
+  await pause(30);
+  assert.equal(state.claims, 1, 'MAX_ACTIVE_FLOWS still holds');
+  assert.equal(state.fills, 1);
+  release({ status: 'filled' });
 });

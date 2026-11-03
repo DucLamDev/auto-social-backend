@@ -27,6 +27,9 @@ const MAX_OWNED_TABS = 3;
 const MAX_REPORT_MESSAGE = 450;
 const MAX_ACTIVE_FLOWS = 1;
 const MAX_LOGIN_CHECKS = 1;
+// When a post finishes or is handed to the operator, ask for the next one
+// shortly instead of waiting up to 30 seconds for the alarm.
+const NEXT_JOB_DELAY_MS = 1_000;
 const LOG_LIMIT = 20;
 const SUPPORTED_ENGINES = ['discourse', 'xenforo', 'phpbb', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'];
 
@@ -255,6 +258,7 @@ async function authenticateTask(task) {
     }
     await setTask(task.tabId, { ...current, phase: 'waitingAuth', deadline: Date.now() + WAIT_USER_MS });
     await focusTab(current.authTabId ?? task.tabId);
+    tickSoon();
     return false;
   };
   try {
@@ -385,6 +389,7 @@ async function fill(task) {
         await report(task, 'NEEDS_ACTION', { reason: identity?.state === 'mismatch' ? 'ACCOUNT_MISMATCH' : 'AUTH_REQUIRED', message: 'Phiên thay đổi trước khi điền bài. Kiểm tra đúng tài khoản trong hồ sơ Chrome.' });
         filling.delete(task.job.jobId);
         await setTask(task.tabId, { ...task, phase: 'waitingAuth', waitingSince: Date.now(), deadline: Date.now() + WAIT_USER_MS });
+        tickSoon();
         return;
       }
       task = { ...task, job: { ...task.job, verifiedSessionUsername: identity.detectedUsername || task.job.auth.expectedUsername } };
@@ -437,12 +442,14 @@ async function fill(task) {
       await setTask(task.tabId, { ...task, beforeUrls: result.beforeUrls ?? [], phase: 'waitingUser', waitingMessage: result.message, waitingReason,
         waitingSince: now, deadline: now + (['SUBMIT_REJECTED', 'SUBMIT_UNCONFIRMED'].includes(waitingReason) ? AFTER_SUBMIT_WAIT_MS : WAIT_USER_MS) });
       await focusTab(task.tabId);
+      tickSoon();
       return;
     }
     case 'login':
       await report(task, 'FAILED', { reason: 'LOGIN_REQUIRED', message: result.message });
       await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'LOGIN_REQUIRED', deadline: now + WAIT_USER_MS });
       await focusTab(task.tabId);
+      tickSoon();
       return;
     case 'mediaRequired':
     case 'unavailable':
@@ -452,6 +459,7 @@ async function fill(task) {
       await report(task, 'FAILED', { reason: 'EDITOR_NOT_FOUND', message: result?.message ?? 'Không nhận diện được trang' });
       await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'EDITOR_NOT_FOUND', deadline: now + WAIT_USER_MS });
       await focusTab(task.tabId);
+      tickSoon();
   }
 }
 
@@ -504,6 +512,7 @@ async function finishReport(task, outcome, extra, closeTab = false) {
     if (!await report(task, outcome, extra)) return;
     await setTask(task.tabId, null);
     if (closeTab) { try { await chrome.tabs.remove(task.tabId); } catch { /* already closed */ } }
+    if (task.job.kind !== 'LOGIN_CHECK') tickSoon();
   } finally {
     finishing.delete(task.job.jobId);
   }
@@ -573,6 +582,7 @@ async function concludeUnconfirmed(task, extra) {
   await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: extra.reason, waitingMessage: extra.message,
     waitingSince: now, deadline: now + AFTER_SUBMIT_WAIT_MS });
   await focusTab(task.tabId);
+  tickSoon();
 }
 
 /** The account's own posts page, when the Chrome session settings name it on this site. */
@@ -674,6 +684,16 @@ async function checkLoading(task) {
   if (current?.phase === 'loading' && Date.now() >= current.deadline && !probing.has(task.job.jobId)) {
     await finishReport(task, 'FAILED', { reason: 'PAGE_LOAD_FAILED', message: current.probeError ? `Không kiểm tra được form: ${current.probeError}` : 'Trang diễn đàn không tải xong' }, true);
   }
+}
+
+let nextJobTimer = null;
+// runTick still enforces MAX_ACTIVE_FLOWS, the tab budget, pause and origin
+// reservations; this only moves the next poll earlier. Debounced so several
+// transitions of one post cause a single extra heartbeat.
+function tickSoon() {
+  if (nextJobTimer) return;
+  nextJobTimer = setTimeout(() => { nextJobTimer = null; void tick(); }, NEXT_JOB_DELAY_MS);
+  nextJobTimer?.unref?.();
 }
 
 let tickInFlight = null;
@@ -803,6 +823,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     await report(task, 'NEEDS_ACTION', { reason: 'SUBMIT_UNCONFIRMED', message: 'Tab bị đóng ngay sau khi bấm Đăng. Kiểm tra diễn đàn.' });
   }
   await setTask(tabId, null);
+  if (task.job.kind !== 'LOGIN_CHECK') tickSoon();
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

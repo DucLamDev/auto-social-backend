@@ -1,5 +1,14 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.7.6: nhận bài kế tiếp ngay
+
+- Đăng xong một bài, hoặc bài chuyển sang chờ bạn xử lý (bản nháp chờ bấm Đăng, CAPTCHA, đăng nhập, không thấy form),
+  tiện ích hỏi backend bài kế tiếp sau khoảng 1 giây thay vì chờ chu kỳ 30 giây. Hàng đợi nhiều bài chạy nhanh hơn tới
+  30 giây mỗi bài.
+- Giới hạn giữ nguyên: một lượt đăng tại một thời điểm, tối đa ba tab tác vụ, không mở tab thứ hai trên diễn đàn đang
+  có bản nháp chờ. Tiện ích đang tạm dừng thì không nhận bài mới.
+- Nạp lại extension trong `chrome://extensions` để dùng bản 1.7.6.
+
 ## Bản 1.7.4: không kẹt hàng đợi, xác nhận bài chắc hơn
 
 - **Tab chờ không còn chặn bài mới.** Trước đây đủ 5 tab "chờ bạn" thì tiện ích ngừng nhận bài cho tới khi các tab hết
