@@ -116,16 +116,34 @@ def read_inputs(xlsx, paste, preferred_passwords=()):
     return prefer_xlsx_passwords(rows, preferred_passwords)
 
 
+PROFILE_PREFIXES = ('u', 'profile', 'members', 'member', 'user', 'by', 'in', 'blog', 'author', 'repositories')
+# Screens of the site itself, often pasted while signing up ("voz.vn/register/complete",
+# "dev.to/onboarding", "medium.com/get-started/topics"). They never name the account.
+APP_PAGES = {
+    'register', 'signup', 'sign-up', 'sign_up', 'login', 'log-in', 'signin', 'sign-in', 'sign_in', 'enter',
+    'onboarding', 'setup', 'get-started', 'getting-to-know-tumblr', 'welcome', 'start', 'email_confirmation',
+    'about', 'home', 'feed', 'explore', 'discover', 'search', 'topics', 'channels', 'dashboard', 'myworld',
+    'settings', 'preferences', 'notifications', 'account', 'accounts', 'me', 'new', 'hc', 'user_admin',
+}
+
+
 def profile_handle(row):
-    """Extract a public profile handle, not a login email or password."""
+    """Extract a public profile handle, not a login email or password.
+
+    Returns '' when the URL is a screen of the site rather than a profile, so the
+    login check discovers the signed-in account instead of expecting a wrong name.
+    """
     try:
         url = urlparse(row.get('profileUrl', ''))
         parts = [unquote(p) for p in url.path.split('/') if p]
         if (url.hostname or '').endswith('.blogspot.com'):
             return url.hostname.split('.')[0]
+        # Locale prefix such as aws.amazon.com/vi/profile.
+        if len(parts) >= 2 and re.fullmatch(r'[a-z]{2}(?:-[a-z]{2})?', parts[0], flags=re.I):
+            parts = parts[1:]
         if parts and parts[0].startswith('@'):
             handle = parts[0][1:]
-        elif len(parts) >= 2 and parts[0].lower() in ('u', 'profile', 'members', 'member', 'user', 'by', 'in'):
+        elif len(parts) >= 2 and parts[0].lower() in PROFILE_PREFIXES:
             handle = parts[1]
             if handle.isdigit() and len(parts) > 2:
                 handle = parts[2]
@@ -133,9 +151,12 @@ def profile_handle(row):
             handle = parts[2]
         elif 'u' in parts and len(parts) > parts.index('u') + 1:
             handle = parts[parts.index('u') + 1]
+        elif parts and parts[0].lower() not in APP_PAGES and parts[0].lower() not in PROFILE_PREFIXES:
+            handle = parts[0]
         else:
-            handle = parts[0] if parts else ''
-        return re.sub(r'(?:\.\d+|\.html)$', '', handle, flags=re.I)
+            handle = ''
+        handle = re.sub(r'(?:\.\d+|\.html)$', '', handle, flags=re.I)
+        return '' if handle.lower() in APP_PAGES or handle.isdigit() else handle
     except ValueError:
         return ''
 

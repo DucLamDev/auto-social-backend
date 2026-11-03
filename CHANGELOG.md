@@ -1,6 +1,17 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.6.3 · 03/11/2026
+### Sửa lỗi
+- Nhập file không còn lấy nhầm tên màn hình của trang làm username
+  Ô URL Profile điền link như `voz.vn/register/complete`, `dev.to/onboarding`, `medium.com/get-started/topics`,
+  `discord.com/channels/@me` từng bị đọc thành username "register", "onboarding"… nên kiểm tra đăng nhập luôn báo sai
+  tài khoản và tài khoản nằm mãi ở "Cần thao tác". Nay các link đó không được dùng: lần kiểm tra đầu nhận tài khoản đang
+  đăng nhập trong Chrome và lưu lại. Đọc đúng thêm link Tumblr `/blog/ten` và `/author/ten`. Nhập lại file để sửa các
+  tài khoản đã nhập trước đây.
+- Warrior Forum báo rõ là chỉ đăng thủ công
+  Điều khoản Warrior Forum cấm bot, script hay hệ thống tự động truy cập trang, nên luồng đăng ghi "Chỉ đăng thủ công"
+  kèm link điều khoản thay vì "chưa có luồng đăng" như đang chờ làm thêm.
 ## 1.6.2 · 03/11/2026
 ### Sửa lỗi
 - Nhập file tài khoản từ giao diện web cũ báo lỗi dễ hiểu thay vì "Too many fields"

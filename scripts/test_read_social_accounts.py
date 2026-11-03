@@ -56,6 +56,21 @@ class AccountInputTests(unittest.TestCase):
         self.assertEqual(selected[1]['expectedUsername'], 'vpsttt')
         self.assertEqual(selected[-1]['expectedUsername'], 'vpsttt')
 
+    def test_site_screens_are_not_taken_as_the_account_name(self):
+        handle = lambda url: accounts.profile_handle({'profileUrl': url})
+        for url in ['https://voz.vn/register/complete', 'https://dev.to/onboarding?referrer=x', 'https://medium.com/get-started/topics',
+                    'https://www.tumblr.com/getting-to-know-tumblr/topics?redirect_to=%2F', 'https://discord.com/channels/@me',
+                    'https://wordpress.com/setup/onboarding/domains?user_email=x', 'https://www.blogger.com/about/', 'https://flipboard.com/profile',
+                    'https://gravatar.com/profile/about', 'https://aws.amazon.com/vi/profile', 'https://gumroad.com/dashboard',
+                    'https://huggingface.co/email_confirmation', 'https://www.eventbrite.com/u/3012744608965/', 'https://substack.com/']:
+            self.assertEqual(handle(url), '', url)
+        self.assertEqual(handle('https://www.tumblr.com/blog/haihai581'), 'haihai581')
+        self.assertEqual(handle('https://plainenglish.io/author/gia-huy'), 'gia-huy')
+        self.assertEqual(handle('https://www.warriorforum.com/members/VPSTTT.html?utm_source=internal&utm_medium=user-menu'), 'VPSTTT')
+        self.assertEqual(handle('https://mewe.com/vpsttt_group/posts'), 'vpsttt_group')
+        self.assertEqual(handle('https://huggingface.co/VPSTTT'), 'VPSTTT')
+        self.assertEqual(handle('https://forum.linuxfoundation.org/profile/211511/Vpsttt'), 'Vpsttt')
+
 
 if __name__ == '__main__':
     unittest.main()

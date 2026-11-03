@@ -70,6 +70,16 @@ describe('account file onboarding', () => {
       expect(JSON.stringify(result)).not.toMatch(/google-a-password|google-b-password|JBSWY3DP|GEZDGNBV/);
     });
 
+    it('discovers the signed-in account when the profile cell is a site screen, not a profile', async () => {
+      const rows = await parseAccountUpload(Buffer.from('Social Network,Email,URL Profile\nMastodon.social,alice@example.test,https://mastodon.social/onboarding\n'), 'csv');
+      expect(rows[0]).toMatchObject({ profileUrl: 'https://mastodon.social/onboarding', expectedUsername: '' });
+      const { service, tx } = setup();
+      await service.import('owner', 'device-1', rows);
+      const settings = (tx.platformAccount.update.mock.calls[0] as [{ data: { settings: Record<string, Record<string, unknown>> } }])[0].data.settings;
+      expect(settings.extensionSession).toMatchObject({ expectedUsername: '', profileUrl: '', discoverIdentity: true });
+      expect((tx.platformAccount.create.mock.calls[0] as [{ data: Record<string, unknown> }])[0].data.name).toBe('Mastodon.social · alice@example.test');
+    });
+
     it('reports an invalid 2FA key on its row and still imports the others', async () => {
       const { service, credentials } = setup();
       const result = await service.import('owner', 'device-1', [{ ...mediumA, totpSecret: '123456' }, substackB]);
