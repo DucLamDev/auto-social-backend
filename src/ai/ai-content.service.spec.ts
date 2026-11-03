@@ -654,6 +654,11 @@ describe('AiContentService quality-checked generation', () => {
 
     expect(request(create, 0).instructions).toContain('Image (mandatory): one image generated from your description is attached to this Bluesky post.');
     expect(request(create, 0).instructions).toContain('landscape 3:2');
+    // The picture shows what is promoted, in a technology look, not a generic cosy scene.
+    expect(request(create, 0).instructions).toContain('depict the product or service the brief promotes');
+    expect(request(create, 0).instructions).toContain('Look: modern technology');
+    expect(request(create, 0).instructions).toContain('60 to 150 words, written like a brief to a designer');
+    expect(request(create, 0).instructions).toMatch(/Do not use lifestyle props \(coffee cups, plants/);
     expect(created[0]!.mediaRecommendation).toEqual({ type: 'image', altText: 'Máy chủ VPS trong phòng dữ liệu', prompt: 'A bright NVMe server rack, soft blue light' });
   });
 

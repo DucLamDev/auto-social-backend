@@ -170,7 +170,11 @@ export function imageInstructions(platformName: string, image?: PlatformImagePla
   return [
     `Image (mandatory): one image generated from your description is attached to this ${platformName} post.`,
     '- Set media.type to "image".',
-    `- media.prompt: an English prompt for an image generator, 40 to 120 words. Show the one idea this post is about, as ${image.style}; ${shape} framing. Use the brand colours if the brand profile names them. The image must contain no words, letters, numbers, logos, watermarks, screenshots of real products or recognisable people.`,
+    `- media.prompt: an English prompt for an image generator, 60 to 150 words, written like a brief to a designer: the subject and its concrete details, composition or camera angle, lighting, colour palette and rendering style. Show the one idea this post is about, as ${image.style}; ${shape} framing. Use the brand colours if the brand profile names them. The image must contain no words, letters, numbers, logos, watermarks, screenshots of real products or recognisable people.`,
+    // Generic, cosy stock scenes did not show what is being promoted (a coffee
+    // cup next to a mini PC for a VPS post); keep the picture on the subject.
+    '- Subject: depict the product or service the brief promotes and the technical idea of this post concretely (for example servers and racks, cloud infrastructure, proxies and network routes between nodes, terminals or dashboards drawn as abstract shapes without readable text, data flowing between devices). A reader should guess the topic from the image alone.',
+    '- Look: modern technology. Deep navy or dark backgrounds with blue, cyan or violet light, clean geometric, isometric or 3D-render style, subtle glow and depth. Do not use lifestyle props (coffee cups, plants, wooden desks, printed photos), countryside or nature metaphors (meadows, gates, hills, sky landscapes) or generic office stock scenes.',
     '- media.altText: one sentence in the language of the post describing what the image shows, for screen readers.',
     image.need === 'required'
       ? '- The image is the post here: the caption complements what it shows.'
@@ -191,7 +195,7 @@ function isBrief(content: SourceContent): boolean {
 function mediaForPlan(generated: GeneratedVariant, image: PlatformImagePlan | null): GeneratedVariant['media'] {
   if (!image) return { type: 'none', altText: '', prompt: null };
   const prompt = generated.media.prompt?.trim()
-    || `${image.style}. It illustrates: ${(generated.title ?? generated.body).replace(/\s+/g, ' ').slice(0, 300)}. No text, letters, logos or recognisable people.`;
+    || `${image.style}, modern technology look with dark navy background and blue or cyan light. It illustrates: ${(generated.title ?? generated.body).replace(/\s+/g, ' ').slice(0, 300)}. No text, letters, logos or recognisable people.`;
   return { type: 'image', altText: generated.media.altText.trim(), prompt };
 }
 

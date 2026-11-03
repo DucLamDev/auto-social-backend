@@ -27,18 +27,20 @@ export interface ConnectorLookup {
 // Feeds that crop to a square, or only accept 4:5 to 1.91:1 (Instagram).
 const SQUARE = new Set(['pixelfed-social', 'instagram', 'threads']);
 
+// Format and tone per feed. The subject and the technology look shared by every
+// destination are set in the writer's image instructions (imageInstructions).
 const STYLE: Record<string, string> = {
-  'pixelfed-social': 'an authentic, photographic square image with natural light and a calm, aesthetic composition; Pixelfed is a photo-first community',
-  instagram: 'a polished, visual-first square photo or lifestyle scene that stops the scroll',
-  threads: 'a casual, friendly square photo that feels personal rather than an advertisement',
-  linkedin: 'a clean, professional landscape photo or minimal business illustration suited to a B2B audience',
-  bluesky: 'a simple, friendly editorial illustration in landscape, easy to read at small size',
-  mastodon: 'a modest, informative landscape illustration; the fediverse dislikes ad-like visuals',
-  'mastodon-social': 'a modest, informative landscape illustration; the fediverse dislikes ad-like visuals',
-  'vivaldi-social': 'a modest, informative landscape illustration; the fediverse dislikes ad-like visuals',
-  tumblr: 'an expressive, artistic landscape illustration with personality',
-  x: 'a bold, high-contrast landscape visual with one clear focal point',
-  discord: 'a friendly, community-style landscape illustration',
+  'pixelfed-social': 'a crisp, photographic square image of real technology hardware (server or network equipment, a laptop with an abstract glowing interface) in cool, clean studio light; Pixelfed is a photo-first community',
+  instagram: 'a polished, visual-first square technology visual (product-style 3D render or high-tech photo) that stops the scroll',
+  threads: 'a friendly, modern square technology illustration that feels personal rather than an advertisement',
+  linkedin: 'a clean, professional landscape technology visual (data centre, cloud infrastructure or a minimal isometric diagram) suited to a B2B audience',
+  bluesky: 'a simple editorial technology illustration in landscape, easy to read at small size',
+  mastodon: 'an informative, modern technology illustration in landscape (isometric servers, network nodes, data flows); the fediverse dislikes ad-like visuals',
+  'mastodon-social': 'an informative, modern technology illustration in landscape (isometric servers, network nodes, data flows); the fediverse dislikes ad-like visuals',
+  'vivaldi-social': 'an informative, modern technology illustration in landscape (isometric servers, network nodes, data flows); the fediverse dislikes ad-like visuals',
+  tumblr: 'an expressive, artistic landscape technology illustration with personality (stylised circuits, servers or network light trails)',
+  x: 'a bold, high-contrast landscape technology visual with one clear focal point',
+  discord: 'a friendly, community-style landscape technology illustration',
   devto: 'a developer-friendly flat tech illustration used as a wide article cover',
 };
 
