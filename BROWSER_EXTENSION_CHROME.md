@@ -406,6 +406,12 @@ một file thường dùng nhiều tài khoản Google khác nhau. Với dòng "
 khoá 2 bước của chính email Google ở cột User; tiện ích dùng chúng khi phiên Google trong Chrome hết hạn. Trang chỉ hỗ
 trợ email/mật khẩu, chưa có blog/Space, yêu cầu CAPTCHA hoặc xác minh khác sẽ hiện lý do ở **Cần thao tác**.
 
+- **URL Profile** phải là trang hồ sơ (ví dụ `https://voz.vn/u/ten.12345/`, `https://dev.to/ten`). Link màn hình của trang
+  như `…/register/complete`, `…/onboarding`, `…/get-started/topics`, `…/dashboard` không được lấy làm username (từ
+  backend 1.6.3): tài khoản đó không có username dự kiến, lần kiểm tra đầu nhận tài khoản đang đăng nhập rồi lưu lại.
+  Trước đây Voz bị nhận là "register" nên luôn báo **Cần thao tác**; nhập lại file để sửa các dòng như vậy.
+- **Warrior Forum** chỉ đăng thủ công: điều khoản của trang cấm bot, script hay hệ thống tự động truy cập, nên không có
+  luồng tự đăng.
 - Khoá TOTP là **khoá thiết lập** (chuỗi Base32) hoặc chuỗi `otpauth://totp/…`, không phải mã 6 số đang hiện.
 - Đang dùng extension **Authenticator**: mở phần sao lưu/xuất của Authenticator để lấy chuỗi `otpauth://…` của tài
   khoản Google, rồi dán vào cột 2FA. Tiện ích VPSTTT tự tính mã giống Authenticator, nên không cần đọc dữ liệu từ

@@ -11,7 +11,7 @@ const gaps: Record<string, { message: string; url?: string }> = {
   mewe: { message: 'Chưa xác minh được đúng hồ sơ và form đăng MeWe. Chưa có luồng xuất bản đã kiểm thử.' },
   'daily-dev': { message: 'Trang app.daily.dev chuyển sang daily.dev. Cần xác định tài khoản và Squad đích; chưa có luồng đăng đã kiểm thử.', url: 'https://docs.daily.dev/content-guidelines/' },
   'ubiquiti-community': { message: 'New Post còn mở hộp Sign In. Cần hoàn tất đăng nhập Ubiquiti và chọn chủ đề đích trước khi kiểm thử luồng đăng.' },
-  'warrior-forum': { message: 'Chưa xác nhận đúng hồ sơ và box có quyền tạo thread. Cần URL tạo thread trong box muốn đăng.' },
+  'warrior-forum': { message: 'Điều khoản Warrior Forum cấm bot, script hay hệ thống tự động truy cập trang. Chỉ đăng thủ công: mở chủ đề phù hợp, bấm tạo thread và dán bài đã duyệt; thread mới chờ Warrior Forum duyệt.', url: 'https://www.warriorforum.com/tos.html' },
   'linux-foundation-forum': { message: 'Chưa nhận diện được phiên và form tạo thảo luận. Cần xác định chuyên mục đích sau đăng nhập.' },
   disqus: { message: 'Disqus đã dừng Channels thông thường; chỉ còn Discuss Disqus cho hỗ trợ sản phẩm. Không có luồng đăng bài lên hồ sơ như mạng xã hội.', url: 'https://help.disqus.com/en/articles/1717095-channel-help' },
 };
@@ -20,7 +20,8 @@ export function extensionFlowAudit(slug: string, value: unknown) {
   const flow = extensionFlowForPlatform(slug);
   if (setup.status === 'ACCESS_RESTRICTED') return { status: 'ACCESS_RESTRICTED', message: String(setup.message || 'Nền tảng hạn chế quyền đăng; đăng nhập lại không khôi phục quyền.'), implemented: Boolean(flow) };
   if (slug === 'redis-community-forum') return { status: 'DESTINATION_UNAVAILABLE', implemented: Boolean(flow), message: 'Forum đang chuyển về redis.io, không còn form Discourse tại URL đã cấu hình. Chưa thể đăng ở đích này.' };
-  if (!flow) return { status: slug === 'disqus' ? 'UNAVAILABLE' : 'FLOW_REQUIRED', implemented: false, ...(gaps[slug] || { message: 'Chưa có luồng đăng đã kiểm thử cho nền tảng này.' }) };
+  // Disqus has no post destination; Warrior Forum's terms forbid automated access.
+  if (!flow) return { status: slug === 'disqus' ? 'UNAVAILABLE' : slug === 'warrior-forum' ? 'MANUAL_ONLY' : 'FLOW_REQUIRED', implemented: false, ...(gaps[slug] || { message: 'Chưa có luồng đăng đã kiểm thử cho nền tảng này.' }) };
   const required: string[] = [];
   if (flow.engine === 'stackexchange' && !Array.isArray(settings.extensionTags)) required.push('ít nhất một tag');
   else if (flow.engine === 'stackexchange' && !(settings.extensionTags as unknown[]).length) required.push('ít nhất một tag');

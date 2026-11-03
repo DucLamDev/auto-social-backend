@@ -91,8 +91,10 @@ export class AccountImportService {
         const seed = row.totpSecret || priorSecret.totpSecret;
         if (seed) { try { if (typeof seed !== 'string') throw new Error('Invalid seed'); generateTotp(seed); } catch { result.push({ row: row.source, name: platform.name, issue: 'INVALID_TOTP' }); continue; } }
         const username = row.expectedUsername || (login.username.includes('@') ? '' : login.username);
+        // The parser names no account for site screens (".../register/complete",
+        // "/onboarding"): such a URL is not a profile to compare against.
         const session = { deviceId, provider: login.provider, origin: new URL(loginUrl).origin, loginUrl, loginUsername: login.username,
-          expectedUsername: username, profileUrl: row.profileUrl.trim(), identitySelector: previousSession?.identitySelector ?? '',
+          expectedUsername: username, profileUrl: row.expectedUsername ? row.profileUrl.trim() : '', identitySelector: previousSession?.identitySelector ?? '',
           autoLogin: login.provider === 'google' || Boolean(password), autoTotp: Boolean(seed) && object(previousSession).totpNeedsReview !== true,
           totpNeedsReview: object(previousSession).totpNeedsReview === true,
           discoverIdentity: !username, allowIdentityByEmail: true, allowedOrigins: previousSession?.allowedOrigins ?? (platform.slug === 'vivaldi-social' ? ['https://login.vivaldi.net'] : []) };
