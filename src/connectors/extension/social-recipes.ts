@@ -1,6 +1,6 @@
 import type { ExtensionRecipe } from './extension-delivery';
 
-export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'] as const;
+export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev'] as const;
 export type SocialExtensionEngine = (typeof SOCIAL_EXTENSION_ENGINES)[number];
 
 function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>): ExtensionRecipe {
@@ -16,6 +16,14 @@ function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>)
 // Selectors are declarative data. All executable workflow steps ship in the
 // extension, and require a visible, unambiguous composer before any write.
 export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRecipe> = {
+  // daily.dev /squads/create opens its composer dialog (form#smart_composer) with the
+  // signed-in user's own profile as audience; a new post opens /posts/<slug>.
+  dailydev: recipe('dailydev', {
+    readySelectors: ['form#smart_composer'], titleSelectors: ['form#smart_composer textarea[name="title"]'],
+    bodySelectors: ['form#smart_composer .ProseMirror[contenteditable="true"]'],
+    submitSelectors: ['button[type="submit"][form="smart_composer"]'], successUrlPattern: '/posts/[^/?#]+(?:[?#].*)?$',
+    publishedTitleSelectors: ['h1'], publishedBodySelectors: ['[class*="markdown"]'],
+  }),
   differ: recipe('differ', {
     readySelectors: ['textarea[name="title"]'], titleSelectors: ['textarea[name="title"]'], bodySelectors: ['[contenteditable][aria-label="editable markdown"]'],
     submitSelectors: ['button#post-submit-button'], successUrlPattern: '/p/[^/?#]+(?:[?#].*)?$', publishedTitleSelectors: ['h1'], publishedBodySelectors: ['article', '.prose'],

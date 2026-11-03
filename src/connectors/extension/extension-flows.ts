@@ -70,6 +70,8 @@ export const EXTENSION_FLOWS: readonly ExtensionFlow[] = [...forumFlows,
     setupHint: 'AWS Community dùng AWS Builder Center. Đăng nhập bằng Builder ID, hoàn tất hồ sơ; bài được gửi qua editor và có thể chờ nền tảng kiểm duyệt.' },
   { id: 'tinhte', name: 'Tinhte.vn', engine: 'tinhte', forumUrl: 'https://tinhte.vn', targetUrl: '', revision: 1,
     setupHint: 'Vào chuyên mục Tinhte muốn đăng, bấm viết bài rồi sao chép URL dạng https://tinhte.vn/editorv2/create/ID-CHUYEN-MUC/. Tiện ích dùng chuyên mục trong URL và editor CKEditor của Tinhte.' },
+  { id: 'daily-dev', name: 'daily.dev', engine: 'dailydev', forumUrl: 'https://daily.dev', targetUrl: 'https://daily.dev/squads/create', revision: 1,
+    setupHint: 'Đăng bài viết (tiêu đề + nội dung) lên hồ sơ daily.dev đang đăng nhập, qua trang https://daily.dev/squads/create. Chưa hỗ trợ đăng vào Squad.' },
   { id: 'pixelfed-social', name: 'pixelfed.social', engine: 'pixelfed', forumUrl: 'https://pixelfed.social', targetUrl: 'https://pixelfed.social/i/web', revision: 1,
     setupHint: 'Đính kèm một ảnh JPEG/PNG/WebP tối đa 20 MiB cho nội dung trước khi tạo chiến dịch. Tiện ích tải ảnh, điền caption và bấm đăng.' },
 ];
@@ -123,11 +125,14 @@ export function validateExtensionFlow(slug: string, settings: ExtensionDeliveryS
     stackexchange: ['/questions/ask'], lemmy: ['/create_post'], discuit: ['/new'], linkedin: ['/feed'],
     minds: ['/newsfeed/subscriptions'],
     medium: ['/new-story'], slideshare: ['/upload'], 'aws-builder': ['/create/content'], pixelfed: ['/i/web', '/i/web/compose'],
-    mastodon: ['/publish'], bluesky: ['/intent/compose'], tumblr: ['/new/text'], devto: ['/new'],
+    mastodon: ['/publish'], bluesky: ['/intent/compose'], tumblr: ['/new/text'], devto: ['/new'], dailydev: ['/squads/create'],
   };
   if (createPaths[flow.engine] && !createPaths[flow.engine]!.includes(target.pathname.replace(/\/$/, ''))) {
     throw new BadRequestException(`Use the new-post page for ${flow.name}: ${flow.targetUrl}`);
   }
+  // daily.dev silently falls back to the user's profile when ?sid= names a Squad the
+  // account cannot post in, so only the plain composer page (own profile) is accepted.
+  if (flow.engine === 'dailydev' && (target.search || target.hash)) throw new BadRequestException(flow.setupHint);
   if (flow.engine === 'tinhte' && !/^\/editorv2\/create\/\d+\/?$/.test(target.pathname)) throw new BadRequestException(flow.setupHint);
   return flow;
 }

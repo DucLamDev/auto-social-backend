@@ -18,6 +18,8 @@ describe('platform contract', () => {
     expect(platformContract('instagram')).toMatchObject({ hashtagMode: 'appended', maxChars: 2200 });
     expect(platformContract('wordpress')).toMatchObject({ format: 'html', titleRequired: true });
     expect(platformContract('x')).toMatchObject({ counting: 'x', maxChars: 280 });
+    // daily.dev's composer is a rich-text editor (plain paragraphs) with 250/20 000 character limits.
+    expect(platformContract('daily-dev')).toMatchObject({ format: 'plain', titleRequired: true, titleHardLimit: 250, maxChars: 20_000 });
   });
 
   it('lets the brand profile override the audience language', () => {

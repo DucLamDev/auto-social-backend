@@ -49,7 +49,7 @@ const VISIBLE_AUTH_STEPS = ['accountMenu', 'google', 'openLogin', 'sso'];
 // An unrecognized signed-in page is given this long before the profile page is opened.
 const PROFILE_CHECK_AFTER_MS = 2_000;
 const LOG_LIMIT = 20;
-const SUPPORTED_ENGINES = ['discourse', 'xenforo', 'phpbb', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'];
+const SUPPORTED_ENGINES = ['discourse', 'xenforo', 'phpbb', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev'];
 
 // Chrome fires several tab updates for one navigation; these guard against
 // filling or reporting the same job twice while the worker is alive.

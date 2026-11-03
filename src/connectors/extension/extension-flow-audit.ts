@@ -9,7 +9,6 @@ const gaps: Record<string, { message: string; url?: string }> = {
   blogger: { message: 'Cần hoàn tất hồ sơ Google/Blogger và có blog đích. Chưa xác minh được editor của blog để triển khai xuất bản.' },
   'hugging-face': { message: 'Cần xác minh email và quyền tạo Blog Article của tài khoản. Chưa kiểm thử được màn hình xuất bản.', url: 'https://huggingface.co/docs/hub/en/blog-articles' },
   mewe: { message: 'Chưa xác minh được đúng hồ sơ và form đăng MeWe. Chưa có luồng xuất bản đã kiểm thử.' },
-  'daily-dev': { message: 'Trang app.daily.dev chuyển sang daily.dev. Cần xác định tài khoản và Squad đích; chưa có luồng đăng đã kiểm thử.', url: 'https://docs.daily.dev/content-guidelines/' },
   'ubiquiti-community': { message: 'New Post còn mở hộp Sign In. Cần hoàn tất đăng nhập Ubiquiti và chọn chủ đề đích trước khi kiểm thử luồng đăng.' },
   'warrior-forum': { message: 'Điều khoản Warrior Forum cấm bot, script hay hệ thống tự động truy cập trang. Chỉ đăng thủ công: mở chủ đề phù hợp, bấm tạo thread và dán bài đã duyệt; thread mới chờ Warrior Forum duyệt.', url: 'https://www.warriorforum.com/tos.html' },
   'linux-foundation-forum': { message: 'Chưa nhận diện được phiên và form tạo thảo luận. Cần xác định chuyên mục đích sau đăng nhập.' },

@@ -7,7 +7,7 @@ const destinations = {
   dzone: 'https://dzone.com/content/article/post.html', differ: 'https://differ.blog/new-story', mewe: 'https://mewe.com', producthunt: 'https://www.producthunt.com',
   dailymotion: 'https://www.dailymotion.com', blogger: 'https://www.blogger.com', ubiquiti: 'https://community.ui.com',
   studio: 'https://studio.dailymotion.com',
-  daily: 'https://app.daily.dev', warrior: 'https://www.warriorforum.com', linuxfoundation: 'https://forum.linuxfoundation.org',
+  daily: 'https://daily.dev/squads/create', warrior: 'https://www.warriorforum.com', linuxfoundation: 'https://forum.linuxfoundation.org',
   // Composers that take one image: check where the file input and preview appear.
   mastodon: 'https://mastodon.social/publish', bluesky: 'https://bsky.app/intent/compose', tumblr: 'https://www.tumblr.com/new/text',
 };

@@ -1,5 +1,19 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.10.0: đăng bài daily.dev
+
+- daily.dev có luồng đăng bài viết (tiêu đề + nội dung) lên **hồ sơ cá nhân** đang đăng nhập, qua khung soạn
+  **Create post** tại `https://daily.dev/squads/create`. Chưa hỗ trợ đăng vào Squad: khi tài khoản không có quyền đăng
+  vào Squad trong `?sid=`, daily.dev lặng lẽ chuyển sang đăng lên hồ sơ, nên trang có tham số bị từ chối.
+- Tiện ích điền tiêu đề (tối đa 250 ký tự) và nội dung dạng đoạn văn, kiểm tra lại cả hai rồi bấm **Post** đúng một lần;
+  sau khi daily.dev chuyển sang trang `/posts/…`, tiện ích so tiêu đề và đầu bài rồi báo **Đã đăng** kèm link.
+- Khung soạn còn bản nháp khác (daily.dev tự lưu nháp) thì dừng, không ghi đè. Tắt **Tự bấm Đăng** thì chỉ điền sẵn.
+- Ô và nút được lấy từ mã nguồn mở của daily.dev (`dailydotdev/apps`), chưa thử với tài khoản thật từ máy dev. Nếu báo
+  lỗi, mở `flow-audit.html?open=daily` (trang chẩn đoán đã trỏ sang `daily.dev/squads/create`) hoặc bật gợi ý ô bằng AI (bản 1.8.0).
+- Cần backend 1.8.0. Tài khoản daily.dev đã nhập trước đó cần cấu hình nơi đăng: nhập lại file tài khoản, hoặc bấm
+  **Tiện ích** ở dòng tài khoản, giữ trang tạo bài mặc định, bật **Tự bấm Đăng** rồi **Lưu**.
+- Hugging Face chưa có luồng: Blog Article chỉ mở cho tài khoản PRO hoặc thành viên tổ chức gói Team/Enterprise.
+
 ## Bản 1.9.1: kiểm tra đăng nhập trên Chrome mới (VPS)
 
 - Trước khi bấm nút **Đăng nhập bằng Google**, **Log in** hay nút SSO, tiện ích đưa tab kiểm tra lên trước. Nhiều trang

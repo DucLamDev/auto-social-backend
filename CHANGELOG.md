@@ -1,6 +1,16 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.8.0 · 03/11/2026
+### Tính năng
+- Tự đăng bài lên daily.dev bằng tiện ích Chrome (tiện ích 1.10.0)
+  daily.dev có luồng đăng bài viết: tiện ích mở khung Create post, điền tiêu đề và nội dung đã duyệt, bấm Post một lần
+  rồi xác nhận trang bài mới. Bài đăng lên hồ sơ cá nhân; chưa hỗ trợ đăng vào Squad (daily.dev lặng lẽ đổi sang hồ sơ
+  khi tài khoản không có quyền đăng vào Squad). Bản nháp khác trong khung soạn không bị ghi đè. Tài khoản daily.dev đã đăng nhập chuyển từ "chưa có luồng
+  đăng tự động" sang cần cấu hình nơi đăng; nhập lại file tài khoản để tự cấu hình. Sau khi cập nhật backend cần chạy
+  `scripts/sync-extension-flows.cjs --apply` để database có luồng mới. Hugging Face vẫn chưa có luồng vì Blog Article
+  chỉ dành cho tài khoản PRO hoặc tổ chức gói Team/Enterprise.
+
 ## 1.7.1 · 03/11/2026
 ### Sửa lỗi
 - Kiểm tra đăng nhập trên Chrome mới (VPS) tự bấm được nút Google và chờ Cloudflare (tiện ích 1.9.1)
