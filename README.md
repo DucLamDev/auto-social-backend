@@ -70,9 +70,25 @@ DEEPSEEK_MODEL=deepseek-flash
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-3.5-flash
 GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite
+
+VPSTTT_AI_BASE_URL=https://<ide-host>/ai-api/v1
+VPSTTT_AI_API_KEY=
+VPSTTT_AI_MODEL=claude:sonnet
+VPSTTT_AI_TIMEOUT_MS=180000
+VPSTTT_AI_MAX_CONCURRENCY=2
+VPSTTT_AI_RPM=10
 ```
 
-`AI_DEFAULT_PROVIDER` chỉ nhận `openai`, `deepseek` hoặc `gemini`. Studio và luồng **Tạo tự động** cho phép chọn provider cho từng lần sinh nội dung; nếu request không chỉ định, backend dùng provider mặc định. Giao diện chỉ nhận trạng thái đã cấu hình và tên model từ `GET /api/v1/ai/providers`, không nhận API key đã lưu. Provider chưa có key sẽ bị vô hiệu hóa trong danh sách chọn. Các biến `*_MODEL` do backend kiểm soát, người dùng không gửi model tùy ý từ trình duyệt.
+`AI_DEFAULT_PROVIDER` nhận `openai`, `deepseek`, `gemini` hoặc `vpsttt`. Studio và luồng **Tạo tự động** cho phép chọn provider cho từng lần sinh nội dung; nếu request không chỉ định, backend dùng provider mặc định. Giao diện chỉ nhận trạng thái đã cấu hình và tên model từ `GET /api/v1/ai/providers`, không nhận API key đã lưu. Provider chưa có key sẽ bị vô hiệu hóa trong danh sách chọn. Các biến `*_MODEL` do backend kiểm soát, người dùng không gửi model tùy ý từ trình duyệt.
+
+**VPSTTT AI** là mục **AI API** của IDE công ty: tạo key trong IDE (khai báo IP công khai của máy chạy backend, quyền
+sinh nội dung, hạn mức), dán địa chỉ hiện trong mục đó vào `VPSTTT_AI_BASE_URL` (chỉ nhận https; http chỉ cho máy thử
+`127.0.0.1` ngoài production). API này chỉ nhận `model`, `messages` dạng chữ và `stream=false`, tối đa 100.000 ký tự mỗi
+lượt; backend đưa khuôn JSON vào lời dặn hệ thống, cắt phần nhập quá dài, bóc JSON khỏi khối code và kiểm tra lại như
+các provider khác. Mỗi lượt chạy một phiên Claude/Codex nên chậm: backend giới hạn `VPSTTT_AI_MAX_CONCURRENCY` lượt cùng
+lúc và rải đều `VPSTTT_AI_RPM` lượt mỗi phút, đặt hai số này không vượt hạn mức của key (mặc định của IDE: 2 và 10). Một
+bài cho mỗi nền tảng cần 2–4 lượt (viết, chấm, viết lại khi chưa đạt), nên với 10 lượt/phút nên chọn khoảng 8 nền tảng
+trở xuống mỗi lần tạo tự động. Model: `claude:haiku` (nhanh), `claude:sonnet`, `claude:opus`, `gpt:`.
 
 ADMIN có thể vào **Cài đặt → API key Gemini** để lưu tối đa 10 key, áp dụng ngay cho lần tạo nội dung tiếp theo. Key cũ trong `GEMINI_API_KEY` được giữ ở ô 1 cho đến khi lưu cấu hình trên web; các ô để trống giữ nguyên key đã lưu, nút Xóa loại bỏ key khi lưu. Backend mã hóa danh sách trong `SystemSetting`, chỉ trả trạng thái từng ô qua `GET /api/v1/ai/gemini-keys`; cập nhật bằng `PUT` cùng đường dẫn. Khi gặp quota/giới hạn (429 hoặc 402), hệ thống chuyển sang key tiếp theo, nhớ key thành công và tạm bỏ qua key vừa lỗi ít nhất 60 giây (tôn trọng `Retry-After` dài hơn). Mỗi yêu cầu thử mỗi key tối đa một lần; nếu tất cả bị giới hạn thì trả lỗi rõ ràng. Các key cùng Google Cloud project dùng chung quota: https://ai.google.dev/gemini-api/docs/rate-limits.
 
@@ -144,6 +160,34 @@ MinIO console: `http://localhost:9001`
 RabbitMQ console: `http://localhost:15672`
 
 Tài khoản seed lấy từ `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`. Production bắt buộc password riêng dài tối thiểu 12 ký tự và từ chối mật khẩu development mặc định; đặt đúng ngay trước lần seed đầu.
+
+### Codex điều phối hệ thống qua MCP
+
+Backend có endpoint MCP (Model Context Protocol) tại `POST /mcp` (cùng host với API, ngoài tiền tố `api/v1`, không có
+trong Swagger) để Codex hoặc agent khác xem và điều phối hệ thống bằng chat. Mặc định tắt (`MCP_ENABLED=false`).
+
+1. Bật `MCP_ENABLED=true` trong `.env` backend, khởi động lại `api`.
+2. Tạo token trong container API (in ra một lần, chỉ lưu mã băm):
+   `pnpm mcp:token create --email <email ADMIN/EDITOR> --name codex` (thêm `--read-only` nếu chỉ cho xem,
+   `--expires-days 90` để hết hạn). Xem / thu hồi: `pnpm mcp:token list|revoke --email … [--id …]`.
+3. Trên máy chạy Codex, đặt token vào biến môi trường `AUTO_SOCIAL_MCP_TOKEN` và thêm vào `~/.codex/config.toml`:
+
+   ```toml
+   [mcp_servers.auto_social]
+   url = "https://api.example.com/mcp"
+   bearer_token_env_var = "AUTO_SOCIAL_MCP_TOKEN"
+   ```
+
+   hoặc `codex mcp add auto_social --url https://api.example.com/mcp --bearer-token-env-var AUTO_SOCIAL_MCP_TOKEN`.
+
+Công cụ (quyền giống API web của chủ token, chỉ trả dữ liệu không bí mật): `list_accounts`, `list_extension_devices`,
+`list_login_checks`, `queue_login_checks` (ADMIN), `list_publish_jobs`, `get_publish_job`, `retry_publish_job`,
+`requeue_extension_job`, `list_campaigns`, `get_campaign`, `ai_providers`, `list_selector_suggestions`,
+`approve_selector_suggestion` / `reject_selector_suggestion` (ADMIN), `create_ai_campaign_draft` (AI viết bài,
+dừng ở chờ duyệt, tối đa 10 lần/giờ). `approve_campaign` (duyệt và đăng thật) chỉ xuất hiện khi `MCP_ALLOW_PUBLISH=true`,
+bắt `confirm: true`, tối đa 5 lần/giờ. Lệnh ghi cần token có quyền `write` và vai trò ADMIN/EDITOR; mọi lệnh ghi, kể cả
+bị từ chối, được ghi `AuditLog` (`MCP_<TÊN_CÔNG_CỤ>`, không lưu tham số). Mỗi token tối đa `MCP_RATE_LIMIT_PER_MINUTE`
+lượt/phút; trình duyệt chỉ gọi được từ origin trong `FRONTEND_URL`.
 
 ## Lệnh chất lượng
 

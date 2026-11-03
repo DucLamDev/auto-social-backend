@@ -9,6 +9,11 @@ PostgreSQL là nguồn sự thật. Prisma schema ở `prisma/schema.prisma`; mi
 - Content: `ContentSource`, `SourceArticle`, `Content`, `ContentVariant`, `MediaAsset`, `PromptTemplate`.
 - Delivery: `Campaign`, `CampaignTarget`, `PublishJob`, `PublishAttempt`, `PublishedPost`.
 - Operations: `AuditLog`, `SystemSetting`.
+- Agents: `ExtensionDevice` (tiện ích Chrome đã ghép nối), `McpToken` (token MCP cho Codex: chỉ lưu SHA-256, `scopes`
+  `read`/`write`, `expiresAt`, `revokedAt`; migration `20261103100000_mcp_tokens`).
+- Gợi ý giao diện: `ExtensionUiHint` (mỗi lần tiện ích hỏi AI: phần tử đã che dữ liệu, trạng thái RUNNING/READY/FAILED,
+  kết quả) và `ExtensionSelectorSuggestion` (selector theo chủ sở hữu + engine + origin + ô, PENDING/APPROVED/REJECTED,
+  unique `(ownerId, engine, origin, field, selector)`); migration `20261103110000_extension_ui_recovery`.
 
 Quan hệ quan trọng:
 

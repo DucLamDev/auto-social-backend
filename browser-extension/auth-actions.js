@@ -12,6 +12,27 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
   const enabled = node => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true';
   const one = selectors => { for (const selector of selectors) { const found = all(selector).filter(visible); if (found.length === 1) return found[0]; } return null; };
   const norm = value => String(value ?? '').normalize('NFKC').trim().replace(/^@/, '').toLowerCase();
+  // Handles are shown as "VPSTTT", "@vpsttt", "vpsttt_group" or "vpsttt.3403320" in
+  // profile URLs: compare letters and digits only, without accents or case.
+  const loose = value => String(value ?? '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/đ/gi, 'd').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const GENERIC_SEGMENTS = new Set(['u', 'user', 'users', 'profile', 'profiles', 'members', 'member', 'in', 'by', 'blog', 'channels', 'me', 'posts', 'summary', 'preferences', 'account', 'activity', 'hc', 'enus', 'about', 'dashboard', 'community', 'forums']);
+  const handlesOf = url => {
+    try {
+      return new URL(url).pathname.split('/').map(part => { try { return decodeURIComponent(part); } catch { return part; } })
+        .map(part => part.replace(/^@/, '').replace(/(?:\.\d+|\.html)$/i, '')).map(loose).filter(part => part.length >= 3 && !GENERIC_SEGMENTS.has(part) && !/^\d+$/.test(part));
+    } catch { return []; }
+  };
+  const expectedHandles = () => [...new Set([loose(auth.expectedUsername), ...(auth.profileUrl ? handlesOf(auth.profileUrl) : []),
+    ...(auth.loginUsername && !auth.loginUsername.includes('@') ? [loose(auth.loginUsername)] : [])].filter(handle => handle.length >= 3))];
+  /** The signed-in identity (text or own-profile link) is the configured account. */
+  const sameIdentity = (identity, href) => {
+    const expected = expectedHandles();
+    if (norm(identity) && norm(identity) === norm(auth.expectedUsername)) return true;
+    return [loose(identity), ...(href ? handlesOf(href) : [])].some(found => found.length >= 3 && expected.includes(found));
+  };
+  const samePage = (a, b) => {
+    try { const x = new URL(a), y = new URL(b); return x.origin === y.origin && x.pathname.replace(/\/$/, '').toLowerCase() === y.pathname.replace(/\/$/, '').toLowerCase(); } catch { return false; }
+  };
   const exact = (labels, eligible = () => true) => {
     const matches = all('button, [role="button"], a, input[type="submit"]').filter(enabled).filter(eligible).filter(node => labels.includes(norm(node.innerText || node.value || node.getAttribute('aria-label'))));
     return matches.length === 1 ? matches[0] : null;
@@ -130,6 +151,7 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
       tumblr: ['[role="navigation"] a[href^="/blog/"]'],
     }[job.recipe.engine] ?? []), ...genericSelectors];
     let marker;
+    let markerHref = '';
     try { marker = one(selectors); } catch { return challenge('CSS nhận diện tài khoản không hợp lệ.'); }
     if (!identity && !marker && job.recipe.engine === 'pixelfed') {
       const profileLinks = all('nav .dropdown-menu a[href]').filter(visible).filter(node => ['profile', 'my profile', 'hồ sơ'].includes(norm(node.innerText)));
@@ -137,8 +159,9 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     }
     if (marker) {
       const href = marker.href || marker.closest('a')?.href;
+      markerHref = href || '';
       if (job.recipe.engine === 'mastodon' && href && /^\/@[^/]+\/?$/.test(new URL(href).pathname)) identity = decodeURIComponent(new URL(href).pathname.replace(/^\/@|\/$/g, ''));
-      if (auth.profileUrl && href && new URL(href).href.replace(/\/$/, '') === new URL(auth.profileUrl).href.replace(/\/$/, '')) return response('authenticated');
+      if (auth.profileUrl && href && samePage(href, auth.profileUrl)) return response('authenticated');
       if (marker.matches('.s-topbar a.s-user-card') && href) {
         const current = new URL(href), expected = auth.profileUrl ? new URL(auth.profileUrl) : null;
         const currentId = /^\/users\/(\d+)(?:\/|$)/.exec(current.pathname)?.[1];
@@ -182,7 +205,7 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
       }
       if (auth.discoverIdentity && auth.provider === 'google' && !job.authIdentityVerified) return challenge('Social đang có phiên đăng nhập nhưng chưa xác nhận phiên đó thuộc Google đã cấu hình. Chưa gán account cũ cho Google mới.');
       if (auth.discoverIdentity && job.kind === 'LOGIN_CHECK') return { ...response('authenticated'), detectedUsername: identity.trim().slice(0, 200) };
-      return { ...response(norm(identity) === norm(auth.expectedUsername) ? 'authenticated' : 'mismatch'), detectedUsername: identity.trim().slice(0, 200) };
+      return { ...response(sameIdentity(identity, markerHref) ? 'authenticated' : 'mismatch'), detectedUsername: identity.trim().slice(0, 200) };
     }
     if (location.hostname === 'lemmy.world') {
       const menu = one(['#dropdownUser > button.dropdown-toggle']);
@@ -263,7 +286,14 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
   }
   const password = one(['#ctrl_pageLogin_password', 'input[type="password"]']);
   const identifier = one(google ? ['#identifierId'] : ['#ctrl_pageLogin_login', 'input[data-testid="loginUsernameInput"]', 'input[autocomplete="username"]', 'input[name="login"]', 'input[name="username"]', 'input[name="email"]', 'input[type="email"]', '#login-account-name', 'input[name="text"]', 'form input[type="text"]']);
+  // Pages such as Substack ask only for an email (magic link) until "Sign in
+  // with password" is clicked. Use it for accounts that sign in with a password.
+  if (!google && !otp && !password && identifier && auth.provider !== 'google') {
+    const usePassword = exact(['sign in with password', 'log in with password', 'login with password', 'use password', 'use a password', 'use your password', 'continue with password', 'đăng nhập bằng mật khẩu', 'dùng mật khẩu']);
+    if (usePassword) { if (action === 'usePassword') { usePassword.click(); return response('submitted'); } return response('usePassword'); }
+  }
   let stage = otp ? 'totp' : password ? 'password' : identifier ? 'identifier' : null;
+  const siteLoginForm = Boolean(stage) && !google;
   if (stage) {
     if (auth.provider === 'google' && !google) {
       // A Google password must never be filled into the destination site's form.
@@ -290,6 +320,9 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
   if (!google && auth.provider === 'google') {
     const open = exact(['google', 'with google', 'continue with google', 'sign in with google', 'log in with google', 'đăng nhập bằng google', 'đăng nhập với google', 'tiếp tục với google', 'connexion avec google', 'continuer avec google', 'se connecter avec google']);
     if (open) { if (action === 'google') { open.click(); return response('submitted'); } return response('google'); }
+    // The site shows its own email/password form and no Google button. A Google
+    // password is never typed there, so say so instead of waiting for the deadline.
+    if (siteLoginForm) return { ...response('noGoogle'), message: 'Trang đăng nhập của nền tảng chỉ có form email / mật khẩu riêng, không có nút đăng nhập bằng Google. Tài khoản này dùng Google nên tiện ích không điền mật khẩu Google vào form của nền tảng. Đăng nhập tay một lần trong Chrome rồi bấm Kiểm tra, hoặc đổi dòng này sang phương thức Email kèm mật khẩu riêng của nền tảng.' };
   }
   if (!google) {
     if (location.hostname === 'social.vivaldi.net' && location.pathname === '/auth/sign_in') {
@@ -301,7 +334,9 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     }
     const openLogin = exact(['log in', 'login', 'sign in', 'đăng nhập'], node => {
       if (node.tagName !== 'A') return true;
-      const path = new URL(node.href).pathname;
+      // An <a> without href (common in SPAs) must not abort the whole step.
+      let path;
+      try { path = new URL(node.href, location.href).pathname; } catch { return false; }
       if (/\/(?:questions|tags|tagged|topics|posts|t)\//.test(path)) return false;
       return Boolean(node.closest('header, nav, [role="navigation"], form, [role="dialog"], .s-topbar'))
         || /\/(?:login|log-in|sign-in|signin|sign_in)(?:\/|$)/i.test(path);

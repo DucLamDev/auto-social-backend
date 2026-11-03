@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { AI_PROVIDER_IDS, AiProvider, isAiProvider } from '../ai/ai-provider';
 
 export type NodeEnvironment = 'development' | 'test' | 'production';
 
@@ -14,7 +15,7 @@ export interface Environment {
   JWT_ACCESS_SECRET: string;
   JWT_REFRESH_SECRET: string;
   CREDENTIAL_ENCRYPTION_KEY: string;
-  AI_DEFAULT_PROVIDER: 'openai' | 'deepseek' | 'gemini';
+  AI_DEFAULT_PROVIDER: AiProvider;
   AI_TIMEOUT_MS: number;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL?: string;
@@ -24,6 +25,18 @@ export interface Environment {
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
   GEMINI_FALLBACK_MODEL?: string;
+  VPSTTT_AI_BASE_URL?: string;
+  VPSTTT_AI_API_KEY?: string;
+  VPSTTT_AI_MODEL?: string;
+  VPSTTT_AI_TIMEOUT_MS: number;
+  VPSTTT_AI_MAX_CONCURRENCY: number;
+  VPSTTT_AI_RPM: number;
+  MCP_ENABLED: boolean;
+  MCP_ALLOW_PUBLISH: boolean;
+  MCP_RATE_LIMIT_PER_MINUTE: number;
+  EXTENSION_UI_RECOVERY_ENABLED: boolean;
+  EXTENSION_UI_HINT_PROVIDER?: AiProvider;
+  EXTENSION_UI_HINT_MIN_CONFIDENCE: number;
   S3_ENDPOINT: string;
   S3_PUBLIC_URL: string;
   S3_REGION: string;
@@ -120,6 +133,22 @@ function validatePublicHttpsUrl(value: unknown, key: string): void {
   if (isPrivateOrLocalHost(parsed.hostname)) throw new Error(`${key} must use a public hostname in production`);
 }
 
+/**
+ * Base URL of the company IDE AI API, e.g. https://ide.example.com/ai-api/v1.
+ * The API key travels with every request, so plain http is only accepted for a
+ * loopback test server outside production.
+ */
+function parseVpstttAiBaseUrl(value: unknown, env: NodeEnvironment): string | undefined {
+  if (value === undefined || (typeof value === 'string' && !value.trim())) return undefined;
+  const parsed = parseHttpUrl(typeof value === 'string' ? value.trim() : value, 'VPSTTT_AI_BASE_URL');
+  if (parsed.search || parsed.hash) throw new Error('VPSTTT_AI_BASE_URL must not contain a query or fragment');
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  if (parsed.protocol !== 'https:' && !(env !== 'production' && loopback)) {
+    throw new Error('VPSTTT_AI_BASE_URL must use https');
+  }
+  return parsed.toString().replace(/\/+$/, '');
+}
+
 export function validateEnvironment(raw: Record<string, unknown>): Record<string, unknown> {
   const envValue = typeof raw.NODE_ENV === 'string' ? raw.NODE_ENV : 'development';
   const env = envValue as NodeEnvironment;
@@ -168,8 +197,32 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   const aiDefaultProvider = typeof raw.AI_DEFAULT_PROVIDER === 'string'
     ? raw.AI_DEFAULT_PROVIDER.trim().toLowerCase()
     : 'openai';
-  if (!['openai', 'deepseek', 'gemini'].includes(aiDefaultProvider)) {
-    throw new Error('AI_DEFAULT_PROVIDER must be openai, deepseek, or gemini');
+  if (!isAiProvider(aiDefaultProvider)) {
+    throw new Error(`AI_DEFAULT_PROVIDER must be one of: ${AI_PROVIDER_IDS.join(', ')}`);
+  }
+  const vpstttAiBaseUrl = parseVpstttAiBaseUrl(raw.VPSTTT_AI_BASE_URL, env);
+  const vpstttAiTimeoutMs = parsePositiveInteger(raw.VPSTTT_AI_TIMEOUT_MS, 'VPSTTT_AI_TIMEOUT_MS', 180_000);
+  // The IDE AI API gives up on a request after roughly 15 minutes.
+  if (vpstttAiTimeoutMs > 900_000) throw new Error('VPSTTT_AI_TIMEOUT_MS must not exceed 900000');
+  const vpstttAiMaxConcurrency = parsePositiveInteger(raw.VPSTTT_AI_MAX_CONCURRENCY, 'VPSTTT_AI_MAX_CONCURRENCY', 2);
+  if (vpstttAiMaxConcurrency > 32) throw new Error('VPSTTT_AI_MAX_CONCURRENCY must not exceed 32');
+  const vpstttAiRpm = parsePositiveInteger(raw.VPSTTT_AI_RPM, 'VPSTTT_AI_RPM', 10);
+  if (vpstttAiRpm > 600) throw new Error('VPSTTT_AI_RPM must not exceed 600');
+  // The MCP endpoint for AI agents is off unless explicitly enabled; letting an
+  // agent approve (= really publish) campaigns is a separate opt-in.
+  const mcpEnabled = parseBoolean(raw.MCP_ENABLED, 'MCP_ENABLED', false);
+  const mcpAllowPublish = parseBoolean(raw.MCP_ALLOW_PUBLISH, 'MCP_ALLOW_PUBLISH', false);
+  const mcpRateLimitPerMinute = parsePositiveInteger(raw.MCP_RATE_LIMIT_PER_MINUTE, 'MCP_RATE_LIMIT_PER_MINUTE', 60);
+  if (mcpRateLimitPerMinute > 600) throw new Error('MCP_RATE_LIMIT_PER_MINUTE must not exceed 600');
+  // AI-assisted recovery when a composer field is not found on a redesigned page.
+  const extensionUiRecoveryEnabled = parseBoolean(raw.EXTENSION_UI_RECOVERY_ENABLED, 'EXTENSION_UI_RECOVERY_ENABLED', false);
+  const uiHintProviderRaw = typeof raw.EXTENSION_UI_HINT_PROVIDER === 'string' ? raw.EXTENSION_UI_HINT_PROVIDER.trim().toLowerCase() : '';
+  if (uiHintProviderRaw && !isAiProvider(uiHintProviderRaw)) {
+    throw new Error(`EXTENSION_UI_HINT_PROVIDER must be one of: ${AI_PROVIDER_IDS.join(', ')}`);
+  }
+  const uiHintMinConfidence = raw.EXTENSION_UI_HINT_MIN_CONFIDENCE === undefined ? 0.6 : Number(raw.EXTENSION_UI_HINT_MIN_CONFIDENCE);
+  if (!Number.isFinite(uiHintMinConfidence) || uiHintMinConfidence < 0 || uiHintMinConfidence > 1) {
+    throw new Error('EXTENSION_UI_HINT_MIN_CONFIDENCE must be between 0 and 1');
   }
   const logLevel = typeof raw.LOG_LEVEL === 'string' ? raw.LOG_LEVEL : 'info';
   if (!['error', 'warn', 'info', 'debug', 'verbose'].includes(logLevel)) {
@@ -234,6 +287,16 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
     BROWSER_DIAGNOSTICS_RETENTION_HOURS: browserDiagnosticsRetentionHours,
     AI_DEFAULT_PROVIDER: aiDefaultProvider,
     AI_TIMEOUT_MS: aiTimeoutMs,
+    VPSTTT_AI_BASE_URL: vpstttAiBaseUrl,
+    VPSTTT_AI_TIMEOUT_MS: vpstttAiTimeoutMs,
+    VPSTTT_AI_MAX_CONCURRENCY: vpstttAiMaxConcurrency,
+    VPSTTT_AI_RPM: vpstttAiRpm,
+    MCP_ENABLED: mcpEnabled,
+    MCP_ALLOW_PUBLISH: mcpAllowPublish,
+    MCP_RATE_LIMIT_PER_MINUTE: mcpRateLimitPerMinute,
+    EXTENSION_UI_RECOVERY_ENABLED: extensionUiRecoveryEnabled,
+    EXTENSION_UI_HINT_PROVIDER: uiHintProviderRaw || undefined,
+    EXTENSION_UI_HINT_MIN_CONFIDENCE: uiHintMinConfidence,
     OPENAI_TIMEOUT_MS: legacyOpenAiTimeoutMs,
   };
 }

@@ -11,8 +11,10 @@ const job = {
   recipe: { engine: 'discourse', successUrlPattern: '/t/[^/]+/\\d+' },
 };
 
-function setup() {
-  const state = { ready: true, fills: 0, result: { status: 'filled' }, reports: [], injections: [], openedUrls: [], claims: 0, waiting: false, alarm: null, alarmCreates: 0, jobs: null, claimRequests: [], nextTabId: 0 };
+// Existing cases drive polling by hand; the early next-job poll stays out of
+// their way unless a test asks for it.
+function setup({ nextJobDelay = 60_000 } = {}) {
+  const state ={ ready: true, fills: 0, result: { status: 'filled' }, reports: [], injections: [], openedUrls: [], claims: 0, waiting: false, alarm: null, alarmCreates: 0, jobs: null, claimRequests: [], nextTabId: 0 };
   const area = initial => {
     const data = structuredClone(initial);
     return {
@@ -51,6 +53,8 @@ function setup() {
         return [{ result: state.result }];
       }
       if (injection.func.name === 'submitDiscoursePost') return [{ result: state.directResult ?? { status: 'fallback' } }];
+      if (injection.func.name === 'collectUiCandidates') return [{ result: state.candidates ?? null }];
+      if (injection.func.name === 'verifyUiSelectors') return [{ result: state.verified ?? injection.args[0].selectors }];
       if (injection.func.name === 'readModeration') return [{ result: state.moderation ?? null }];
       if (injection.func.name === 'readPublishedPost' || injection.func.name === 'readSocialPublishedPost') return [{ result: state.publishedUrl ?? null }];
       if (injection.func.name === 'readErrors') return [{ result: state.errorText ?? null }];
@@ -63,7 +67,9 @@ function setup() {
     } },
   };
   const source = fs.readFileSync(path.join(__dirname, '../../browser-extension/background.js'), 'utf8')
-    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice)\.js';\r?\n/gm, '');
+    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery)\.js';\r?\n/gm, '')
+    .replace(/const NEXT_JOB_DELAY_MS = [\d_]+;/, `const NEXT_JOB_DELAY_MS = ${nextJobDelay};`)
+    .replace(/const NO_GOOGLE_GRACE_MS = [\d_]+;/, 'const NO_GOOGLE_GRACE_MS = 0;');
   const context = vm.createContext({
     chrome, URL, Date, AbortSignal, setTimeout, clearTimeout,
     canFillPage: function canFillPage() {}, fillAndSubmit: function fillAndSubmit() {}, readErrors: function readErrors() {}, readModeration: function readModeration() {}, readPublishedPost: function readPublishedPost() {},
@@ -71,6 +77,7 @@ function setup() {
     accountAuthStep: function accountAuthStep() {},
     submitDiscoursePost: function submitDiscoursePost() {},
     showPublishNotice: function showPublishNotice() {},
+    collectUiCandidates: function collectUiCandidates() {}, verifyUiSelectors: function verifyUiSelectors() {},
     fetch: async (url, options) => {
       if (url.endsWith('/result')) {
         if (state.reportOffline) throw new Error('Backend offline');
@@ -78,6 +85,12 @@ function setup() {
         state.reports.push(JSON.parse(options.body));
       }
       let data = {};
+      if (url.includes('/ui-hint')) {
+        (state.hintRequests ??= []).push({ url, method: options.method, body: options.body ? JSON.parse(options.body) : null });
+        const answer = typeof state.hint === 'function' ? state.hint(state.hintRequests.length) : state.hint;
+        if (answer instanceof Error) return { ok: false, status: 404, json: async () => ({ success: false, error: { message: answer.message } }) };
+        return { ok: true, json: async () => ({ success: true, data: answer }) };
+      }
       if (url.endsWith('/heartbeat')) {
         data = { waiting: state.jobs ? state.jobs.length : state.waiting ? 1 : 0 };
         state.onHeartbeat?.();
@@ -95,7 +108,7 @@ function setup() {
       return { ok: true, json: async () => ({ success: true, data }) };
     },
   });
-  vm.runInContext(source + '\nglobalThis.worker = { start, sweep, getTasks, tick, ensureAlarm, withDeadline, authenticateTask };', context);
+  vm.runInContext(source + '\nglobalThis.worker = { start, sweep, getTasks, tick, tickSoon, ensureAlarm, withDeadline, authenticateTask };', context);
   return { state, chrome, worker: context.worker };
 }
 
@@ -615,4 +628,202 @@ test('a report refused by the backend stops retrying, and long messages are shor
     pendingReport: { outcome: 'NEEDS_ACTION', extra: { reason: 'SUBMIT_REJECTED', message: 'y'.repeat(1000) }, closeTab: false } }]);
   await worker.sweep();
   assert.ok(state.reports[0].message.length <= 450);
+});
+
+// ---- next post starts right after the previous one frees its slot ----------
+const forumJob = host => ({ ...job, jobId: host, targetOrigin: `http://${host}.test`, openUrl: `http://${host}.test/new-topic` });
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+test('a published post starts the next queued post without waiting for the alarm', async () => {
+  const { state, worker } = setup({ nextJobDelay: 0 });
+  state.jobs = [forumJob('a'), forumJob('b')];
+  state.fillResult = async pending => ({ status: 'published', url: `${pending.targetOrigin}/t/post/1` });
+  await worker.tick();
+  for (let i = 0; i < 20 && state.fills < 2; i++) await pause(5);
+  assert.equal(state.claims, 2, 'the second post was claimed without a manual poll');
+  assert.equal(state.fills, 2);
+  assert.deepEqual(state.reports.map(report => report.outcome), ['PUBLISHED', 'PUBLISHED']);
+});
+
+test('a draft handed to the operator lets the next forum start right away', async () => {
+  const { state, worker } = setup({ nextJobDelay: 0 });
+  state.jobs = [forumJob('a'), forumJob('b')];
+  state.result = { status: 'filled' };
+  await worker.tick();
+  for (let i = 0; i < 20 && state.fills < 2; i++) await pause(5);
+  assert.equal(state.fills, 2);
+  const tasks = Object.values(await worker.getTasks());
+  assert.deepEqual(tasks.map(task => task.phase), ['waitingUser', 'waitingUser'], 'both drafts stay tracked for the operator');
+});
+
+test('a paused extension does not claim the next post after one finishes', async () => {
+  const { state, worker, chrome } = setup({ nextJobDelay: 0 });
+  state.jobs = [forumJob('a'), forumJob('b')];
+  state.fillResult = async pending => {
+    await chrome.storage.local.set({ paused: true });
+    return { status: 'published', url: `${pending.targetOrigin}/t/post/1` };
+  };
+  await worker.tick();
+  await settleUntil(() => state.reports.length === 1);
+  await pause(30);
+  assert.equal(state.claims, 1);
+  assert.deepEqual(state.jobs.map(item => item.jobId), ['b']);
+});
+
+test('the early poll never starts a second flow while one is still filling', async () => {
+  const { state, worker } = setup({ nextJobDelay: 0 });
+  state.jobs = [forumJob('a'), forumJob('b'), forumJob('c')];
+  let release;
+  state.fillResult = () => new Promise(resolve => { release = resolve; });
+  await worker.tick();
+  await settleUntil(() => state.fills === 1);
+  worker.tickSoon();
+  worker.tickSoon();
+  await pause(30);
+  assert.equal(state.claims, 1, 'MAX_ACTIVE_FLOWS still holds');
+  assert.equal(state.fills, 1);
+  release({ status: 'filled' });
+});
+
+// ---- AI-assisted recovery when a composer control is not found -------------
+const recoveryJob = (extra = {}) => ({ ...job, jobId: 'job-ui', autoSubmit: true, uiRecovery: { enabled: true },
+  recipe: { engine: 'discourse', successUrlPattern: '/t/[^/]+/\\d+', readySelectors: ['#reply-title'], titleSelectors: ['#reply-title'], bodySelectors: ['textarea.d-editor-input'], submitSelectors: ['button.create'] }, ...extra });
+const candidates = { url: 'http://forum.test/new-topic', candidates: [{ index: 0, kind: 'contenteditable', tag: 'div', inDialog: true, inForm: true, disabled: false, selector: 'div.new-editor' }] };
+const readyHint = (approved = false, selectors = { body: { selector: 'div.new-editor', approved, suggestionId: 's-1' } }) => ({ hintId: 'h-1', status: 'READY', selectors });
+
+test('a composer field that moved is filled once with the AI selector and left for the operator to post', async () => {
+  const { state, worker } = setup();
+  state.candidates = candidates;
+  state.hint = readyHint(false);
+  const seen = [];
+  state.fillResult = async pending => { seen.push(pending); return seen.length === 1 ? { status: 'notReady', missing: ['body'], message: 'Không thấy form' } : { status: 'filled' }; };
+  await worker.start(recoveryJob());
+  await settleUntil(() => state.reports.length === 1);
+  assert.equal(state.fills, 2);
+  assert.equal(seen[1].autoSubmit, false, 'an unapproved AI selector never clicks Post');
+  assert.equal(seen[1].recipe.bodySelectors[0], 'div.new-editor');
+  assert.equal(seen[1].recipe.uiOverride, true);
+  assert.equal(state.reports[0].reason, 'WAITING_USER');
+  assert.match(state.reports[0].message, /AI đã tìm/);
+  assert.deepEqual(state.hintRequests[0].body.missing, ['body']);
+  assert.equal(state.hintRequests[0].body.candidates.length, 1);
+  const task = Object.values(await worker.getTasks())[0];
+  assert.equal(task.uiOverride.approved, false, 'the tab remembers the AI selectors for a later continue');
+});
+
+test('an approved AI selector keeps automatic submit', async () => {
+  const { state, worker } = setup();
+  state.candidates = candidates;
+  state.hint = readyHint(true);
+  const seen = [];
+  state.fillResult = async pending => { seen.push(pending); return seen.length === 1 ? { status: 'notReady', missing: ['body'] } : { status: 'submitted' }; };
+  await worker.start(recoveryJob());
+  await settleUntil(async () => Object.values(await worker.getTasks())[0]?.phase === 'submitted');
+  assert.equal(seen[1].autoSubmit, true);
+});
+
+test('when the AI cannot help, the original "editor not found" result is reported', async () => {
+  const { state, worker } = setup();
+  state.candidates = candidates;
+  state.hint = { hintId: 'h-1', status: 'FAILED', errorCode: 'AI_HINT_FAILED' };
+  state.result = { status: 'notReady', missing: ['body'], message: 'Không thấy form đăng bài' };
+  await worker.start(recoveryJob());
+  await settleUntil(() => state.reports.length === 1);
+  assert.equal(state.fills, 1);
+  assert.deepEqual([state.reports[0].outcome, state.reports[0].reason], ['FAILED', 'EDITOR_NOT_FOUND']);
+});
+
+test('recovery stays off unless the backend enables it, and a disabled endpoint changes nothing', async () => {
+  const off = setup();
+  off.state.candidates = candidates;
+  off.state.result = { status: 'notReady', missing: ['body'] };
+  await off.worker.start(recoveryJob({ uiRecovery: undefined }));
+  await settleUntil(() => off.state.reports.length === 1);
+  assert.equal(off.state.hintRequests, undefined);
+  const disabled = setup();
+  disabled.state.candidates = candidates;
+  disabled.state.hint = new Error('AI-assisted UI recovery is disabled');
+  disabled.state.result = { status: 'notReady', missing: ['body'] };
+  await disabled.worker.start(recoveryJob());
+  await settleUntil(() => disabled.state.reports.length === 1);
+  assert.equal(disabled.state.reports[0].reason, 'EDITOR_NOT_FOUND');
+});
+
+test('when only the Post button is unknown the hint is recorded without filling again', async () => {
+  const { state, worker } = setup();
+  state.candidates = candidates;
+  state.hint = readyHint(false, { submit: { selector: 'button.go', approved: false, suggestionId: 's-2' } });
+  state.result = { status: 'filled', missing: ['submit'], message: 'Nút đăng chưa sẵn sàng.' };
+  await worker.start(recoveryJob());
+  await settleUntil(() => state.reports.length === 1);
+  assert.equal(state.fills, 1);
+  assert.equal(state.reports[0].reason, 'WAITING_USER');
+  assert.match(state.reports[0].message, /đề xuất nút Đăng/);
+});
+
+test('an opener hint may lead to one more hint for the fields, never a third', async () => {
+  const { state, worker } = setup();
+  state.candidates = candidates;
+  state.hint = count => count === 1
+    ? readyHint(false, { opener: { selector: 'a.compose', approved: false, suggestionId: 's-3' } })
+    : readyHint(false);
+  state.result = { status: 'notReady', missing: ['opener'] };
+  const seen = [];
+  state.fillResult = async pending => { seen.push(pending); return seen.length === 1 ? { status: 'notReady', missing: ['opener'] } : { status: 'notReady', missing: ['body'] }; };
+  await worker.start(recoveryJob());
+  await settleUntil(() => state.reports.length === 1);
+  assert.equal(state.hintRequests.filter(request => request.method === 'POST').length, 2);
+  assert.equal(state.fills, 3);
+  assert.deepEqual(seen[2].recipe.openerSelectors, ['a.compose']);
+  assert.equal(state.reports[0].reason, 'EDITOR_NOT_FOUND');
+});
+
+// ---- login checks never leave their tabs behind ---------------------------
+const loginCheck = (auth = {}) => ({ ...job, kind: 'LOGIN_CHECK', auth: { provider: 'password', autoLogin: true, ...auth } });
+
+for (const [label, authResult, outcome] of [
+  ['a confirmed login', { state: 'authenticated', url: 'https://forum.test/', detectedUsername: 'alice' }, 'AUTHENTICATED'],
+  ['another signed-in account', { state: 'mismatch', url: 'https://forum.test/', detectedUsername: 'bob' }, 'NEEDS_ACTION'],
+  ['a challenge', { state: 'challenge', url: 'https://forum.test/', message: 'CAPTCHA' }, 'NEEDS_ACTION'],
+]) test(`a login check that ends with ${label} closes its tab and sign-in popup`, async () => {
+  const { state, worker } = setup();
+  state.authResult = authResult;
+  await worker.authenticateTask({ tabId: 8, authTabId: 9, job: loginCheck() });
+  assert.equal(state.reports[0].outcome, outcome);
+  assert.deepEqual([...(state.closedTabs ?? [])].sort(), [8, 9]);
+  assert.equal(Object.keys(await worker.getTasks()).length, 0);
+});
+
+test('a Google account on a page with only the site form is reported quickly, not after the deadline', async () => {
+  const { state, worker } = setup();
+  state.authResult = { state: 'noGoogle', url: 'https://substack.com/sign-in', message: 'Trang đăng nhập không có nút đăng nhập bằng Google.' };
+  const started = Date.now();
+  await worker.authenticateTask({ tabId: 8, job: loginCheck({ provider: 'google' }) });
+  assert.ok(Date.now() - started < 5_000);
+  assert.equal(state.reports[0].outcome, 'NEEDS_ACTION');
+  assert.match(state.reports[0].message, /không có nút đăng nhập bằng Google/);
+  assert.deepEqual(state.closedTabs, [8]);
+  assert.ok(!state.injections.some(injection => ['identifier', 'password'].includes(injection.args?.[0]?.action)), 'no credential step is attempted');
+});
+
+test('a page step that returns nothing counts as an unrecognized page instead of a silent wait', async () => {
+  const { state, worker } = setup();
+  state.authResult = undefined;
+  await worker.authenticateTask({ tabId: 8, authActivated: true, authUnknownSince: Date.now() - 9_000, job: loginCheck() });
+  assert.equal(state.reports[0].outcome, 'NEEDS_ACTION');
+  assert.match(state.reports[0].message, /chưa nhận diện được form đăng nhập/);
+  assert.deepEqual(state.closedTabs, [8]);
+});
+
+test('"Sign in with password" is clicked before the password step, without asking for a secret first', async () => {
+  const { state, worker } = setup();
+  let switched = false;
+  state.authResult = ({ action }) => {
+    if (action === 'usePassword') { switched = true; return { state: 'submitted', url: 'https://substack.com/sign-in' }; }
+    return switched ? { state: 'authenticated', url: 'https://substack.com/' } : { state: 'usePassword', url: 'https://substack.com/sign-in' };
+  };
+  await worker.authenticateTask({ tabId: 8, job: loginCheck() });
+  assert.ok(state.injections.some(injection => injection.args?.[0]?.action === 'usePassword'));
+  assert.equal(state.injections.find(injection => injection.args?.[0]?.action === 'usePassword').args[0].payload, undefined);
+  assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
 });

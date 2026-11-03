@@ -89,6 +89,48 @@ describe('validateEnvironment', () => {
       .toThrow('AI_DEFAULT_PROVIDER');
   });
 
+  it('accepts the IDE AI API as default provider over https and applies its limits', () => {
+    expect(validateEnvironment({
+      ...productionEnvironment(), AI_DEFAULT_PROVIDER: 'VPSTTT', VPSTTT_AI_BASE_URL: 'https://ide.example.com/ai-api/v1/',
+    })).toMatchObject({
+      AI_DEFAULT_PROVIDER: 'vpsttt', VPSTTT_AI_BASE_URL: 'https://ide.example.com/ai-api/v1',
+      VPSTTT_AI_TIMEOUT_MS: 180_000, VPSTTT_AI_MAX_CONCURRENCY: 2, VPSTTT_AI_RPM: 10,
+    });
+    expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({ VPSTTT_AI_BASE_URL: undefined });
+  });
+
+  it('refuses an IDE AI API address that would leak the key or hide parameters', () => {
+    expect(() => validateEnvironment({ ...productionEnvironment(), VPSTTT_AI_BASE_URL: 'http://ide.example.com/ai-api/v1' }))
+      .toThrow('VPSTTT_AI_BASE_URL must use https');
+    expect(() => validateEnvironment({ ...productionEnvironment(), VPSTTT_AI_BASE_URL: 'http://127.0.0.1:3923/v1' }))
+      .toThrow('VPSTTT_AI_BASE_URL must use https');
+    expect(validateEnvironment({ NODE_ENV: 'test', VPSTTT_AI_BASE_URL: 'http://127.0.0.1:3923/v1' }))
+      .toMatchObject({ VPSTTT_AI_BASE_URL: 'http://127.0.0.1:3923/v1' });
+    expect(() => validateEnvironment({ ...productionEnvironment(), VPSTTT_AI_BASE_URL: 'https://ide.example.com/ai-api/v1?key=x' }))
+      .toThrow('query');
+    expect(() => validateEnvironment({ ...productionEnvironment(), VPSTTT_AI_BASE_URL: 'https://user:pass@ide.example.com/ai-api/v1' }))
+      .toThrow('credentials');
+    expect(() => validateEnvironment({ ...productionEnvironment(), VPSTTT_AI_TIMEOUT_MS: '900001' })).toThrow('VPSTTT_AI_TIMEOUT_MS');
+    expect(() => validateEnvironment({ ...productionEnvironment(), VPSTTT_AI_MAX_CONCURRENCY: '33' })).toThrow('VPSTTT_AI_MAX_CONCURRENCY');
+    expect(() => validateEnvironment({ ...productionEnvironment(), VPSTTT_AI_RPM: '0' })).toThrow('VPSTTT_AI_RPM');
+  });
+
+  it('keeps the MCP endpoint and agent publishing off unless enabled', () => {
+    expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({ MCP_ENABLED: false, MCP_ALLOW_PUBLISH: false, MCP_RATE_LIMIT_PER_MINUTE: 60 });
+    expect(validateEnvironment({ ...productionEnvironment(), MCP_ENABLED: 'true', MCP_ALLOW_PUBLISH: 'false' }))
+      .toMatchObject({ MCP_ENABLED: true, MCP_ALLOW_PUBLISH: false });
+    expect(() => validateEnvironment({ ...productionEnvironment(), MCP_ENABLED: 'yes' })).toThrow('MCP_ENABLED');
+    expect(() => validateEnvironment({ ...productionEnvironment(), MCP_RATE_LIMIT_PER_MINUTE: '601' })).toThrow('MCP_RATE_LIMIT_PER_MINUTE');
+  });
+
+  it('keeps AI-assisted UI recovery off by default and validates its provider and threshold', () => {
+    expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({ EXTENSION_UI_RECOVERY_ENABLED: false, EXTENSION_UI_HINT_MIN_CONFIDENCE: 0.6, EXTENSION_UI_HINT_PROVIDER: undefined });
+    expect(validateEnvironment({ ...productionEnvironment(), EXTENSION_UI_RECOVERY_ENABLED: 'true', EXTENSION_UI_HINT_PROVIDER: 'VPSTTT', EXTENSION_UI_HINT_MIN_CONFIDENCE: '0.75' }))
+      .toMatchObject({ EXTENSION_UI_RECOVERY_ENABLED: true, EXTENSION_UI_HINT_PROVIDER: 'vpsttt', EXTENSION_UI_HINT_MIN_CONFIDENCE: 0.75 });
+    expect(() => validateEnvironment({ ...productionEnvironment(), EXTENSION_UI_HINT_PROVIDER: 'other' })).toThrow('EXTENSION_UI_HINT_PROVIDER');
+    expect(() => validateEnvironment({ ...productionEnvironment(), EXTENSION_UI_HINT_MIN_CONFIDENCE: '1.5' })).toThrow('EXTENSION_UI_HINT_MIN_CONFIDENCE');
+  });
+
   it('uses the legacy OpenAI timeout when AI_TIMEOUT_MS is absent', () => {
     const environment = productionEnvironment();
     delete environment.AI_TIMEOUT_MS;

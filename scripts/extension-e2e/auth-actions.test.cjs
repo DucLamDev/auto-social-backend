@@ -346,3 +346,55 @@ test('a suspended account is reported as suspended, not as a wrong password, and
     assert.equal(await page.evaluate(() => window.submits), 0);
   } finally { await page.close(); }
 });
+
+const substackSignIn = `<main><form><input name="email" type="email" autocomplete="email" placeholder="Email">
+  <a class="login-option" href="javascript:void(0)" id="use-password">Sign in with password</a>
+  <button type="submit">Continue</button></form></main>
+  <script>document.getElementById('use-password').addEventListener('click', () => {
+    document.querySelector('form').insertAdjacentHTML('afterbegin', '<input type="password" name="password">'); document.getElementById('use-password').remove(); });</script>`;
+const substack = auth => ({ ...job, targetOrigin: 'https://substack.com', recipe: { engine: 'substack' }, auth: { ...job.auth, ...auth } });
+
+test('Substack: a password account switches to "Sign in with password" before filling the password', async () => {
+  const page = await pageAt('https://substack.com/sign-in', substackSignIn);
+  try {
+    const scoped = substack({ provider: 'password', expectedUsername: 'alice' });
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'usePassword');
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped, action: 'usePassword' })).state, 'submitted');
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'password');
+  } finally { await page.close(); }
+});
+
+test('Substack: a Google account gets a clear "no Google button" answer and nothing is typed', async () => {
+  const page = await pageAt('https://substack.com/sign-in', substackSignIn);
+  try {
+    const result = await page.evaluate(accountAuthStep, { job: substack({ provider: 'google', loginUsername: 'writer@gmail.example' }) });
+    assert.equal(result.state, 'noGoogle');
+    assert.match(result.message, /không có nút đăng nhập bằng Google/);
+    assert.equal(await page.locator('input[name=email]').inputValue(), '');
+  } finally { await page.close(); }
+});
+
+test('a link without href does not stop the login step', async () => {
+  const page = await pageAt('https://forum.test/', '<header><a class="menu">Menu</a><a href="/login">Log in</a></header>');
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job: { ...job, auth: { ...job.auth, expectedUsername: 'nobody' } } })).state, 'openLogin');
+  } finally { await page.close(); }
+});
+
+test('the signed-in name matches the configured handle without case, spaces or punctuation, and another name still does not', async () => {
+  const page = await pageAt('https://forum.test/', '<nav class="p-navgroup"><a class="p-navgroup-link--user" href="/members/VPSTTT.3403320/"><span class="p-navgroup-linkText">VPSTTT Group</span></a></nav>');
+  try {
+    const scoped = expectedUsername => ({ ...job, auth: { ...job.auth, expectedUsername, profileUrl: 'https://forum.test/members/vpsttt-group.999/' } });
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped('vpsttt_group') })).state, 'authenticated');
+    await page.locator('.p-navgroup-linkText').evaluate(node => { node.textContent = 'Other Person'; node.parentElement.href = '/members/other.1/'; });
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped('vpsttt_group') })).state, 'mismatch');
+  } finally { await page.close(); }
+});
+
+test('the own profile link matches the saved profile URL whatever its letter case', async () => {
+  const page = await pageAt('https://forum.test/', '<nav class="p-navgroup"><a class="p-navgroup-link--user" href="https://forum.test/members/VPSTTT.3403320/"><span class="p-navgroup-linkText">Tên hiển thị khác</span></a></nav>');
+  try {
+    const scoped = { ...job, auth: { ...job.auth, expectedUsername: 'vpsttt', profileUrl: 'https://forum.test/members/vpsttt.3403320' } };
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+  } finally { await page.close(); }
+});

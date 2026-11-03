@@ -1,6 +1,56 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.6.1 · 03/11/2026
+### Sửa lỗi
+- Kiểm tra đăng nhập hàng loạt đóng tab, nhận đúng tài khoản và không đứng im (tiện ích 1.8.1)
+  Kiểm tra xong (thành công hay cần thao tác) là đóng tab và popup Google. Tài khoản đã đăng nhập không còn bị báo "Cần
+  thao tác" chỉ vì tên hiển thị khác chữ hoa, dấu hay ký tự so với handle trong URL hồ sơ. Trang chỉ hỏi email như
+  Substack: tài khoản mật khẩu được tự bấm "Sign in with password"; tài khoản Google mà trang không có nút Google được
+  báo rõ ngay thay vì để trống tới hết giờ.
+- Bỏ "Google dùng chung" khi nhập file tài khoản
+  Mỗi dòng giờ đăng nhập bằng đúng email, mật khẩu và mã 2FA của chính dòng đó, vì các social trong một file thường dùng
+  nhiều tài khoản Google khác nhau. API nhập file chỉ còn nhận file và Chrome đã chọn.
+## 1.6.0 · 03/11/2026
+### Tính năng
+- Tiện ích Chrome nhờ AI tìm ô / nút khi giao diện mạng xã hội đổi (bản 1.8.0)
+  Khi không thấy ô tiêu đề, ô nội dung, nút mở khung soạn hoặc nút Đăng, tiện ích gửi danh sách phần tử đang hiện (đã che
+  dữ liệu, không có nội dung đã nhập hay mật khẩu) để AI chọn, rồi điền lại đúng một lần. Gợi ý chưa duyệt chỉ điền sẵn để
+  bạn kiểm tra và bấm Đăng; gợi ý đã được ADMIN duyệt thì tự đăng và được dùng cho các lần sau. Chỉ thiếu nút Đăng thì
+  chỉ ghi gợi ý. Cần backend bật EXTENSION_UI_RECOVERY_ENABLED; nạp lại extension để dùng bản mới.
+## 1.5.0 · 03/11/2026
+### Tính năng
+- AI gợi ý ô và nút khi giao diện mạng xã hội thay đổi (phía máy chủ)
+  Khi tiện ích Chrome không tìm thấy ô tiêu đề, ô nội dung, nút mở khung soạn hoặc nút Đăng, nó có thể gửi danh sách
+  phần tử đang hiện (đã che email, số, chuỗi dài; không có giá trị ô nhập hay mật khẩu) để AI chọn đúng phần tử. Máy
+  chủ kiểm lại từng lựa chọn (đúng loại ô, nút Đăng không phải nút Huỷ / Xoá / Nháp, đủ độ tin cậy) và lưu thành gợi ý
+  chờ duyệt. Gợi ý chưa duyệt chỉ được dùng để điền sẵn, bạn tự bấm Đăng; ADMIN duyệt trên API hoặc qua Codex (MCP) thì
+  lần sau tiện ích tự đăng bằng selector đó. Tắt sẵn (EXTENSION_UI_RECOVERY_ENABLED); cần chạy migration mới. Phần tiện
+  ích dùng tính năng này ra ở bản tiện ích tiếp theo.
+## 1.4.0 · 03/11/2026
+### Tính năng
+- Codex xem và điều phối hệ thống qua MCP
+  Backend có cổng MCP tại /mcp để Codex (hoặc agent khác) làm việc bằng chat: xem tài khoản, tiện ích Chrome đã ghép
+  nối, kết quả kiểm tra đăng nhập, việc đăng bài và chiến dịch; xếp kiểm tra đăng nhập, chạy lại việc lỗi, giao lại
+  việc cho tiện ích, và nhờ AI viết bản nháp chiến dịch (dừng ở chờ duyệt). Cổng tắt sẵn (MCP_ENABLED); token tạo bằng
+  lệnh pnpm mcp:token, chỉ lưu mã băm, có thể chỉ cho xem, đặt hạn và thu hồi. Quyền giống web của chủ token, không trả
+  mật khẩu hay cookie, mọi lệnh ghi được ghi nhật ký. Duyệt và đăng thật qua Codex chỉ có khi bật MCP_ALLOW_PUBLISH.
+  Cần chạy migration mới (mcp_tokens).
+## 1.3.0 · 03/11/2026
+### Tính năng
+- Viết bài bằng AI API của IDE công ty (VPSTTT AI)
+  Thêm nhà cung cấp AI thứ tư "VPSTTT AI" dùng mục AI API của IDE (tài khoản Claude/Codex công ty cấp), không cần mua
+  key OpenAI hay Gemini. Đặt AI_DEFAULT_PROVIDER=vpsttt cùng VPSTTT_AI_BASE_URL (https) và VPSTTT_AI_API_KEY; Studio và
+  Tạo tự động chọn được VPSTTT AI cho từng lần. Backend chỉ gửi đúng các tham số API này nhận, giữ mỗi lượt dưới 100.000
+  ký tự, giới hạn số lượt cùng lúc và số lượt mỗi phút theo hạn mức của key, và báo rõ khi key sai hoặc IP chưa được
+  cho phép. Gemini, OpenAI, DeepSeek giữ nguyên để dùng song song hoặc dự phòng.
+## 1.2.1 · 03/11/2026
+### Cải tiến
+- Tiện ích Chrome nhận bài kế tiếp ngay sau bài trước (bản 1.7.6)
+  Đăng xong một bài, hoặc bài chuyển sang chờ bạn xử lý (bản nháp chờ bấm Đăng, CAPTCHA, đăng nhập), tiện ích hỏi bài
+  tiếp theo sau khoảng 1 giây thay vì chờ chu kỳ 30 giây, nên hàng đợi nhiều bài chạy nhanh hơn. Vẫn chỉ một lượt đăng
+  tại một thời điểm, tối đa ba tab; tiện ích đang tạm dừng thì không nhận bài. Tệp VERSION được sửa lại còn đúng một
+  dòng. Nạp lại extension trong chrome://extensions để dùng bản mới.
 ## 1.2.0 · 02/11/2026
 ### Tính năng
 - Mật khẩu và khoá TOTP Google dùng chung khi nhập file tài khoản

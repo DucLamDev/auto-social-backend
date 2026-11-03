@@ -28,6 +28,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
+    "mcp:token": "tsx src/mcp/mcp-token.cli.ts",
     "openapi:export": "ts-node scripts/export-openapi.ts",
     "cli": "ts-node src/cli.ts",
     "bot": "ts-node src/bot.ts",
@@ -42,6 +43,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.913.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@nestjs/common": "^11.1.6",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.1.6",

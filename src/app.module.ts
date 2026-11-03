@@ -28,6 +28,7 @@ import { SourceArticlesModule } from './source-articles/source-articles.module';
 import { UsersModule } from './users/users.module';
 import { AuditModule } from './audit/audit.module';
 import { ExtensionAgentModule } from './extension-agent/extension-agent.module';
+import { McpModule } from './mcp/mcp.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { ExtensionAgentModule } from './extension-agent/extension-agent.module';
     HealthModule,
     AccountHealthModule,
     ExtensionAgentModule,
+    McpModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

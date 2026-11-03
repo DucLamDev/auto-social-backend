@@ -16,6 +16,33 @@
 - OAuth state random, hash trong DB, validate provider/expiry và consume một lần trước token exchange. LinkedIn/Google dùng confidential web flow với server-held client secret; PKCE không được giả vờ bật khi flow này không dùng.
 - Audit interceptor chỉ ghi metadata mutation thành công (`actorId`, action, entity/id, request ID, IP); audit write là best-effort và không sao chép body, response, token hay credential.
 - OpenAI Responses dùng Structured Outputs và `store: false`; source/content không cần được lưu làm application state phía OpenAI.
+- VPSTTT AI (AI API của IDE công ty) nhận brief, nội dung nguồn và hồ sơ thương hiệu để viết bài; không gửi credential,
+  cookie hay token. Key nằm trong `.env` backend, chỉ dùng qua https và phải khai báo IP được phép trong IDE.
+
+## Gợi ý ô / nút bằng AI cho tiện ích
+
+- Tắt mặc định (`EXTENSION_UI_RECOVERY_ENABLED=false`). Chỉ thiết bị đang giữ đúng việc gọi được, trang phải cùng origin
+  đích của việc, tối đa 2 lần mỗi việc và 20 lần/giờ mỗi thiết bị.
+- Rời trình duyệt: tối đa 60 phần tử hiển thị mô tả bằng tag, loại, role, nhãn / placeholder / chữ ngắn (che email, chuỗi
+  dài, dãy số dài) và đường dẫn CSS; không gửi giá trị ô nhập, ô mật khẩu, cookie hay nội dung bài. Backend che lại lần
+  nữa và không gửi đường dẫn CSS cho AI.
+- AI chỉ trả số thứ tự; backend kiểm loại phần tử (nút Đăng phải có chữ kiểu Đăng / Post / Publish, không phải Huỷ / Xoá
+  / Nháp), độ tin cậy, và selector luôn lấy từ danh sách gốc. Chữ trên trang được coi là dữ liệu không tin cậy.
+- Gợi ý chưa duyệt chỉ được dùng để điền sẵn, tiện ích không tự bấm Đăng; ADMIN duyệt (web hoặc MCP, có `AuditLog`) thì
+  mới dùng cùng tự đăng, và chỉ cho đúng chủ sở hữu, engine, origin đó. Gợi ý bị từ chối không được dùng lại.
+
+## MCP (Codex)
+
+- `POST /mcp` tắt mặc định (`MCP_ENABLED=false` trả 404). Token `mcp_…` ngẫu nhiên 32 byte, chỉ lưu SHA-256, có quyền
+  `read` hoặc `read+write`, hạn dùng tuỳ chọn và thu hồi được; vai trò của chủ token được đọc lại mỗi lượt.
+- Mỗi công cụ áp cùng quyền sở hữu và vai trò như REST; lệnh ghi cần quyền `write`. Không có công cụ thực thi mã,
+  selector hay lệnh tuỳ ý; kết quả chỉ chứa trường không bí mật (không settings thô, credential, cookie, mật khẩu).
+- Đăng thật (`approve_campaign`) chỉ có khi `MCP_ALLOW_PUBLISH=true`, bắt `confirm: true`, 5 lần/giờ/token. Tạo nháp
+  chiến dịch 10 lần/giờ/token, mọi token `MCP_RATE_LIMIT_PER_MINUTE` lượt/phút (Redis).
+- Header `Origin` lạ bị từ chối (chống DNS rebinding); agent như Codex không gửi Origin. Mọi lệnh ghi và lệnh bị từ chối
+  ghi `AuditLog` `MCP_<TOOL>` với `actorId` là chủ token và `tokenId`, không lưu tham số.
+- Nội dung trả về (tên chiến dịch, bài viết, lỗi nền tảng) là dữ liệu do người dùng / nền tảng tạo; agent phải coi là
+  dữ liệu, không phải chỉ dẫn.
 
 ## Outbound SSRF
 

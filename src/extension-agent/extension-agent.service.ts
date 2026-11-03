@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AccountStatus, AttemptStatus, PlatformMode, Prisma, PublishJobStatus } from '@prisma/client';
 import { createHash, randomBytes } from 'node:crypto';
 import { StorageService } from '../storage/storage.service';
@@ -18,6 +19,8 @@ import { EXTENSION_FAILED_REASONS, ExtensionDeliveryDto, ExtensionTaskResultDto 
 import { extensionFlowForPlatform, validateExtensionFlow } from '../connectors/extension/extension-flows';
 import { deviceCanRunAccount, sessionOf } from './extension-account-session.service';
 import { repairEscapedNewlines } from '../common/utils/escaped-text';
+import { mergeApprovedSelectors } from './ui-recovery/selector-merge';
+import { ExtensionSelectorSuggestionService } from './ui-recovery/selector-suggestion.service';
 
 export const EXTENSION_TOKEN_PREFIX = 'spx_';
 /** A claimed task without any report after this long is treated as "result unknown". */
@@ -66,6 +69,8 @@ export class ExtensionAgentService {
     private readonly prisma: PrismaService,
     private readonly campaignStatus: CampaignStatusService,
     private readonly storage: StorageService,
+    @Optional() private readonly suggestions?: ExtensionSelectorSuggestionService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   // ---- Devices (operator, JWT) -------------------------------------------------
@@ -365,6 +370,9 @@ export class ExtensionAgentService {
     const variantMedia = (variant.media ?? []).filter(asset => asset.type.toLowerCase() === requiredMedia);
     const media = requiredMedia ? (variantMedia.length ? variantMedia : (variant.content.media ?? []).filter(asset => asset.type.toLowerCase() === requiredMedia))
       .map(asset => ({ id: asset.id, mimeType: asset.mimeType, sizeBytes: Number(asset.sizeBytes) })) : [];
+    const targetOrigin = new URL(settings.targetUrl).origin;
+    // Selectors an ADMIN approved for this destination after a page redesign.
+    const approvedSelectors = await this.suggestions?.approvedFor(device.ownerId, settings.engine, targetOrigin) ?? [];
     return {
       jobId: job.id,
       deviceId: device.id,
@@ -372,10 +380,11 @@ export class ExtensionAgentService {
       campaign: job.target.campaign.name,
       flow: { id: flow?.id ?? job.platformAccount.platform.slug, name: flow?.name ?? job.platformAccount.platform.name, revision: flow?.revision ?? 1, engine: settings.engine },
       openUrl: extensionOpenUrl(settings),
-      targetOrigin: new URL(settings.targetUrl).origin,
+      targetOrigin,
       autoSubmit: settings.autoSubmit,
       ...(session ? { auth: session } : {}),
-      recipe: EXTENSION_RECIPES[settings.engine],
+      recipe: mergeApprovedSelectors(EXTENSION_RECIPES[settings.engine], approvedSelectors),
+      uiRecovery: { enabled: this.config?.get<boolean>('EXTENSION_UI_RECOVERY_ENABLED') === true },
       options: { tags: settings.tags ?? [], category: settings.category ?? '', flair: settings.flair ?? '', sendEmail: false },
       media,
       post: { ...post, summary: variant.summary ?? '' },

@@ -79,7 +79,9 @@ export async function fillSocialAndSubmit(job) {
     }
     return true;
   };
-  const fail = message => ({ status: 'notReady', message });
+  // `missing` names the composer controls that were not found, so the worker
+  // can ask the backend AI which visible element to use instead.
+  const fail = (message, missing) => ({ status: 'notReady', message, ...(missing ? { missing } : {}) });
   const needs = message => ({ status: 'filled', message });
   const captcha = () => (recipe.captchaSelectors ?? []).some(selector => all(selector).some(visible));
   const expectedBody = engine === 'quora' && post.title ? `${post.title}\n\n${post.body}` : post.body;
@@ -99,6 +101,16 @@ export async function fillSocialAndSubmit(job) {
     return { status: 'unavailable', message: 'SlideShare đang tạm ngừng nhận file upload. Bài chưa được gửi.' };
   }
 
+  // A composer opener approved for this site after a redesign (or suggested by
+  // the AI in this run). Never a submit button or a control inside a form.
+  if ((recipe.openerSelectors ?? []).length && !pick(bodySelectors)) {
+    const open = pick(recipe.openerSelectors);
+    if (open && enabled(open) && !open.matches('[type="submit"]') && !open.closest('form')) {
+      open.click();
+      await wait(() => pick(bodySelectors), 8000);
+    }
+  }
+
   const quoraPersonal = engine === 'quora' && new URL(job.openUrl).hostname === 'www.quora.com';
   if (engine === 'reddit' && !pick(bodySelectors)) {
     // A submit page can initially show the link/media tab. Only switch an
@@ -115,7 +127,7 @@ export async function fillSocialAndSubmit(job) {
   }
   if (engine === 'linkedin' && !pick(bodySelectors)) {
     const open = await wait(() => button(['Start a post', 'Start a post, try writing with AI', 'Bắt đầu bài đăng']));
-    if (!open) return fail('Không thấy Start a post của LinkedIn.');
+    if (!open) return fail('Không thấy Start a post của LinkedIn.', ['opener']);
     open.click();
   }
   const quoraAudienceMatches = () => !quoraPersonal || all('[role="dialog"] button').some(node => visible(node) && ['everyone', 'mọi người'].includes(normalize(node.innerText).toLowerCase()));
@@ -128,13 +140,13 @@ export async function fillSocialAndSubmit(job) {
         const open = await wait(() => quoraPersonal
           ? pick(['button[aria-label="Add question"]:not([aria-haspopup="menu"])']) ?? button(['Ask', 'Hỏi'])
           : button(['Add a post', 'Create post', 'Post', 'Thêm bài viết', 'Tạo bài viết']));
-        if (!open) return fail('Không thấy nút mở trình soạn bài Quora. Kiểm tra đúng tài khoản và nơi đăng.');
+        if (!open) return fail('Không thấy nút mở trình soạn bài Quora. Kiểm tra đúng tài khoản và nơi đăng.', ['opener']);
         open.click();
         postTab = await wait(() => button(['Create Post', 'Tạo bài viết']), 1500);
       }
       postTab?.click();
     }
-    if (!await wait(() => pick(bodySelectors), 10_000)) return fail('Chưa chuyển được Quora sang Create Post; chưa điền hoặc gửi bài.');
+    if (!await wait(() => pick(bodySelectors), 10_000)) return fail('Chưa chuyển được Quora sang Create Post; chưa điền hoặc gửi bài.', ['body']);
     if (!quoraAudienceMatches()) return fail('Bài cá nhân Quora chưa ở chế độ Everyone. Kiểm tra đối tượng xem bài; chưa gửi bài.');
     const current = value(pick(bodySelectors)).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
     if (current && current !== normalize(expectedBody)) return fail('Quora đang có bản nháp khác trong khung soạn. Lưu hoặc đóng bản nháp đó trước khi chạy bài mới.');
@@ -148,10 +160,10 @@ export async function fillSocialAndSubmit(job) {
     if (!pick(bodySelectors)) {
       const open = await wait(() => button(['Create', 'Create your first post'])
         ?? pick(['m-composer textarea', 'textarea[placeholder*="speak your mind" i]', '[contenteditable="true"][data-placeholder*="speak your mind" i]']));
-      if (!open) return fail('Không thấy khung "Speak your mind" hoặc nút Create của Minds.');
+      if (!open) return fail('Không thấy khung "Speak your mind" hoặc nút Create của Minds.', ['opener']);
       open.click(); open.focus?.();
     }
-    if (!await wait(() => pick(bodySelectors), 8000)) return fail('Chưa mở được Compose trên Minds.');
+    if (!await wait(() => pick(bodySelectors), 8000)) return fail('Chưa mở được Compose trên Minds.', ['body']);
     if (!mindsChannelMatches()) return fail('Minds chưa chọn My Channel; chưa điền hoặc gửi bài.');
     const current = value(pick(bodySelectors));
     if (current && current !== normalize(expectedBody)) return fail('Minds đang có bản nháp khác. Chưa ghi đè bản nháp.');
@@ -159,7 +171,7 @@ export async function fillSocialAndSubmit(job) {
   if (engine === 'pixelfed' && !pick(['.compose-modal-component', '#composeModal', 'textarea[placeholder*="caption" i]'])) {
     const open = await wait(() => button(['New Post', 'Create new post', 'Compose', 'Create', 'New post', 'Đăng bài'])
       ?? pick(['a[href="/i/compose"]', '[data-toggle="modal"][data-target="#composeModal"]', 'button[aria-label="Create a post"]']));
-    if (!open) return fail('Không tìm thấy nút tạo bài Pixelfed.');
+    if (!open) return fail('Không tìm thấy nút tạo bài Pixelfed.', ['opener']);
     open.click();
     const photos = await wait(() => button(['Photos', 'Photo', 'Photo / Video', 'Ảnh']), 1500);
     photos?.click();
@@ -189,12 +201,17 @@ export async function fillSocialAndSubmit(job) {
     }
   }
 
+  const writable = node => enabled(node) && (node.isContentEditable || node.matches('input, textarea'));
+  let lastBody = null, lastTitle = null;
   const fields = await wait(() => {
     const body = pick(bodySelectors), title = pick(recipe.titleSelectors);
-    const writable = node => enabled(node) && (node.isContentEditable || node.matches('input, textarea'));
+    lastBody = body; lastTitle = title;
     return writable(body) && (!recipe.titleSelectors.length || writable(title)) && body !== title ? { body, title } : null;
   }, recipe.requiredMedia ? 45_000 : 20_000);
-  if (!fields) return fail('Không xác định được một khung soạn có đủ ô tiêu đề/nội dung cho phép nhập. Kiểm tra trang tạo bài, hộp thoại đang mở và quyền đăng; chưa bấm đăng.');
+  if (!fields) {
+    const missing = [...(recipe.titleSelectors.length && !writable(lastTitle) ? ['title'] : []), ...(!writable(lastBody) || lastBody === lastTitle ? ['body'] : [])];
+    return fail('Không xác định được một khung soạn có đủ ô tiêu đề/nội dung cho phép nhập. Kiểm tra trang tạo bài, hộp thoại đang mở và quyền đăng; chưa bấm đăng.', missing.length ? missing : ['body']);
+  }
   const { body } = fields;
   let { title } = fields;
   const form = body.closest('form');
@@ -363,7 +380,7 @@ export async function fillSocialAndSubmit(job) {
     if (!scope || (recipe.submitSelectors ?? []).some(selector => all(selector).some(node => visible(node) && contains(scope, node)))) return null;
     return button(finalLabels ?? []);
   }, 5000);
-  if (!submit) return needs('Nút đăng chưa sẵn sàng. Kiểm tra các trường bắt buộc hoặc quyền của tài khoản.');
+  if (!submit) return { ...needs('Nút đăng chưa sẵn sàng. Kiểm tra các trường bắt buộc hoặc quyền của tài khoản.'), missing: ['submit'] };
   if (!['medium', 'substack'].includes(engine) && !validContent()) return needs('Nội dung không còn khớp với bài trên web; chưa đăng.');
   if (!mindsChannelMatches()) return needs('Nơi đăng Minds đã thay đổi; chưa gửi bài.');
   submit.click();

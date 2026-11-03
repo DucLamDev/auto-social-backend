@@ -1,5 +1,44 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.8.1: kiểm tra đăng nhập gọn và đúng hơn
+
+- **Kiểm tra đăng nhập xong là đóng tab**, kể cả popup đăng nhập Google, dù thành công hay cần thao tác. Kết quả xem
+  trên web; nút **Hướng dẫn kết nối → Mở nền tảng** mở lại trang khi cần đăng nhập tay.
+- **Nhận đúng tài khoản dù tên hiển thị khác chữ hoa / dấu / ký tự** ("VPSTTT Group" khớp `vpsttt_group`), và khi link hồ
+  sơ của tài khoản đang đăng nhập trùng URL hồ sơ đã khai (không phân biệt hoa thường). Tài khoản khác hẳn vẫn bị báo
+  "Chrome đang đăng nhập tài khoản khác".
+- **Trang chỉ hỏi email (Substack…)**: tài khoản đăng nhập bằng mật khẩu được tự bấm "Sign in with password" rồi điền
+  email + mật khẩu. Tài khoản đăng nhập bằng Google mà trang không có nút Google thì báo rõ sau vài giây (không đứng im
+  tới hết giờ); tiện ích không bao giờ điền mật khẩu Google vào form của nền tảng.
+- Link không có địa chỉ trên trang không còn làm bước đăng nhập dừng ngầm tới hết giờ.
+- Nạp lại extension trong `chrome://extensions` để dùng bản 1.8.1.
+
+## Bản 1.8.0: AI tìm ô / nút khi giao diện mạng xã hội đổi
+
+Cần backend 1.5.0 trở lên và bật `EXTENSION_UI_RECOVERY_ENABLED=true`; tắt thì tiện ích chạy như bản 1.7.6.
+
+- **Khi không tìm thấy ô tiêu đề, ô nội dung, nút mở khung soạn hoặc nút Đăng**, tiện ích mô tả các phần tử đang hiện
+  (tối đa 60: loại, nhãn, placeholder, chữ trên nút; không có giá trị đã nhập, ô mật khẩu, nội dung bài; email, chuỗi dài,
+  dãy số dài bị che) và hỏi backend. AI chỉ trả số thứ tự phần tử; backend và tiện ích cùng kiểm lại đúng loại ô.
+- **Điền lại đúng một lần** bằng phần tử AI chọn. Gợi ý **chưa được duyệt** thì chỉ điền sẵn, tab chờ bạn kiểm tra rồi
+  bấm Đăng (báo "AI đã tìm ô / nút mới…" ở Cần thao tác). Gợi ý **đã được ADMIN duyệt** (API
+  `POST /api/v1/extension/selector-suggestions/:id/approve` hoặc Codex qua MCP) thì được tự đăng như bình thường, và từ
+  lần sau backend gửi luôn selector đó cho đúng trang này nên không cần hỏi AI nữa.
+- **Chỉ thiếu nút Đăng** (bài đã nằm trong khung soạn): tiện ích chỉ ghi gợi ý, không điền lại; bạn bấm Đăng trong tab.
+- **Thiếu nút mở khung soạn**: sau khi AI tìm được nút mở, tiện ích được hỏi thêm một lần cho các ô bên trong; không bao
+  giờ quá hai lần cho một bài. AI không trả lời được thì bài báo "Không thấy form đăng bài" như trước.
+- Không chạy cho kiểm tra đăng nhập, khi gặp CAPTCHA / đăng nhập / tài khoản bị khoá, hoặc sau khi đã bấm Đăng.
+- Nạp lại extension trong `chrome://extensions` để dùng bản 1.8.0.
+
+## Bản 1.7.6: nhận bài kế tiếp ngay
+
+- Đăng xong một bài, hoặc bài chuyển sang chờ bạn xử lý (bản nháp chờ bấm Đăng, CAPTCHA, đăng nhập, không thấy form),
+  tiện ích hỏi backend bài kế tiếp sau khoảng 1 giây thay vì chờ chu kỳ 30 giây. Hàng đợi nhiều bài chạy nhanh hơn tới
+  30 giây mỗi bài.
+- Giới hạn giữ nguyên: một lượt đăng tại một thời điểm, tối đa ba tab tác vụ, không mở tab thứ hai trên diễn đàn đang
+  có bản nháp chờ. Tiện ích đang tạm dừng thì không nhận bài mới.
+- Nạp lại extension trong `chrome://extensions` để dùng bản 1.7.6.
+
 ## Bản 1.7.4: không kẹt hàng đợi, xác nhận bài chắc hơn
 
 - **Tab chờ không còn chặn bài mới.** Trước đây đủ 5 tab "chờ bạn" thì tiện ích ngừng nhận bài cho tới khi các tab hết
@@ -52,7 +91,7 @@
 
 ## Bản 1.5.0: nhập file và đăng nhiều nền tảng trong một lần
 
-- **Tài khoản → Nhập file tài khoản**: chọn XLSX/CSV/TSV (tối đa 2 MiB, 500 dòng), Chrome đã ghép nối và email Google dùng chung nếu có. Cột Social Network và User/Email bắt buộc; hỗ trợ cả file Excel cũ có Tên Social, Email / Account, Password / Auth, URL Social. Có mật khẩu thì dùng thông tin dòng đó; dòng chỉ có email dùng Google. Không thực thi công thức hoặc hướng dẫn trong file.
+- **Tài khoản → Nhập file tài khoản**: chọn XLSX/CSV/TSV (tối đa 2 MiB, 500 dòng) và Chrome đã ghép nối. Cột Social Network và User/Email bắt buộc; hỗ trợ cả file Excel cũ có Tên Social, Email / Account, Password / Auth, URL Social. Có mật khẩu thì dùng thông tin dòng đó; dòng chỉ có email dùng Google. Không thực thi công thức hoặc hướng dẫn trong file.
 - Đích Space, publication hoặc chuyên mục có thể đưa vào cột **URL đăng bài**, cùng **Tags** và **Category**. Luồng có đích mặc định được cấu hình tự động. File mẫu ở frontend `/templates/social-accounts.csv`.
 - Sau khi Chrome xác nhận phiên đúng tài khoản, kênh đã có luồng đăng được tự bật. Nếu người dùng tắt kênh, kiểm tra đăng nhập sau đó không tự bật lại.
 - Bộ lọc **Đã kết nối · có thể đăng**, **Cần thao tác**, **Đã đăng nhập · chưa cấu hình đăng**, **Đang kết nối** phân biệt trạng thái đăng nhập và khả năng đưa bài vào luồng đăng.
@@ -331,7 +370,7 @@ và trả hàng đợi ngay, không chờ hết thời gian rồi báo lỗi chu
 |---|---|---|
 | `GET/POST /api/v1/extension/devices`, `DELETE …/:id` | Web (JWT, tạo/thu hồi: ADMIN) | Mã chỉ trả một lần; DB lưu SHA-256 |
 | `PUT /api/v1/extension/accounts/:id` | Web (ADMIN) | `{ enabled, engine, targetUrl, autoSubmit, tags?, category?, flair? }`; nền tảng API cần có luồng tiện ích tương ứng trong danh mục |
-| `POST /api/v1/extension/accounts/import` | Web (ADMIN) | Multipart XLSX/CSV/TSV tối đa 2 MiB, `deviceId`, `googleEmail` tuỳ chọn; `googlePassword`, `googleTotpSecret` tuỳ chọn (cần `googleEmail`); mã hoá credential và xếp lượt kiểm tra, không trả secret |
+| `POST /api/v1/extension/accounts/import` | Web (ADMIN) | Multipart XLSX/CSV/TSV tối đa 2 MiB, `deviceId`; mỗi dòng dùng email / mật khẩu / 2FA của chính dòng đó; mã hoá credential và xếp lượt kiểm tra, không trả secret |
 | `PUT /api/v1/extension/accounts/:id/session` | Web (ADMIN) | Gán hồ sơ, danh tính, phương thức login và secret mã hóa; không trả lại secret |
 | `POST /api/v1/extension/jobs/:id/requeue` | Web (ADMIN/EDITOR) | Chỉ job tiện ích đang chờ người vận hành; không nhận bài đã chờ diễn đàn duyệt |
 | `POST /api/v1/extension/agent/heartbeat` | Tiện ích (`Bearer spx_…`) | Số bài chờ, danh sách tên miền cần quyền |
@@ -352,18 +391,14 @@ Công thức trong Excel không được thực thi. Mật khẩu và khóa TOTP
 không trả về màn hình kết quả nhập file.
 
 Dòng có mật khẩu dùng phương thức trong file; dòng chỉ có email chuyển sang Google.
-Email Google chung trong hộp nhập chỉ áp dụng cho các dòng Google, không thay mật khẩu
-của dòng đăng nhập trực tiếp. Chrome dùng phiên Google sẵn có. Trang chỉ hỗ trợ email/mật khẩu,
-chưa có blog/Space, yêu cầu CAPTCHA hoặc xác minh khác sẽ hiện lý do ở **Cần thao tác**.
-
-**Mật khẩu Google** và **Khoá TOTP Google** (tuỳ chọn, cạnh ô email Google dùng chung) giúp tiện ích tự đăng nhập Google
-và tự điền mã 2 bước khi phiên Google hết hạn. Hai ô này áp cho mọi dòng đăng nhập bằng email Google đó trong lần nhập,
-và cho phương án "đăng nhập bằng Google" của các dòng còn lại. Hệ thống lưu mã hoá và không hiển thị lại. Mật khẩu social
-trong file không bao giờ được dùng làm mật khẩu Google.
+Mỗi dòng đăng nhập bằng đúng tài khoản của dòng đó; không có Google dùng chung (từ backend 1.6.1), vì các social trong
+một file thường dùng nhiều tài khoản Google khác nhau. Với dòng "Gmail / Google Auth", cột Pass và 2FA là mật khẩu và
+khoá 2 bước của chính email Google ở cột User; tiện ích dùng chúng khi phiên Google trong Chrome hết hạn. Trang chỉ hỗ
+trợ email/mật khẩu, chưa có blog/Space, yêu cầu CAPTCHA hoặc xác minh khác sẽ hiện lý do ở **Cần thao tác**.
 
 - Khoá TOTP là **khoá thiết lập** (chuỗi Base32) hoặc chuỗi `otpauth://totp/…`, không phải mã 6 số đang hiện.
 - Đang dùng extension **Authenticator**: mở phần sao lưu/xuất của Authenticator để lấy chuỗi `otpauth://…` của tài
-  khoản Google, rồi dán vào ô này. Tiện ích VPSTTT tự tính mã giống Authenticator, nên không cần đọc dữ liệu từ
+  khoản Google, rồi dán vào cột 2FA. Tiện ích VPSTTT tự tính mã giống Authenticator, nên không cần đọc dữ liệu từ
   extension kia; Chrome cũng không cho phép extension đọc dữ liệu của nhau.
 - Google vẫn có thể đòi xác nhận trên điện thoại, passkey hoặc CAPTCHA. Khi đó tiện ích dừng và báo **Cần thao tác**.
   Nếu Google cho chọn "Thử cách khác", tiện ích chọn ứng dụng Authenticator.
@@ -448,6 +483,7 @@ không nhận nhầm topic đang xem thành bài đã đăng:
 ```powershell
 node --import tsx --test scripts/extension-e2e/background.test.cjs scripts/extension-e2e/page-actions.test.cjs scripts/extension-e2e/loaded-extension.test.cjs scripts/extension-e2e/multi-flow.test.cjs
 node --import tsx --test scripts/extension-e2e/social-actions.test.cjs scripts/extension-e2e/social-extension.test.cjs
+node --import tsx --test scripts/extension-e2e/ui-recovery.test.cjs
 ```
 
 Ảnh người dùng cung cấp cho thấy NGINX thật đã nhận một bài chờ duyệt. Các diễn đàn mới chưa được kiểm chứng đăng

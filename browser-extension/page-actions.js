@@ -37,7 +37,9 @@ export async function fillAndSubmit(task) {
   // Keep this compatibility in the extension so queued jobs with an older
   // backend recipe can still be filled after reloading the extension.
   const fields = () => {
-    if (recipe.engine !== 'discourse') {
+    // A recipe carrying AI or operator-approved selectors searches the whole page:
+    // after a redesign the Discourse composer roots below may be gone too.
+    if (recipe.engine !== 'discourse' || recipe.uiOverride) {
       return { root: document, title: find(recipe.titleSelectors), body: find(recipe.bodySelectors) };
     }
     const roots = [...new Set([
@@ -63,13 +65,22 @@ export async function fillAndSubmit(task) {
   };
   const escapeHtml = (text) => text.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const normalize = (text) => text.replace(/\s+/g, ' ').trim();
+  // Which composer controls were not found. A Discourse page without any
+  // composer first needs its "New Topic" opener.
+  const notFound = ({ title, body }) => {
+    if (!title && !body && recipe.engine === 'discourse' && !recipe.uiOverride) return ['opener'];
+    const missing = [...(!title ? ['title'] : []), ...(!body ? ['body'] : [])];
+    return missing.length ? missing : ['title', 'body'];
+  };
 
   // Discourse renders the composer a moment after load; XenForo/phpBB are static.
   let ready = false;
   let openedComposer = false;
   let switchedToMarkdown = false;
+  let last = { title: null, body: null };
   for (let round = 0; round < 40; round += 1) {
     const { root, title, body } = fields();
+    last = { title, body };
     // Use Discourse's own toggle so its editor state updates as well as the DOM.
     // Replacing ProseMirror.innerHTML alone can leave the template in the model.
     if (recipe.engine === 'discourse' && root && !switchedToMarkdown) {
@@ -89,7 +100,7 @@ export async function fillAndSubmit(task) {
     // Try only Discourse's explicit New Topic button, once, after allowing the
     // normal route transition to finish. Never click a submit button here.
     if (recipe.engine === 'discourse' && !openedComposer && !title && !body && round >= 4) {
-      const opener = find(['button#create-topic']);
+      const opener = find([...(recipe.openerSelectors ?? []), 'button#create-topic']);
       if (opener && !opener.disabled && opener.getAttribute('aria-disabled') !== 'true') {
         openedComposer = true;
         opener.click();
@@ -100,11 +111,11 @@ export async function fillAndSubmit(task) {
   if (!ready) {
     return shows(recipe.loginSelectors)
       ? { status: 'login', message: `Chưa đăng nhập ${location.host} trong Chrome này` }
-      : { status: 'notReady', message: `Không thấy form đăng bài tại ${location.href}` };
+      : { status: 'notReady', message: `Không thấy form đăng bài tại ${location.href}`, missing: notFound(last) };
   }
 
   const { root: composer, title, body } = fields();
-  if (!title || !body) return { status: 'notReady', message: 'Không thấy ô tiêu đề hoặc nội dung' };
+  if (!title || !body) return { status: 'notReady', message: 'Không thấy ô tiêu đề hoặc nội dung', missing: notFound({ title, body }) };
 
   setValue(title, task.post.title);
   if (body.isContentEditable) {
@@ -206,7 +217,7 @@ export async function fillAndSubmit(task) {
   const submit = recipe.engine === 'discourse'
     ? find([...recipe.submitSelectors, 'button.create', '.save-or-cancel button.btn-primary'], finalComposer)
     : find(recipe.submitSelectors);
-  if (!submit || submit.disabled || submit.getAttribute('aria-disabled') === 'true') return { status: 'notReady', message: 'Không thấy nút Đăng hoặc nút đang bị khoá' };
+  if (!submit || submit.disabled || submit.getAttribute('aria-disabled') === 'true') return { status: 'notReady', message: 'Không thấy nút Đăng hoặc nút đang bị khoá', missing: ['submit'] };
   submit.click();
   return { status: 'submitted' };
 }

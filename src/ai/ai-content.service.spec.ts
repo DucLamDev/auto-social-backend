@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
 import { AiProvider } from './ai-provider';
-import { AiContentService } from './ai-content.service';
+import { AiContentService, extractJsonObject } from './ai-content.service';
 import { BrandProfileService } from './brand-profile.service';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
 
@@ -136,6 +136,9 @@ describe('AiContentService structured parsing and provider routing', () => {
       },
       {
         id: 'gemini', label: 'Google Gemini', model: 'gemini-test-model', configured: false, isDefault: false,
+      },
+      {
+        id: 'vpsttt', label: 'VPSTTT AI', model: 'claude:sonnet', configured: false, isDefault: false,
       },
     ]);
     expect(service.resolveProvider()).toBe('deepseek');
@@ -652,5 +655,84 @@ describe('AiContentService quality-checked generation', () => {
     expect(delay).toHaveBeenCalledWith(2_000);
     expect(create).toHaveBeenCalledTimes(3);
     expect(created[0]).toMatchObject({ recommended: true, reason: 'Hợp người đọc (AI chưa chấm được)' });
+  });
+});
+
+describe('AiContentService VPSTTT AI provider (IDE AI API)', () => {
+  const variant = {
+    platform: 'devto', title: 'VPSTTT title', body: 'VPSTTT body', summary: null,
+    hashtags: ['ai'], cta: null, recommended: true, reason: 'Relevant',
+    media: { type: 'none', altText: '' },
+  };
+  const source = { title: 'Title', body: 'Source', summary: null, canonicalUrl: null };
+
+  function vpstttService(overrides: Record<string, ConfigValue> = {}) {
+    return createService({} as PrismaService, isolatedConfig({ VPSTTT_AI_MODEL: 'claude:haiku', VPSTTT_AI_RPM: 600, ...overrides }));
+  }
+
+  it('sends only model, messages and stream=false, with the JSON contract in the system message', async () => {
+    const create = jest.fn().mockResolvedValue({ choices: [{ message: { content: `\`\`\`json\n${JSON.stringify(variant)}\n\`\`\`` } }] });
+    const service = vpstttService();
+    installClient(service, 'vpsttt', { chat: { completions: { create } } });
+
+    const result = await callModel(service, 'vpsttt', 'devto', 'Stay grounded.', '{{body}}', source);
+
+    expect(result).toMatchObject({ platform: 'devto', body: 'VPSTTT body' });
+    const params = (create.mock.calls[0] as [Record<string, unknown>])[0];
+    // The IDE AI API answers HTTP 400 for any other parameter.
+    expect(Object.keys(params).sort()).toEqual(['messages', 'model', 'stream']);
+    expect(params).toMatchObject({ model: 'claude:haiku', stream: false });
+    const messages = params.messages as Array<{ role: string; content: unknown }>;
+    expect(messages.map((message) => message.role)).toEqual(['system', 'user']);
+    expect(messages.every((message) => Object.keys(message).sort().join() === 'content,role' && typeof message.content === 'string')).toBe(true);
+    expect(messages[0]?.content).toEqual(expect.stringContaining('JSON Schema'));
+  });
+
+  it('keeps every request within the 100,000 character limit of the IDE AI API', async () => {
+    const create = jest.fn().mockResolvedValue({ choices: [{ message: { content: JSON.stringify(variant) } }] });
+    const service = vpstttService();
+    installClient(service, 'vpsttt', { chat: { completions: { create } } });
+
+    await callModel(service, 'vpsttt', 'devto', 'Stay grounded.', '{{body}}', { ...source, body: 'x'.repeat(150_000) });
+
+    const messages = ((create.mock.calls[0] as [Record<string, unknown>])[0].messages) as Array<{ content: string }>;
+    expect(messages.reduce((total, message) => total + message.content.length, 0)).toBeLessThanOrEqual(100_000);
+  });
+
+  it('explains a refused key and a rejected request without exposing the upstream body', async () => {
+    const upstream = 'raw-upstream-detail-with-key-id';
+    const service = vpstttService();
+    const create = jest.fn()
+      .mockRejectedValueOnce({ status: 403, message: upstream, error: { code: 'ip_denied', message: upstream } })
+      .mockRejectedValueOnce({ status: 400, message: upstream, error: { code: 'invalid_request', message: upstream } });
+    installClient(service, 'vpsttt', { chat: { completions: { create } } });
+
+    const refused = await captureApplicationError(callModel(service, 'vpsttt', 'devto', 'S', '{{body}}', source));
+    expect(refused.code).toBe(ErrorCode.PLATFORM_AUTH_FAILED);
+    expect(refused.getResponse()).toMatchObject({ message: expect.stringContaining('allowed IPs') as unknown });
+    const rejected = await captureApplicationError(callModel(service, 'vpsttt', 'devto', 'S', '{{body}}', source));
+    expect(rejected.code).toBe(ErrorCode.PLATFORM_API_ERROR);
+    expect(rejected.getResponse()).toMatchObject({ message: expect.stringContaining('rejected the request') as unknown });
+    expect(JSON.stringify([refused.getResponse(), rejected.getResponse()])).not.toContain(upstream);
+  });
+
+  it('needs both the base URL and the key before it counts as configured', async () => {
+    const keyOnly = vpstttService({ VPSTTT_AI_API_KEY: 'unit-test-key' });
+    expect((await keyOnly.providers()).find((provider) => provider.id === 'vpsttt')?.configured).toBe(false);
+    const error = await captureApplicationError(keyOnly.assertReady([], 'vpsttt'));
+    expect(error.getResponse()).toMatchObject({ message: 'VPSTTT_AI_BASE_URL is not configured' });
+
+    const ready = vpstttService({ VPSTTT_AI_API_KEY: 'unit-test-key', VPSTTT_AI_BASE_URL: 'https://ide.example.test/ai-api/v1' });
+    expect((await ready.providers()).find((provider) => provider.id === 'vpsttt')).toMatchObject({ configured: true, model: 'claude:haiku' });
+  });
+});
+
+describe('extractJsonObject', () => {
+  it('keeps the JSON object from fenced or chatty replies and leaves plain JSON alone', () => {
+    expect(extractJsonObject('{"a":1}')).toBe('{"a":1}');
+    expect(extractJsonObject('```json\n{"a":1}\n```')).toBe('{"a":1}');
+    expect(extractJsonObject('```\n{"a":1}\n```')).toBe('{"a":1}');
+    expect(extractJsonObject('Here it is: {"a":{"b":2}} Done.')).toBe('{"a":{"b":2}}');
+    expect(extractJsonObject('no json here')).toBe('no json here');
   });
 });

@@ -65,4 +65,13 @@ describe('AuditInterceptor', () => {
       requestId: 'request-1',
     }));
   });
+
+  it('leaves MCP calls to the tools, which audit with the token owner', async () => {
+    const recordBestEffort = jest.fn().mockResolvedValue(undefined);
+    const interceptor = new AuditInterceptor({ recordBestEffort } as unknown as AuditService);
+    const request = { method: 'POST', path: '/mcp', params: {}, socket: {} };
+    const context = { switchToHttp: () => ({ getRequest: () => request }) } as unknown as ExecutionContext;
+    await lastValueFrom(interceptor.intercept(context, { handle: () => of(undefined) } as CallHandler));
+    expect(recordBestEffort).not.toHaveBeenCalled();
+  });
 });
