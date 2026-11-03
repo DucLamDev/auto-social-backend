@@ -27,4 +27,13 @@ describe('per-platform Chrome flows', () => {
     expect(() => validateExtensionFlow('reddit', { engine: 'reddit', targetUrl: 'https://www.reddit.com/submit', autoSubmit: true })).toThrow('specific');
     expect(() => validateExtensionFlow('discourse', { engine: 'medium', targetUrl: 'https://example.com', autoSubmit: true })).toThrow('matching platform');
   });
+
+  it('keeps daily.dev on its own-profile composer page', () => {
+    expect(validateExtensionFlow('daily-dev', { engine: 'dailydev', targetUrl: 'https://daily.dev/squads/create', autoSubmit: true })?.id).toBe('daily-dev');
+    // A Squad the account cannot post in would silently become a profile post.
+    for (const targetUrl of ['https://daily.dev/squads/vpsttt', 'https://app.daily.dev/squads/create', 'https://daily.dev/squads/create?sid=vpsttt-team',
+      'https://daily.dev/squads/create?title=Hi', 'https://daily.dev/squads/create#top']) {
+      expect(() => validateExtensionFlow('daily-dev', { engine: 'dailydev', targetUrl, autoSubmit: true })).toThrow();
+    }
+  });
 });

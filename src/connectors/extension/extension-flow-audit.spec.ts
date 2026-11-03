@@ -8,7 +8,13 @@ describe('posting flow status shown after a login check', () => {
 
   it('keeps the other gaps as they were', () => {
     expect(extensionFlowAudit('disqus', {})).toMatchObject({ status: 'UNAVAILABLE', implemented: false });
-    expect(extensionFlowAudit('daily-dev', {})).toMatchObject({ status: 'FLOW_REQUIRED', implemented: false });
+    expect(extensionFlowAudit('mewe', {})).toMatchObject({ status: 'FLOW_REQUIRED', implemented: false });
     expect(extensionFlowAudit('voz-forums', {})).toMatchObject({ status: 'DESTINATION_REQUIRED', implemented: true, engine: 'xenforo' });
+  });
+
+  it('lists daily.dev as ready to configure now that it has a posting flow', () => {
+    expect(extensionFlowAudit('daily-dev', {})).toMatchObject({ status: 'CONFIGURATION_REQUIRED', implemented: true, engine: 'dailydev' });
+    expect(extensionFlowAudit('daily-dev', { delivery: 'extension', extensionEngine: 'dailydev', extensionTargetUrl: 'https://daily.dev/squads/create', extensionAutoSubmit: true }))
+      .toMatchObject({ status: 'CONFIGURED', implemented: true, engine: 'dailydev' });
   });
 });

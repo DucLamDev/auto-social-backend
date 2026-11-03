@@ -41,7 +41,7 @@ const PLATFORM_FORMAT: Record<string, TextFormat> = {
 };
 
 // Limits enforced by the destination or by the extension before it submits.
-const ENGINE_MAX_CHARS: Partial<Record<ExtensionEngine, number>> = { bluesky: 300, mastodon: 500, linkedin: 3000, pixelfed: 500 };
+const ENGINE_MAX_CHARS: Partial<Record<ExtensionEngine, number>> = { bluesky: 300, mastodon: 500, linkedin: 3000, pixelfed: 500, dailydev: 20_000 };
 const PLATFORM_MAX_CHARS: Record<string, number> = {
   instagram: 2200,
   linkedin: 3000,
@@ -62,7 +62,7 @@ const INLINE_HASHTAG_LIMITS: Record<string, number> = {
   'pixelfed-social': 5,
 };
 const TAG_LIMITS: Record<string, number> = { devto: 4, instagram: 5 };
-const TITLE_LIMITS: Partial<Record<ExtensionEngine, number>> = { reddit: 300, stackexchange: 150, xenforo: 150, discourse: 150, phpbb: 150 };
+const TITLE_LIMITS: Partial<Record<ExtensionEngine, number>> = { reddit: 300, stackexchange: 150, xenforo: 150, discourse: 150, phpbb: 150, dailydev: 250 };
 const TITLE_REQUIRED_PLATFORMS = new Set(['wordpress', 'blogger', 'devto', 'discourse']);
 
 const GROUP_DEFAULT_FORMAT: Record<PlatformGroupKey, TextFormat> = {

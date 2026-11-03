@@ -419,7 +419,7 @@ export async function fillSocialAndSubmit(job) {
     medium: ['Publish now', 'Xuất bản ngay'], substack: ['Publish', 'Publish now'], quora: ['Post', 'Đăng'],
     reddit: ['Post', 'Đăng'], slideshare: ['Publish'], 'aws-builder': ['Publish', 'Publish article'],
     tinhte: ['Đăng', 'Đăng bài', 'Đăng bài viết', 'Xuất bản'], pixelfed: ['Post', 'Share', 'Publish', 'Đăng'],
-    mastodon: ['Publish!', 'Publish', 'Post', 'Đăng', 'Đăng bài'], bluesky: ['Post', 'Đăng'], tumblr: ['Post', 'Post now', 'Đăng'], devto: ['Publish', 'Xuất bản'],
+    mastodon: ['Publish!', 'Publish', 'Post', 'Đăng', 'Đăng bài'], bluesky: ['Post', 'Đăng'], tumblr: ['Post', 'Post now', 'Đăng'], devto: ['Publish', 'Xuất bản'], dailydev: ['Post'],
   }[engine];
   const submit = await wait(() => {
     const target = pick(recipe.submitSelectors);

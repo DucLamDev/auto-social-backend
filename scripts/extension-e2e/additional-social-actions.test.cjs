@@ -171,3 +171,50 @@ test('a suspended account is reported as restricted before anything is filled', 
   assert.equal(await page.locator('.page-new-post-title').inputValue(), '');
   await page.close();
 });
+// Markup mirrors daily.dev's SmartComposerModal (dailydotdev/apps): a dialog with
+// form#smart_composer, a title textarea, a TipTap body and a submit button bound
+// to the form. Posting navigates to /posts/<slug>, which renders an h1 and the
+// Markdown container (CSS-module class "markdown_…").
+async function dailyDevComposer(page, draftTitle = '') {
+  await page.evaluate(draftTitle => {
+    window.submits = [];
+    document.body.innerHTML = '<a href="/posts/an-older-post-xyz">Older post</a><div role="dialog"><form id="smart_composer">'
+      + '<button type="button">Your profile</button><textarea name="title" aria-label="Post title" placeholder="Post title…"></textarea>'
+      + '<button type="button" aria-label="Add a cover image">Add cover</button><div class="tiptap ProseMirror" contenteditable="true" role="textbox"></div>'
+      + '<button type="button">Schedule</button><button form="smart_composer" type="submit" disabled>Post</button></form></div>';
+    const form = document.querySelector('form'), title = form.querySelector('textarea'), body = form.querySelector('[contenteditable]'), submit = form.querySelector('[type="submit"]');
+    title.value = draftTitle;
+    const sync = () => { submit.disabled = !title.value.trim() || !body.innerText.trim(); };
+    title.oninput = sync; body.oninput = sync;
+    form.onsubmit = event => {
+      event.preventDefault();
+      const record = { title: title.value, body: body.innerText };
+      window.submits.push(record);
+      document.body.innerHTML = '<main><h1></h1><div class="markdown_markdown__a1B2c"></div></main>';
+      document.querySelector('h1').textContent = record.title; document.querySelector('.markdown_markdown__a1B2c').textContent = record.body;
+      history.pushState({}, '', '/posts/a-specific-technical-question-abc123');
+    };
+  }, draftTitle);
+}
+test('daily.dev fills the composer dialog, posts once and confirms the new post page', async () => {
+  const page = await pageAt('https://daily.dev/squads/create');
+  await dailyDevComposer(page);
+  const job = { recipe: EXTENSION_RECIPES.dailydev, targetOrigin: 'https://daily.dev', openUrl: 'https://daily.dev/squads/create', post, autoSubmit: true };
+  const result = await page.evaluate(fill, job);
+  assert.equal(result.status, 'submitted', JSON.stringify(result));
+  assert.deepEqual(await page.evaluate(() => window.submits), [{ title: post.title, body: post.body }]);
+  assert.equal(await page.evaluate(read, { job, beforeUrls: result.beforeUrls }), 'https://daily.dev/posts/a-specific-technical-question-abc123');
+  await page.close();
+});
+test('daily.dev keeps a saved draft and stops before Post when auto-submit is off', async () => {
+  const page = await pageAt('https://daily.dev/squads/create');
+  await dailyDevComposer(page, 'My own unfinished draft');
+  const job = { recipe: EXTENSION_RECIPES.dailydev, targetOrigin: 'https://daily.dev', openUrl: 'https://daily.dev/squads/create', post, autoSubmit: true };
+  assert.equal((await page.evaluate(fill, job)).status, 'notReady');
+  assert.equal(await page.locator('textarea').inputValue(), 'My own unfinished draft');
+  await dailyDevComposer(page);
+  assert.equal((await page.evaluate(fill, { ...job, autoSubmit: false })).status, 'filled');
+  assert.equal(await page.locator('textarea').inputValue(), post.title);
+  assert.deepEqual(await page.evaluate(() => window.submits), []);
+  await page.close();
+});
