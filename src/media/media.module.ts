@@ -4,5 +4,5 @@ import { MediaController } from './media.controller';
 import { MediaService } from './media.service';
 import { MediaUploadConcurrencyInterceptor } from './media-upload-concurrency.interceptor';
 
-@Module({ imports: [StorageModule], controllers: [MediaController], providers: [MediaService, MediaUploadConcurrencyInterceptor] })
+@Module({ imports: [StorageModule], controllers: [MediaController], providers: [MediaService, MediaUploadConcurrencyInterceptor], exports: [MediaService] })
 export class MediaModule {}

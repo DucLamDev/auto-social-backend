@@ -599,6 +599,32 @@ describe('AiContentService quality-checked generation', () => {
     expect(created[0]).toMatchObject({ body: shortBody, recommended: true, reason: 'Hợp người đọc (AI chấm 8/10)', hashtags: ['vps'] });
   });
 
+  it('asks for an image description only where the post carries an image, and stores the image request', async () => {
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant(shortBody, { media: { type: 'none', altText: 'Máy chủ VPS trong phòng dữ liệu', prompt: 'A bright NVMe server rack, soft blue light' } }))
+      .mockResolvedValueOnce(reviewed());
+    const { service, created } = setup(create);
+    const plan = new Map([['bluesky', { need: 'optional' as const, size: '1536x1024' as const, style: 'a simple editorial illustration' }]]);
+
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai', undefined, plan);
+
+    expect(request(create, 0).instructions).toContain('Image (mandatory): one image generated from your description is attached to this Bluesky post.');
+    expect(request(create, 0).instructions).toContain('landscape 3:2');
+    expect(created[0]!.mediaRecommendation).toEqual({ type: 'image', altText: 'Máy chủ VPS trong phòng dữ liệu', prompt: 'A bright NVMe server rack, soft blue light' });
+  });
+
+  it('tells a text-only destination not to mention an image and drops any image request', async () => {
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant(shortBody, { media: { type: 'image', altText: 'Ảnh', prompt: 'A picture' } }))
+      .mockResolvedValueOnce(reviewed());
+    const { service, created } = setup(create);
+
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+    expect(request(create, 0).instructions).toContain('no image is attached to this Bluesky post');
+    expect(created[0]!.mediaRecommendation).toEqual({ type: 'none', altText: '', prompt: null });
+  });
+
   it('stores clean paragraphs for plain-text destinations so API routes never post Markdown', async () => {
     const create = jest.fn()
       .mockResolvedValueOnce(variant('**Triển khai VPS NVMe trong 60 giây.** Có người hỗ trợ bằng tiếng Việt khi bạn cần, kể cả cuối tuần. #vps'))

@@ -21,6 +21,7 @@ import {
   ReviewSchema,
   rewriteFeedback,
 } from './content-quality';
+import type { PlatformImagePlan } from '../campaigns/image-plan';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
 import { ProviderThrottle } from './provider-throttle';
 import {
@@ -39,7 +40,7 @@ const VariantSchema = z.object({
   cta: z.string().nullable(),
   recommended: z.boolean(),
   reason: z.string(),
-  media: z.object({ type: z.enum(['none', 'image', 'video', 'document']), altText: z.string() }),
+  media: z.object({ type: z.enum(['none', 'image', 'video', 'document']), altText: z.string(), prompt: z.string().nullable().optional() }),
 });
 
 export type GeneratedVariant = z.infer<typeof VariantSchema>;
@@ -60,10 +61,11 @@ const outputSchema = {
     media: {
       type: 'object',
       additionalProperties: false,
-      required: ['type', 'altText'],
+      required: ['type', 'altText', 'prompt'],
       properties: {
         type: { type: 'string', enum: ['none', 'image', 'video', 'document'] },
         altText: { type: 'string' },
+        prompt: { type: ['string', 'null'] },
       },
     },
   },
@@ -123,6 +125,8 @@ interface ModelOptions {
   contract?: PlatformContract;
   brand?: BrandProfile | null;
   feedback?: string;
+  /** Set when this destination's post carries one AI image; absent means text only. */
+  image?: PlatformImagePlan | null;
 }
 
 const LANGUAGE_NAMES = { vi: 'Vietnamese', en: 'English' } as const;
@@ -154,9 +158,41 @@ export function contractInstructions(contract: PlatformContract): string {
   ].filter(Boolean).join('\n');
 }
 
+/**
+ * Tells the writer whether an image goes with this post, so the caption fits
+ * it and text-only destinations never promise a picture.
+ */
+export function imageInstructions(platformName: string, image?: PlatformImagePlan | null): string {
+  if (!image) {
+    return `Image: no image is attached to this ${platformName} post. Set media.type to "none", media.prompt to null and media.altText to "", and never mention an image, photo, picture or visual in the text.`;
+  }
+  const shape = image.size === '1024x1024' ? 'square 1:1' : image.size === '1536x1024' ? 'landscape 3:2' : 'portrait 2:3';
+  return [
+    `Image (mandatory): one image generated from your description is attached to this ${platformName} post.`,
+    '- Set media.type to "image".',
+    `- media.prompt: an English prompt for an image generator, 40 to 120 words. Show the one idea this post is about, as ${image.style}; ${shape} framing. Use the brand colours if the brand profile names them. The image must contain no words, letters, numbers, logos, watermarks, screenshots of real products or recognisable people.`,
+    '- media.altText: one sentence in the language of the post describing what the image shows, for screen readers.',
+    image.need === 'required'
+      ? '- The image is the post here: the caption complements what it shows.'
+      : '- The text may refer to the visual naturally but must stand on its own.',
+  ].join('\n');
+}
+
 function isBrief(content: SourceContent): boolean {
   const analysis = content.aiAnalysis;
   return analysis !== null && typeof analysis === 'object' && !Array.isArray(analysis) && analysis.kind === 'brief';
+}
+
+/**
+ * The image decision belongs to the route, not the writer: a destination
+ * without an image never carries a media request, and one with an image always
+ * has a prompt to draw from, even when the model left it empty.
+ */
+function mediaForPlan(generated: GeneratedVariant, image: PlatformImagePlan | null): GeneratedVariant['media'] {
+  if (!image) return { type: 'none', altText: '', prompt: null };
+  const prompt = generated.media.prompt?.trim()
+    || `${image.style}. It illustrates: ${(generated.title ?? generated.body).replace(/\s+/g, ' ').slice(0, 300)}. No text, letters, logos or recognisable people.`;
+  return { type: 'image', altText: generated.media.altText.trim(), prompt };
 }
 
 const CONNECTION_ERROR_NAMES = new Set([
@@ -314,6 +350,7 @@ export class AiContentService {
     platformSlugs: string[],
     requestedProvider?: AiProvider,
     assertOwnership?: () => Promise<void>,
+    images?: ReadonlyMap<string, PlatformImagePlan>,
   ) {
     await assertOwnership?.();
     const provider = this.resolveProvider(requestedProvider);
@@ -342,7 +379,7 @@ export class AiContentService {
         generatedByPlatform.push(...await Promise.all(platforms.slice(offset, offset + 4).map(async (platform) => {
         const prompt = platform.prompts[0];
         if (!prompt) throw new ApplicationException(ErrorCode.RESOURCE_NOT_FOUND, `No active prompt for ${platform.slug}`, HttpStatus.NOT_FOUND);
-        const generated = await this.generateChecked(provider, platform.slug, prompt.systemPrompt, prompt.userTemplate, content, brand);
+        const generated = await this.generateChecked(provider, platform.slug, prompt.systemPrompt, prompt.userTemplate, content, brand, images?.get(platform.slug) ?? null);
         return { platform, generated };
         })));
       }
@@ -430,6 +467,7 @@ export class AiContentService {
     userTemplate: string,
     content: SourceContent,
     brand: BrandProfile | null,
+    image: PlatformImagePlan | null = null,
   ): Promise<GeneratedVariant> {
     const contract = platformContract(platform, {
       sourceText: content.body,
@@ -440,9 +478,10 @@ export class AiContentService {
     // extension), so stray Markdown never reaches readers.
     const write = async (feedback?: string) => {
       const generated = await this.withGenerationRetry(() => (
-        this.callModel(provider, platform, systemPrompt, userTemplate, content, { contract, brand, feedback })
+        this.callModel(provider, platform, systemPrompt, userTemplate, content, { contract, brand, feedback, image })
       ));
-      return contract.format === 'plain' ? { ...generated, body: markdownToPlain(generated.body) } : generated;
+      const media = mediaForPlan(generated, image);
+      return contract.format === 'plain' ? { ...generated, media, body: markdownToPlain(generated.body) } : { ...generated, media };
     };
     let draft = await write();
     let assessment = await this.assess(provider, draft, contract, content, brand);
@@ -532,7 +571,11 @@ export class AiContentService {
       brandProfileBlock(options.brand ?? null),
       options.feedback ? `Your previous draft was rejected by the editor. Rewrite it from scratch and fix:\n${options.feedback}` : '',
     ].filter(Boolean).join('\n\n');
-    const instructions = options.contract ? `${systemPrompt}\n\n${contractInstructions(options.contract)}` : systemPrompt;
+    const instructions = [
+      systemPrompt,
+      options.contract ? contractInstructions(options.contract) : '',
+      options.contract ? imageInstructions(options.contract.name, options.image) : '',
+    ].filter(Boolean).join('\n\n');
     return this.requestStructured(provider, instructions, input, VARIANT_SPEC);
   }
 

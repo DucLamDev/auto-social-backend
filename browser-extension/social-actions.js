@@ -246,6 +246,56 @@ export async function fillSocialAndSubmit(job) {
   const characterLimit = engine === 'bluesky' ? 300 : engine === 'mastodon' ? 500 : engine === 'linkedin' ? 3000 : null;
   if (characterLimit && [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(expectedBody)].length > characterLimit) return needs(`Nội dung vượt ${characterLimit} ký tự của kênh này. Cần tạo lại bản ngắn hơn trên web.`);
 
+  // One planned image, attached once the text is in place. A composer that does
+  // not show the image is never submitted: the post would go out without it.
+  const inScope = selectors => {
+    const scope = activeScope();
+    return scope ? [...new Set((selectors ?? []).flatMap(selector => all(selector)))].filter(node => contains(scope, node)) : [];
+  };
+  const previewShown = () => inScope(recipe.mediaPreviewSelectors).some(visible);
+  const uploading = () => inScope(recipe.mediaBusySelectors).some(visible);
+  const attachImage = async asset => {
+    if (previewShown()) return true;
+    const bytes = Uint8Array.from(atob(asset.base64), char => char.charCodeAt(0));
+    const file = new File([bytes], asset.name, { type: asset.mimeType });
+    const transfer = () => { const data = new DataTransfer(); data.items.add(file); return data; };
+    const input = () => { const found = inScope(recipe.mediaInputSelectors).filter(node => !node.disabled); return found.length === 1 ? found[0] : null; };
+    let target = input();
+    if (!target && recipe.mediaOpenerLabels?.length) {
+      const open = button(recipe.mediaOpenerLabels);
+      if (open) { open.click(); target = await wait(input, 5000); }
+    }
+    if (target) {
+      target.files = transfer().files;
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      target.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      // Composers that create their file picker on demand (Bluesky) take a pasted image.
+      const editor = pick(bodySelectors);
+      if (!editor) return false;
+      editor.focus();
+      editor.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer() }));
+    }
+    // LinkedIn shows an image editor step ("Next") before returning to the post.
+    for (let step = 0; step < 2 && recipe.mediaConfirmLabels?.length && !previewShown(); step++) {
+      const next = await wait(() => (previewShown() ? 'shown' : button(recipe.mediaConfirmLabels)), 15_000);
+      if (!next || next === 'shown') break;
+      next.click(); await sleep(800);
+    }
+    if (!await wait(() => previewShown() || null, recipe.mediaWaitMs ?? 45_000)) return false;
+    // Wait for the upload itself so Post is not pressed on a half-sent image.
+    await wait(() => (uploading() ? null : true), 90_000);
+    if (uploading()) return false;
+    const alt = asset.altText ? pick(recipe.mediaAltSelectors ?? []) : null;
+    if (alt) write(alt, asset.altText);
+    return true;
+  };
+  if (recipe.optionalMedia && job.attachments?.length) {
+    if (!await attachImage(job.attachments[0])) return needs('Đã điền bài nhưng chưa gắn được ảnh vào khung soạn, nên chưa bấm Đăng. Gắn ảnh rồi bấm Đăng, hoặc bỏ ảnh của kênh này trên web rồi chạy lại.');
+    await sleep(300);
+    if (!validContent()) return needs('Nội dung thay đổi khi gắn ảnh; chưa đăng.');
+  }
+
   const choose = async (name, selectors, openLabels) => {
     if (!name) return true;
     let field = pick(selectors);
@@ -379,7 +429,7 @@ export async function fillSocialAndSubmit(job) {
     // action with the same label (e.g. a comment or a different post type).
     if (!scope || (recipe.submitSelectors ?? []).some(selector => all(selector).some(node => visible(node) && contains(scope, node)))) return null;
     return button(finalLabels ?? []);
-  }, 5000);
+  }, recipe.optionalMedia && job.attachments?.length ? 30_000 : 5000);
   if (!submit) return { ...needs('Nút đăng chưa sẵn sàng. Kiểm tra các trường bắt buộc hoặc quyền của tài khoản.'), missing: ['submit'] };
   if (!['medium', 'substack'].includes(engine) && !validContent()) return needs('Nội dung không còn khớp với bài trên web; chưa đăng.');
   if (!mindsChannelMatches()) return needs('Nơi đăng Minds đã thay đổi; chưa gửi bài.');

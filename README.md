@@ -90,6 +90,18 @@ lúc và rải đều `VPSTTT_AI_RPM` lượt mỗi phút, đặt hai số này 
 bài cho mỗi nền tảng cần 2–4 lượt (viết, chấm, viết lại khi chưa đạt), nên với 10 lượt/phút nên chọn khoảng 8 nền tảng
 trở xuống mỗi lần tạo tự động. Model: `claude:haiku` (nhanh), `claude:sonnet`, `claude:opus`, `gpt:`.
 
+**Ảnh AI cho chiến dịch** (từ backend 1.7.0) dùng cùng địa chỉ và key VPSTTT AI, gọi `POST /images/generations` với
+model `vpsttt-image`; key phải được quản trị cấp thêm quyền **image**. Chỉ kênh mà đường đăng gửi được ảnh mới có ảnh,
+mỗi kênh một ảnh riêng: Pixelfed (bắt buộc), Bluesky, Mastodon / Vivaldi, Tumblr, LinkedIn qua tiện ích Chrome; X, Discord,
+dev.to (ảnh bìa), Threads, Instagram qua API. Diễn đàn và các kênh khác chỉ đăng chữ, và AI được dặn không nhắc tới ảnh
+trong bài chữ. AI viết bài viết luôn mô tả ảnh (tiếng Anh, không chữ, không logo, không người thật) theo khổ và phong cách
+của kênh (vuông cho Pixelfed, Instagram, Threads; ngang cho các kênh còn lại), rồi backend tạo ảnh và gắn vào biến thể
+trước khi chờ duyệt. Ảnh lỗi không làm mất bài chữ; riêng kênh bắt buộc ảnh thì bài chờ duyệt tay. Bạn tự tải ảnh lên thì
+ảnh đó dùng thay ảnh AI. Ở tab Content đợi duyệt có thể tạo lại (`POST /api/v1/content-variants/{id}/image`, chạy nền),
+bỏ (`DELETE /api/v1/content-variants/{id}/image/{mediaId}`) hoặc thay ảnh. Trạng thái: `GET /api/v1/ai/image-status`.
+Mỗi ảnh mất khoảng 30 giây đến 2 phút; `VPSTTT_AI_IMAGE_CONCURRENCY` (mặc định 1) và `VPSTTT_AI_IMAGE_RPM` giữ trong hạn
+mức của key; `AI_IMAGE_ENABLED=false` tắt hẳn ảnh AI.
+
 ADMIN có thể vào **Cài đặt → API key Gemini** để lưu tối đa 10 key, áp dụng ngay cho lần tạo nội dung tiếp theo. Key cũ trong `GEMINI_API_KEY` được giữ ở ô 1 cho đến khi lưu cấu hình trên web; các ô để trống giữ nguyên key đã lưu, nút Xóa loại bỏ key khi lưu. Backend mã hóa danh sách trong `SystemSetting`, chỉ trả trạng thái từng ô qua `GET /api/v1/ai/gemini-keys`; cập nhật bằng `PUT` cùng đường dẫn. Khi gặp quota/giới hạn (429 hoặc 402), hệ thống chuyển sang key tiếp theo, nhớ key thành công và tạm bỏ qua key vừa lỗi ít nhất 60 giây (tôn trọng `Retry-After` dài hơn). Mỗi yêu cầu thử mỗi key tối đa một lần; nếu tất cả bị giới hạn thì trả lỗi rõ ràng. Các key cùng Google Cloud project dùng chung quota: https://ai.google.dev/gemini-api/docs/rate-limits.
 
 ### Luồng một lần nhập

@@ -42,7 +42,13 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
   }),
   linkedin: recipe('linkedin', {
     readySelectors: ['.tiptap.ProseMirror[contenteditable]', '[role="dialog"] .ql-editor[contenteditable="true"]'], bodySelectors: ['.tiptap.ProseMirror[contenteditable]', '[role="dialog"] .ql-editor[contenteditable="true"]'],
-    submitSelectors: ['[role="dialog"] button.share-actions__primary-action'], successUrlPattern: '/(?:feed/update/urn:li:activity:\\d+/?|posts/[^/?#]+)(?:[?#].*)?$',
+    submitSelectors: ['[role="dialog"] button.share-actions__primary-action'],
+    // "Add media" opens a file picker, then an editor step confirmed with Next.
+    optionalMedia: 'image', mediaOpenerLabels: ['Add media', 'Add a photo', 'Thêm phương tiện', 'Thêm ảnh'],
+    mediaInputSelectors: ['input[type="file"][accept*="image"]', 'input[type="file"]'], mediaConfirmLabels: ['Next', 'Done', 'Tiếp', 'Tiếp theo', 'Xong'],
+    mediaPreviewSelectors: ['[role="dialog"] .share-creation-state__media img', '[role="dialog"] img[src^="blob:"]', '[role="dialog"] img[src*="media.licdn.com"]', '[role="dialog"] [class*="share-media"] img'],
+    mediaAltSelectors: ['[role="dialog"] textarea[name="alt-text"]', '[role="dialog"] textarea[id*="alt-text"]'],
+    successUrlPattern: '/(?:feed/update/urn:li:activity:\\d+/?|posts/[^/?#]+)(?:[?#].*)?$',
     publishedBodySelectors: ['.feed-shared-update-v2__description'], publishedLinkSelectors: ['a[href*="/feed/update/"]', 'a[href*="/posts/"]'],
   }),
   minds: recipe('minds', {
@@ -56,12 +62,20 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
   mastodon: recipe('mastodon', {
     readySelectors: ['textarea#composer-text', '.compose-form textarea'], bodySelectors: ['textarea#composer-text', '.compose-form textarea.autosuggest-textarea__textarea', '.compose-form textarea'],
     submitSelectors: ['.compose-form__publish-button-wrapper button', '.compose-form__publish button'],
+    // The upload button keeps a hidden file input in the compose form.
+    optionalMedia: 'image', mediaInputSelectors: ['.compose-form input[type="file"]', 'form input[type="file"][accept*="image"]'],
+    mediaPreviewSelectors: ['.compose-form__upload', '.compose-form__upload-thumbnail', '.compose-form__uploads .media-gallery'],
+    mediaBusySelectors: ['.compose-form .upload-progress', '.compose-form__upload-progress'],
     successUrlPattern: '/@[^/]+/\\d+(?:[?#].*)?$', publishedBodySelectors: ['.status__content', '.status__content__text'], publishedLinkSelectors: ['a.status__relative-time', 'a[href*="/@"]'],
   }),
   bluesky: recipe('bluesky', {
     readySelectors: ['[data-testid="composerTextInput"]', '[contenteditable="true"][role="textbox"]'],
     bodySelectors: ['[data-testid="composerTextInput"][contenteditable="true"]', '[data-testid="composerTextInput"] [contenteditable="true"]', '.tiptap[contenteditable="true"]', '[contenteditable="true"][role="textbox"]'],
     submitSelectors: ['[data-testid="composerPublishBtn"]'], successUrlPattern: '/profile/[^/]+/post/[a-z0-9]+(?:[?#].*)?$',
+    // The web composer opens its picker on demand, so the image is pasted into the editor;
+    // Bluesky itself resizes it under the 1 MB limit.
+    optionalMedia: 'image', mediaInputSelectors: ['[role="dialog"] input[type="file"]'],
+    mediaPreviewSelectors: ['[data-testid="composerImageGallery"] img', '[role="dialog"] img[src^="blob:"]', '[role="dialog"] img[src^="data:image"]', '[role="dialog"] img[src^="file:"]'],
     publishedBodySelectors: ['[data-testid="postText"]'], publishedLinkSelectors: ['a[href*="/post/"]'],
   }),
   tumblr: recipe('tumblr', {
@@ -69,6 +83,10 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
     titleSelectors: ['[contenteditable="true"][data-placeholder="Title"]', 'input[placeholder="Title"]'],
     bodySelectors: ['[contenteditable="true"][data-placeholder="Your text here"]', '[contenteditable="true"][aria-label="Post body"]', '[contenteditable="true"][role="textbox"]'],
     submitSelectors: ['button[aria-label="Post"]'], successUrlPattern: '/(?:blog/view/)?[^/]+/\\d+(?:/[^?#]*)?(?:[?#].*)?$',
+    // The text editor accepts a pasted image or a file from its photo block.
+    optionalMedia: 'image', mediaInputSelectors: ['input[type="file"][accept*="image"]'], mediaOpenerLabels: ['Photo', 'Add photo', 'Add an image', 'Ảnh'],
+    mediaPreviewSelectors: ['figure img[src^="blob:"]', '[contenteditable="true"] img', 'img[src^="blob:"]', 'img[src*="media.tumblr.com"]'],
+    mediaBusySelectors: ['[aria-label*="Uploading" i]', '[role="progressbar"]'],
     publishedTitleSelectors: ['article h1', 'article h2'], publishedBodySelectors: ['article [data-npf]', 'article .post-content', 'article'], publishedLinkSelectors: ['a[href*="/post/"]', 'a[aria-label*="Permalink"]'],
   }),
   devto: recipe('devto', {

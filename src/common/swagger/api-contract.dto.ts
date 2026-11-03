@@ -236,6 +236,11 @@ export class AiProviderContractDto {
   @ApiProperty() isDefault!: boolean;
 }
 
+export class AiImageStatusContractDto {
+  @ApiProperty({ description: 'True when VPSTTT AI image generation is configured' }) configured!: boolean;
+  @ApiProperty({ example: 'vpsttt-image' }) model!: string;
+}
+
 export class PublishJobContractDto {
   @ApiPropertyOptional({ type: String, format: 'uri', description: 'Review queue or platform destination; not an individual post permalink' }) reviewUrl?: string;
   @ApiPropertyOptional({ enum: ['pending_queue', 'platform'] }) reviewUrlKind?: 'pending_queue' | 'platform';

@@ -125,6 +125,41 @@ describe('MediaService variant immutability', () => {
     expect(data).not.toHaveProperty('altText');
   });
 
+  describe('AI-generated variant images', () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]);
+    const image = { bytes: png, mimeType: 'image/png', model: 'vpsttt-image' };
+
+    it('stores the image on the draft variant with its alt text and prompt', async () => {
+      const create = jest.fn(({ data }: { data: Record<string, unknown> }) => Promise.resolve(data));
+      const findFirst = jest.fn().mockResolvedValue({ id: 'variant-1', _count: { targets: 0 } });
+      const put = jest.fn().mockResolvedValue('https://cdn.example/media.png');
+      const service = new MediaService({ mediaAsset: { create }, contentVariant: { findFirst } } as unknown as PrismaService, { put } as unknown as StorageService);
+
+      await service.storeGeneratedImage('owner-1', 'variant-1', image, { altText: ' Bảng điều khiển VPS ', prompt: 'A calm VPS dashboard' });
+
+      expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'variant-1', content: { ownerId: 'owner-1' } } }));
+      expect(put).toHaveBeenCalledWith(expect.stringMatching(/^media\/.+\.png$/), png, 'image/png');
+      expect(create.mock.calls[0]?.[0].data).toMatchObject({ ownerId: 'owner-1', variantId: 'variant-1', type: MediaType.IMAGE,
+        metadata: { altText: 'Bảng điều khiển VPS', generated: true, model: 'vpsttt-image', prompt: 'A calm VPS dashboard' } });
+    });
+
+    it('never changes images of a variant already in a campaign, or of another owner', async () => {
+      const put = jest.fn();
+      const inCampaign = new MediaService({ contentVariant: { findFirst: jest.fn().mockResolvedValue({ id: 'variant-1', _count: { targets: 1 } }) } } as unknown as PrismaService, { put } as unknown as StorageService);
+      await expect(inCampaign.storeGeneratedImage('owner-1', 'variant-1', image, { prompt: 'p' })).rejects.toThrow('cannot change');
+      const foreign = new MediaService({ contentVariant: { findFirst: jest.fn().mockResolvedValue(null) } } as unknown as PrismaService, { put } as unknown as StorageService);
+      await expect(foreign.removeVariantImage('owner-2', 'variant-1', 'media-1')).rejects.toThrow('not found');
+      expect(put).not.toHaveBeenCalled();
+    });
+
+    it('removes only an image of that variant and owner', async () => {
+      const deleteMany = jest.fn().mockResolvedValue({ count: 1 });
+      const service = new MediaService({ mediaAsset: { deleteMany }, contentVariant: { findFirst: jest.fn().mockResolvedValue({ id: 'variant-1', _count: { targets: 0 } }) } } as unknown as PrismaService, {} as StorageService);
+      await expect(service.removeVariantImage('owner-1', 'variant-1', 'media-1')).resolves.toEqual({ removed: true });
+      expect(deleteMany).toHaveBeenCalledWith({ where: { id: 'media-1', ownerId: 'owner-1', variantId: 'variant-1', type: MediaType.IMAGE } });
+    });
+  });
+
   it('rejects alt text over 1000 characters before writing to storage', async () => {
     const put = jest.fn();
     const service = new MediaService({} as PrismaService, { put } as unknown as StorageService);

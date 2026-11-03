@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { MediaType, Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service';
@@ -71,6 +71,56 @@ export class MediaService {
         ...(normalizedAltText ? { metadata: { altText: normalizedAltText } } : {}),
       },
     });
+  }
+
+  /**
+   * Stores an AI-generated image on one variant. Only drafts that are not yet
+   * in a campaign target may change, the same rule as a manual upload.
+   */
+  async storeGeneratedImage(
+    ownerId: string,
+    variantId: string,
+    image: { bytes: Buffer; mimeType: string; model: string },
+    details: { altText?: string; prompt: string },
+  ) {
+    const format = MEDIA_FORMATS.get(image.mimeType);
+    if (format?.type !== MediaType.IMAGE || !format.signature(image.bytes)) throw new BadRequestException('Generated image bytes are not a supported image');
+    if (image.bytes.length > 50 * 1024 * 1024) throw new BadRequestException('Generated image exceeds 50 MiB');
+    await this.assertVariantEditable(ownerId, variantId);
+    const altText = details.altText?.trim().slice(0, MEDIA_ALT_TEXT_MAX_LENGTH);
+    const checksum = createHash('sha256').update(image.bytes).digest('hex');
+    const storageKey = `media/${new Date().toISOString().slice(0, 10)}/${randomUUID()}${format.extension}`;
+    const publicUrl = await this.storage.put(storageKey, image.bytes, image.mimeType);
+    return this.prisma.mediaAsset.create({
+      data: {
+        ownerId,
+        variantId,
+        type: MediaType.IMAGE,
+        storageKey,
+        publicUrl,
+        mimeType: image.mimeType,
+        sizeBytes: BigInt(image.bytes.length),
+        checksum,
+        metadata: { ...(altText ? { altText } : {}), generated: true, model: image.model, prompt: details.prompt.slice(0, 4_000) },
+      },
+    });
+  }
+
+  /** Detaches one image from a draft variant; the stored file is left for the storage lifecycle. */
+  async removeVariantImage(ownerId: string, variantId: string, mediaId: string) {
+    await this.assertVariantEditable(ownerId, variantId);
+    const removed = await this.prisma.mediaAsset.deleteMany({ where: { id: mediaId, ownerId, variantId, type: MediaType.IMAGE } });
+    if (!removed.count) throw new NotFoundException('Image not found on this variant');
+    return { removed: true };
+  }
+
+  private async assertVariantEditable(ownerId: string, variantId: string) {
+    const variant = await this.prisma.contentVariant.findFirst({
+      where: { id: variantId, content: { ownerId } },
+      select: { id: true, _count: { select: { targets: true } } },
+    });
+    if (!variant) throw new NotFoundException('Content variant not found');
+    if (variant._count.targets) throw new ConflictException('Media cannot change after a variant has been added to a campaign');
   }
 
   async list(ownerId: string, query: ListMediaQueryDto) {

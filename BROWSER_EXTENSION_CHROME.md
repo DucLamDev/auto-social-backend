@@ -1,5 +1,18 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.9.0: gắn ảnh cho Bluesky, Mastodon, Tumblr, LinkedIn
+
+- Bài có ảnh (ảnh AI của kênh hoặc ảnh bạn tải lên) được gắn vào khung soạn **sau khi** điền và kiểm tra chữ:
+  - Mastodon / Vivaldi Social: ô chọn tệp ẩn của nút tải ảnh; chờ tải xong mới bấm Publish.
+  - Bluesky: dán ảnh vào ô soạn; Bluesky tự thu nhỏ ảnh dưới 1 MB.
+  - Tumblr: nút Photo hoặc dán ảnh vào trình soạn.
+  - LinkedIn: Add media → chọn tệp → Next; điền alt text nếu có ô.
+- Chỉ bấm Đăng khi khung soạn hiện ảnh. Không thấy ảnh trong 45 giây thì tiện ích dừng với "Đã điền bài nhưng chưa
+  gắn được ảnh": gắn ảnh rồi bấm Đăng tay, hoặc bỏ ảnh của kênh đó trên web rồi chạy lại. Bài không có ảnh đi như cũ.
+- Giao diện thật của bốn trang chưa được thử từ máy dev; nếu báo lỗi, mở `flow-audit.html?open=bluesky,mastodon,tumblr,linkedin`
+  trong tiện ích để xem ô chọn tệp (`fileInputs`) nằm ở đâu.
+- Nạp lại extension trong `chrome://extensions` để dùng bản 1.9.0. Test giả lập: `scripts/extension-e2e/social-media-attach.test.cjs`.
+
 ## Bản 1.8.2: nhận ra thêm tài khoản đã đăng nhập
 
 - **daily.dev**: trang đã chuyển từ `app.daily.dev` sang `daily.dev`; tài khoản đã nhập tự dùng tên miền mới (backend
