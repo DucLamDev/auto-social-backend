@@ -1,6 +1,13 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.6.0 · 03/11/2026
+### Tính năng
+- Tiện ích Chrome nhờ AI tìm ô / nút khi giao diện mạng xã hội đổi (bản 1.8.0)
+  Khi không thấy ô tiêu đề, ô nội dung, nút mở khung soạn hoặc nút Đăng, tiện ích gửi danh sách phần tử đang hiện (đã che
+  dữ liệu, không có nội dung đã nhập hay mật khẩu) để AI chọn, rồi điền lại đúng một lần. Gợi ý chưa duyệt chỉ điền sẵn để
+  bạn kiểm tra và bấm Đăng; gợi ý đã được ADMIN duyệt thì tự đăng và được dùng cho các lần sau. Chỉ thiếu nút Đăng thì
+  chỉ ghi gợi ý. Cần backend bật EXTENSION_UI_RECOVERY_ENABLED; nạp lại extension để dùng bản mới.
 ## 1.5.0 · 03/11/2026
 ### Tính năng
 - AI gợi ý ô và nút khi giao diện mạng xã hội thay đổi (phía máy chủ)

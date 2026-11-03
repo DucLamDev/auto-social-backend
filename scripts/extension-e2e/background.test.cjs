@@ -53,6 +53,8 @@ function setup({ nextJobDelay = 60_000 } = {}) {
         return [{ result: state.result }];
       }
       if (injection.func.name === 'submitDiscoursePost') return [{ result: state.directResult ?? { status: 'fallback' } }];
+      if (injection.func.name === 'collectUiCandidates') return [{ result: state.candidates ?? null }];
+      if (injection.func.name === 'verifyUiSelectors') return [{ result: state.verified ?? injection.args[0].selectors }];
       if (injection.func.name === 'readModeration') return [{ result: state.moderation ?? null }];
       if (injection.func.name === 'readPublishedPost' || injection.func.name === 'readSocialPublishedPost') return [{ result: state.publishedUrl ?? null }];
       if (injection.func.name === 'readErrors') return [{ result: state.errorText ?? null }];
@@ -65,7 +67,7 @@ function setup({ nextJobDelay = 60_000 } = {}) {
     } },
   };
   const source = fs.readFileSync(path.join(__dirname, '../../browser-extension/background.js'), 'utf8')
-    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice)\.js';\r?\n/gm, '')
+    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery)\.js';\r?\n/gm, '')
     .replace(/const NEXT_JOB_DELAY_MS = [\d_]+;/, `const NEXT_JOB_DELAY_MS = ${nextJobDelay};`);
   const context = vm.createContext({
     chrome, URL, Date, AbortSignal, setTimeout, clearTimeout,
@@ -74,6 +76,7 @@ function setup({ nextJobDelay = 60_000 } = {}) {
     accountAuthStep: function accountAuthStep() {},
     submitDiscoursePost: function submitDiscoursePost() {},
     showPublishNotice: function showPublishNotice() {},
+    collectUiCandidates: function collectUiCandidates() {}, verifyUiSelectors: function verifyUiSelectors() {},
     fetch: async (url, options) => {
       if (url.endsWith('/result')) {
         if (state.reportOffline) throw new Error('Backend offline');
@@ -81,6 +84,12 @@ function setup({ nextJobDelay = 60_000 } = {}) {
         state.reports.push(JSON.parse(options.body));
       }
       let data = {};
+      if (url.includes('/ui-hint')) {
+        (state.hintRequests ??= []).push({ url, method: options.method, body: options.body ? JSON.parse(options.body) : null });
+        const answer = typeof state.hint === 'function' ? state.hint(state.hintRequests.length) : state.hint;
+        if (answer instanceof Error) return { ok: false, status: 404, json: async () => ({ success: false, error: { message: answer.message } }) };
+        return { ok: true, json: async () => ({ success: true, data: answer }) };
+      }
       if (url.endsWith('/heartbeat')) {
         data = { waiting: state.jobs ? state.jobs.length : state.waiting ? 1 : 0 };
         state.onHeartbeat?.();
@@ -673,4 +682,97 @@ test('the early poll never starts a second flow while one is still filling', asy
   assert.equal(state.claims, 1, 'MAX_ACTIVE_FLOWS still holds');
   assert.equal(state.fills, 1);
   release({ status: 'filled' });
+});
+
+// ---- AI-assisted recovery when a composer control is not found -------------
+const recoveryJob = (extra = {}) => ({ ...job, jobId: 'job-ui', autoSubmit: true, uiRecovery: { enabled: true },
+  recipe: { engine: 'discourse', successUrlPattern: '/t/[^/]+/\\d+', readySelectors: ['#reply-title'], titleSelectors: ['#reply-title'], bodySelectors: ['textarea.d-editor-input'], submitSelectors: ['button.create'] }, ...extra });
+const candidates = { url: 'http://forum.test/new-topic', candidates: [{ index: 0, kind: 'contenteditable', tag: 'div', inDialog: true, inForm: true, disabled: false, selector: 'div.new-editor' }] };
+const readyHint = (approved = false, selectors = { body: { selector: 'div.new-editor', approved, suggestionId: 's-1' } }) => ({ hintId: 'h-1', status: 'READY', selectors });
+
+test('a composer field that moved is filled once with the AI selector and left for the operator to post', async () => {
+  const { state, worker } = setup();
+  state.candidates = candidates;
+  state.hint = readyHint(false);
+  const seen = [];
+  state.fillResult = async pending => { seen.push(pending); return seen.length === 1 ? { status: 'notReady', missing: ['body'], message: 'Không thấy form' } : { status: 'filled' }; };
+  await worker.start(recoveryJob());
+  await settleUntil(() => state.reports.length === 1);
+  assert.equal(state.fills, 2);
+  assert.equal(seen[1].autoSubmit, false, 'an unapproved AI selector never clicks Post');
+  assert.equal(seen[1].recipe.bodySelectors[0], 'div.new-editor');
+  assert.equal(seen[1].recipe.uiOverride, true);
+  assert.equal(state.reports[0].reason, 'WAITING_USER');
+  assert.match(state.reports[0].message, /AI đã tìm/);
+  assert.deepEqual(state.hintRequests[0].body.missing, ['body']);
+  assert.equal(state.hintRequests[0].body.candidates.length, 1);
+  const task = Object.values(await worker.getTasks())[0];
+  assert.equal(task.uiOverride.approved, false, 'the tab remembers the AI selectors for a later continue');
+});
+
+test('an approved AI selector keeps automatic submit', async () => {
+  const { state, worker } = setup();
+  state.candidates = candidates;
+  state.hint = readyHint(true);
+  const seen = [];
+  state.fillResult = async pending => { seen.push(pending); return seen.length === 1 ? { status: 'notReady', missing: ['body'] } : { status: 'submitted' }; };
+  await worker.start(recoveryJob());
+  await settleUntil(async () => Object.values(await worker.getTasks())[0]?.phase === 'submitted');
+  assert.equal(seen[1].autoSubmit, true);
+});
+
+test('when the AI cannot help, the original "editor not found" result is reported', async () => {
+  const { state, worker } = setup();
+  state.candidates = candidates;
+  state.hint = { hintId: 'h-1', status: 'FAILED', errorCode: 'AI_HINT_FAILED' };
+  state.result = { status: 'notReady', missing: ['body'], message: 'Không thấy form đăng bài' };
+  await worker.start(recoveryJob());
+  await settleUntil(() => state.reports.length === 1);
+  assert.equal(state.fills, 1);
+  assert.deepEqual([state.reports[0].outcome, state.reports[0].reason], ['FAILED', 'EDITOR_NOT_FOUND']);
+});
+
+test('recovery stays off unless the backend enables it, and a disabled endpoint changes nothing', async () => {
+  const off = setup();
+  off.state.candidates = candidates;
+  off.state.result = { status: 'notReady', missing: ['body'] };
+  await off.worker.start(recoveryJob({ uiRecovery: undefined }));
+  await settleUntil(() => off.state.reports.length === 1);
+  assert.equal(off.state.hintRequests, undefined);
+  const disabled = setup();
+  disabled.state.candidates = candidates;
+  disabled.state.hint = new Error('AI-assisted UI recovery is disabled');
+  disabled.state.result = { status: 'notReady', missing: ['body'] };
+  await disabled.worker.start(recoveryJob());
+  await settleUntil(() => disabled.state.reports.length === 1);
+  assert.equal(disabled.state.reports[0].reason, 'EDITOR_NOT_FOUND');
+});
+
+test('when only the Post button is unknown the hint is recorded without filling again', async () => {
+  const { state, worker } = setup();
+  state.candidates = candidates;
+  state.hint = readyHint(false, { submit: { selector: 'button.go', approved: false, suggestionId: 's-2' } });
+  state.result = { status: 'filled', missing: ['submit'], message: 'Nút đăng chưa sẵn sàng.' };
+  await worker.start(recoveryJob());
+  await settleUntil(() => state.reports.length === 1);
+  assert.equal(state.fills, 1);
+  assert.equal(state.reports[0].reason, 'WAITING_USER');
+  assert.match(state.reports[0].message, /đề xuất nút Đăng/);
+});
+
+test('an opener hint may lead to one more hint for the fields, never a third', async () => {
+  const { state, worker } = setup();
+  state.candidates = candidates;
+  state.hint = count => count === 1
+    ? readyHint(false, { opener: { selector: 'a.compose', approved: false, suggestionId: 's-3' } })
+    : readyHint(false);
+  state.result = { status: 'notReady', missing: ['opener'] };
+  const seen = [];
+  state.fillResult = async pending => { seen.push(pending); return seen.length === 1 ? { status: 'notReady', missing: ['opener'] } : { status: 'notReady', missing: ['body'] }; };
+  await worker.start(recoveryJob());
+  await settleUntil(() => state.reports.length === 1);
+  assert.equal(state.hintRequests.filter(request => request.method === 'POST').length, 2);
+  assert.equal(state.fills, 3);
+  assert.deepEqual(seen[2].recipe.openerSelectors, ['a.compose']);
+  assert.equal(state.reports[0].reason, 'EDITOR_NOT_FOUND');
 });

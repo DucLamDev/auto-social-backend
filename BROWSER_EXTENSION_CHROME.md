@@ -1,5 +1,22 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.8.0: AI tìm ô / nút khi giao diện mạng xã hội đổi
+
+Cần backend 1.5.0 trở lên và bật `EXTENSION_UI_RECOVERY_ENABLED=true`; tắt thì tiện ích chạy như bản 1.7.6.
+
+- **Khi không tìm thấy ô tiêu đề, ô nội dung, nút mở khung soạn hoặc nút Đăng**, tiện ích mô tả các phần tử đang hiện
+  (tối đa 60: loại, nhãn, placeholder, chữ trên nút; không có giá trị đã nhập, ô mật khẩu, nội dung bài; email, chuỗi dài,
+  dãy số dài bị che) và hỏi backend. AI chỉ trả số thứ tự phần tử; backend và tiện ích cùng kiểm lại đúng loại ô.
+- **Điền lại đúng một lần** bằng phần tử AI chọn. Gợi ý **chưa được duyệt** thì chỉ điền sẵn, tab chờ bạn kiểm tra rồi
+  bấm Đăng (báo "AI đã tìm ô / nút mới…" ở Cần thao tác). Gợi ý **đã được ADMIN duyệt** (API
+  `POST /api/v1/extension/selector-suggestions/:id/approve` hoặc Codex qua MCP) thì được tự đăng như bình thường, và từ
+  lần sau backend gửi luôn selector đó cho đúng trang này nên không cần hỏi AI nữa.
+- **Chỉ thiếu nút Đăng** (bài đã nằm trong khung soạn): tiện ích chỉ ghi gợi ý, không điền lại; bạn bấm Đăng trong tab.
+- **Thiếu nút mở khung soạn**: sau khi AI tìm được nút mở, tiện ích được hỏi thêm một lần cho các ô bên trong; không bao
+  giờ quá hai lần cho một bài. AI không trả lời được thì bài báo "Không thấy form đăng bài" như trước.
+- Không chạy cho kiểm tra đăng nhập, khi gặp CAPTCHA / đăng nhập / tài khoản bị khoá, hoặc sau khi đã bấm Đăng.
+- Nạp lại extension trong `chrome://extensions` để dùng bản 1.8.0.
+
 ## Bản 1.7.6: nhận bài kế tiếp ngay
 
 - Đăng xong một bài, hoặc bài chuyển sang chờ bạn xử lý (bản nháp chờ bấm Đăng, CAPTCHA, đăng nhập, không thấy form),
@@ -457,6 +474,7 @@ không nhận nhầm topic đang xem thành bài đã đăng:
 ```powershell
 node --import tsx --test scripts/extension-e2e/background.test.cjs scripts/extension-e2e/page-actions.test.cjs scripts/extension-e2e/loaded-extension.test.cjs scripts/extension-e2e/multi-flow.test.cjs
 node --import tsx --test scripts/extension-e2e/social-actions.test.cjs scripts/extension-e2e/social-extension.test.cjs
+node --import tsx --test scripts/extension-e2e/ui-recovery.test.cjs
 ```
 
 Ảnh người dùng cung cấp cho thấy NGINX thật đã nhận một bài chờ duyệt. Các diễn đàn mới chưa được kiểm chứng đăng

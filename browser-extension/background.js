@@ -7,6 +7,7 @@ import { fillSocialAndSubmit, readSocialPublishedPost } from './social-actions.j
 import { accountAuthStep } from './auth-actions.js';
 import { submitDiscoursePost } from './discourse-session.js';
 import { showPublishNotice } from './publish-notice.js';
+import { collectUiCandidates, verifyUiSelectors } from './ui-recovery.js';
 
 const TICK_ALARM = 'tick';
 const LOAD_TIMEOUT_MS = 90_000;
@@ -30,6 +31,12 @@ const MAX_LOGIN_CHECKS = 1;
 // When a post finishes or is handed to the operator, ask for the next one
 // shortly instead of waiting up to 30 seconds for the alarm.
 const NEXT_JOB_DELAY_MS = 1_000;
+// AI-assisted recovery when a composer control is not found (site redesign).
+// A second round is only for "the opener was found, now find the fields".
+const MAX_UI_HINT_ROUNDS = 2;
+const UI_HINT_POLL_MS = 2_000;
+const UI_HINT_WAIT_MS = 90_000;
+const UI_HINT_FIELDS = ['title', 'body', 'submit', 'opener'];
 const LOG_LIMIT = 20;
 const SUPPORTED_ENGINES = ['discourse', 'xenforo', 'phpbb', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'];
 
@@ -375,6 +382,13 @@ async function authenticateTask(task) {
   }
 }
 
+/** The job as the page should see it: with AI selectors kept for this tab. */
+function effectiveJob(task) {
+  if (!task.uiOverride?.recipe) return task.job;
+  // Unapproved AI selectors only pre-fill; the operator clicks Post.
+  return { ...task.job, recipe: task.uiOverride.recipe, autoSubmit: task.job.autoSubmit && task.uiOverride.approved === true };
+}
+
 async function fill(task) {
   if (task.job.kind === 'LOGIN_CHECK') throw new Error('Login checks cannot publish');
   if (filling.has(task.job.jobId)) return;
@@ -382,6 +396,7 @@ async function fill(task) {
   const active = { ...task, phase: 'filling', deadline: Date.now() + LOAD_TIMEOUT_MS };
   await setTask(task.tabId, active);
   let result;
+  let attachments;
   try {
     if (task.job.auth) {
       const identity = await verifyOwnIdentity(task);
@@ -394,7 +409,6 @@ async function fill(task) {
       }
       task = { ...task, job: { ...task.job, verifiedSessionUsername: identity.detectedUsername || task.job.auth.expectedUsername } };
     }
-    let attachments;
     if (task.job.recipe.requiredMedia) {
       if (task.job.media?.length !== 1 || task.job.media[0].sizeBytes > 20 * 1024 * 1024) {
         result = { status: 'mediaRequired', message: 'Đính kèm đúng một file phù hợp, tối đa 20 MiB, cho bài trên web trước khi chạy.' };
@@ -403,14 +417,21 @@ async function fill(task) {
         catch (error) { result = { status: 'mediaRequired', message: `Không tải được file đính kèm: ${error.message}` }; }
       }
     }
-    if (!result && task.job.recipe.engine === 'discourse' && task.job.autoSubmit) {
+    if (!result && task.job.recipe.engine === 'discourse' && task.job.autoSubmit && !task.uiOverride) {
       [{ result }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: submitDiscoursePost, args: [task.job], injectImmediately: true });
       if (result?.status === 'fallback') result = null;
     }
     if (!result) [{ result }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: task.job.recipe.workflow === 'social' ? fillSocialAndSubmit : fillAndSubmit,
-      args: [{ ...task.job, ...(attachments ? { attachments } : {}) }], injectImmediately: true });
+      args: [{ ...effectiveJob(task), ...(attachments ? { attachments } : {}) }], injectImmediately: true });
   } catch (error) {
     result = { status: 'uncertain', message: `Không xác nhận được thao tác trong tab: ${error.message ?? error}` };
+  }
+  // Outside the try: a recovery problem must never look like a possible submit.
+  if (result?.missing?.length && task.job.uiRecovery?.enabled && !task.submittedAt && ['notReady', 'filled'].includes(result.status)) {
+    result = await recoverUi(task, result, attachments) ?? result;
+    // Keep the selectors used in this tab for a later "continue" from the web.
+    const stored = (await getTasks())[task.tabId];
+    if (stored) task = { ...task, uiHintRounds: stored.uiHintRounds, uiOverride: stored.uiOverride };
   }
   if (finishing.has(task.job.jobId) || !(await getTasks())[task.tabId]) return;
   const now = Date.now();
@@ -460,6 +481,85 @@ async function fill(task) {
       await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'EDITOR_NOT_FOUND', deadline: now + WAIT_USER_MS });
       await focusTab(task.tabId);
       tickSoon();
+  }
+}
+
+/** Approved-or-suggested selectors in front of the recipe's own ones (copy). */
+function recipeWithHints(recipe, picked) {
+  const of = field => picked.filter(([name]) => name === field).map(([, hint]) => hint.selector);
+  const title = recipe.titleSelectors?.length ? of('title') : [];
+  const body = of('body');
+  const merged = {
+    ...recipe,
+    uiOverride: true,
+    readySelectors: [...new Set([...title, ...body, ...(recipe.readySelectors ?? [])])],
+    titleSelectors: [...new Set([...title, ...(recipe.titleSelectors ?? [])])],
+    bodySelectors: [...new Set([...body, ...(recipe.bodySelectors ?? [])])],
+    submitSelectors: [...new Set([...of('submit'), ...(recipe.submitSelectors ?? [])])],
+  };
+  const opener = of('opener');
+  if (opener.length) merged.openerSelectors = [...new Set([...opener, ...(recipe.openerSelectors ?? [])])];
+  return merged;
+}
+
+/**
+ * Ask the backend AI which visible element is the missing control, then fill
+ * once more with it. Returns a new fill result, or null to keep the original.
+ * Nothing is clicked with an unapproved selector: autoSubmit is turned off,
+ * so the operator reviews the pre-filled post and clicks Post.
+ */
+async function recoverUi(task, result, attachments) {
+  try {
+    // `task` is the fill's own copy (it may carry the verified username); the
+    // stored copy holds the hint rounds and selectors already used in this tab.
+    const stored = () => getTasks().then(tasks => tasks[task.tabId]);
+    const saved = await stored();
+    if (!saved || saved.submittedAt) return null;
+    const rounds = saved.uiHintRounds ?? 0;
+    const previous = saved.uiOverride?.fields ?? [];
+    if (rounds >= MAX_UI_HINT_ROUNDS || (rounds === 1 && !(previous.length && previous.every(field => field === 'opener')))) return null;
+    const missing = [...new Set(result.missing)].filter(field => UI_HINT_FIELDS.includes(field));
+    if (!missing.length) return null;
+    const [{ result: page }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: collectUiCandidates, args: [{ missing }] });
+    if (!page?.candidates?.length) return null;
+    await setTask(task.tabId, { ...saved, uiHintRounds: rounds + 1, deadline: Date.now() + UI_HINT_WAIT_MS + LOAD_TIMEOUT_MS });
+    // Each request stays short (MV3 stops a worker on a fetch over ~30 s): ask, then poll.
+    let hint = await api(`tasks/${task.job.jobId}/ui-hint`, { missing, url: page.url, candidates: page.candidates });
+    const until = Date.now() + UI_HINT_WAIT_MS;
+    while (hint?.status === 'RUNNING' && Date.now() < until) {
+      await new Promise(resolve => setTimeout(resolve, UI_HINT_POLL_MS));
+      hint = await api(`tasks/${task.job.jobId}/ui-hint/${hint.hintId}`, undefined, 'GET');
+    }
+    if (hint?.status !== 'READY') return null;
+    const picked = Object.entries(hint.selectors ?? {}).filter(([field, value]) => missing.includes(field) && typeof value?.selector === 'string');
+    if (!picked.length) return null;
+    // Only the Post button is unknown: the post is already in the editor. Keep
+    // the suggestion for review instead of filling again.
+    if (missing.every(field => field === 'submit')) {
+      return { ...result, message: `${result.message ?? ''} AI đã đề xuất nút Đăng mới; kiểm tra rồi bấm Đăng, và duyệt gợi ý trên web để lần sau tự đăng.`.trim() };
+    }
+    const [{ result: verified }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: verifyUiSelectors,
+      args: [{ selectors: Object.fromEntries(picked.map(([field, value]) => [field, value.selector])) }] });
+    const usable = picked.filter(([field]) => verified?.[field]);
+    if (!usable.length) return null;
+    const latest = await stored();
+    if (!latest || latest.submittedAt) return null;
+    const approved = usable.every(([, value]) => value.approved === true) && (latest.uiOverride ? latest.uiOverride.approved === true : true);
+    const uiOverride = { recipe: recipeWithHints(effectiveJob({ ...task, uiOverride: latest.uiOverride }).recipe, usable), approved, fields: usable.map(([field]) => field) };
+    await setTask(task.tabId, { ...latest, uiHintRounds: rounds + 1, uiOverride, deadline: Date.now() + LOAD_TIMEOUT_MS });
+    const current = { ...task, uiHintRounds: rounds + 1, uiOverride };
+    const job = effectiveJob(current);
+    const [{ result: retried }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: job.recipe.workflow === 'social' ? fillSocialAndSubmit : fillAndSubmit,
+      args: [{ ...job, ...(attachments ? { attachments } : {}) }], injectImmediately: true });
+    let outcome = retried;
+    // The opener worked; now the composer fields themselves may need a hint.
+    if (outcome?.missing?.length && usable.every(([field]) => field === 'opener')) outcome = await recoverUi(current, outcome, attachments) ?? outcome;
+    if (outcome?.status === 'filled' && !approved) {
+      return { ...outcome, message: 'AI đã tìm ô / nút mới sau khi giao diện đổi và điền sẵn bài. Kiểm tra rồi bấm Đăng; duyệt gợi ý trên web để lần sau tự đăng.' };
+    }
+    return outcome;
+  } catch {
+    return null;
   }
 }
 
