@@ -44,12 +44,13 @@ export async function parseAccountUpload(buffer: Buffer, extension: string): Pro
   return rows as AccountImportRow[];
 }
 
-/** Credentials of the Google account shared by the import dialog; never derived from a row. */
-export interface SharedGoogleSecrets { password?: string; totpSecret?: string }
-
-export function importLogin(row: AccountImportRow, googleEmail?: string) {
+/**
+ * Each row signs in with its own account: social networks in one file use many
+ * different Google accounts, so no Google login is shared between rows.
+ */
+export function importLogin(row: AccountImportRow) {
   const provider = row.provider === 'google' || (!row.password && row.loginUsername.includes('@')) ? 'google' : 'password';
-  return { provider, username: provider === 'google' ? googleEmail?.trim() || row.loginUsername.trim() : row.loginUsername.trim() } as const;
+  return { provider, username: row.loginUsername.trim() } as const;
 }
 
 @Injectable()
@@ -57,13 +58,7 @@ export class AccountImportService {
   constructor(private readonly prisma: PrismaService, private readonly credentials: CredentialsService,
     private readonly encryption: CredentialEncryptionService, private readonly checks: ExtensionLoginCheckService) {}
 
-  async import(ownerId: string, deviceId: string, rows: AccountImportRow[], googleEmail?: string, sharedGoogle: SharedGoogleSecrets = {}) {
-    const sharedPassword = sharedGoogle.password || undefined;
-    const sharedTotp = sharedGoogle.totpSecret?.trim() || undefined;
-    if ((sharedPassword || sharedTotp) && !googleEmail?.trim()) throw new BadRequestException('Nhập email Google dùng chung cùng với mật khẩu hoặc khoá TOTP Google.');
-    if (sharedTotp) {
-      try { generateTotp(sharedTotp); } catch { throw new BadRequestException('Khoá TOTP Google không hợp lệ. Nhập khoá thiết lập Base32 hoặc chuỗi otpauth://, không nhập mã 6 số đang hiện.'); }
-    }
+  async import(ownerId: string, deviceId: string, rows: AccountImportRow[]) {
     const device = await this.prisma.extensionDevice.findFirst({ where: { id: deviceId, ownerId, revokedAt: null } });
     if (!device) throw new BadRequestException('Chọn Chrome đã ghép nối của bạn.');
     const platforms = new Map((await this.prisma.platform.findMany({ where: { enabled: true } })).map(p => [p.slug, p]));
@@ -77,10 +72,7 @@ export class AccountImportService {
         const platform = platforms.get(row.platform), flow = extensionFlowForPlatform(row.platform);
         const loginUrl = LOGIN_URLS[row.platform] || (flow ? `${flow.forumUrl}/login` : '');
         if (!platform || !loginUrl) { result.push({ row: row.source, name: row.label, issue: 'PLATFORM_NOT_SUPPORTED' }); continue; }
-        const login = importLogin(row, googleEmail);
-        // Rows signing in with the dialog's shared Google account use the Google
-        // password/TOTP entered there, never a social password from the file.
-        const usesSharedGoogle = login.provider === 'google' && Boolean(googleEmail?.trim()) && login.username.toLowerCase() === googleEmail!.trim().toLowerCase();
+        const login = importLogin(row);
         if (!login.username || (login.provider === 'google' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(login.username))) { result.push({ row: row.source, name: platform.name, issue: 'LOGIN_EMAIL_REQUIRED' }); continue; }
         const key = createHash('sha256').update([platform.slug, login.provider, login.username.toLowerCase(), row.profileUrl.trim()].join('|')).digest('hex');
         if (importedKeys.has(key)) continue;
@@ -93,12 +85,10 @@ export class AccountImportService {
         const stored = old?.credential?.status === 'ACTIVE' ? this.encryption.decrypt(old.credential.encryptedPayload) : {};
         const sameLogin = previousSession?.provider === login.provider && previousSession.loginUsername.toLowerCase() === login.username.toLowerCase();
         const priorSecret = sameLogin ? object(stored.extensionLogin) : {};
-        // A social password must never be reused as the password of a different
-        // Google account selected in the import dialog.
-        const password = usesSharedGoogle && sharedPassword ? sharedPassword
-          : row.password && (login.provider === 'password' || row.loginUsername.toLowerCase() === login.username.toLowerCase()) ? row.password : priorSecret.password;
-        const seed = usesSharedGoogle && sharedTotp ? sharedTotp
-          : row.totpSecret && (!googleEmail || row.loginUsername.toLowerCase() === login.username.toLowerCase()) ? row.totpSecret : priorSecret.totpSecret;
+        // For a Google row the password and 2FA key are those of that row's own
+        // Google account; empty cells keep what was stored for the same login.
+        const password = row.password || priorSecret.password;
+        const seed = row.totpSecret || priorSecret.totpSecret;
         if (seed) { try { if (typeof seed !== 'string') throw new Error('Invalid seed'); generateTotp(seed); } catch { result.push({ row: row.source, name: platform.name, issue: 'INVALID_TOTP' }); continue; } }
         const username = row.expectedUsername || (login.username.includes('@') ? '' : login.username);
         const session = { deviceId, provider: login.provider, origin: new URL(loginUrl).origin, loginUrl, loginUsername: login.username,
@@ -130,13 +120,6 @@ export class AccountImportService {
         const methodSettings = { ...object(previous.extensionLoginMethods), [login.provider]: {
           available: session.autoLogin, username: login.username, autoTotp: session.autoTotp, loginUrl,
         } };
-        if (googleEmail && login.provider !== 'google') {
-          const priorGoogle = object(methods.google);
-          const google = { ...(priorGoogle.username === googleEmail.trim() ? priorGoogle : { username: googleEmail.trim() }),
-            ...(sharedPassword ? { password: sharedPassword } : {}), ...(sharedTotp ? { totpSecret: sharedTotp } : {}) };
-          methods.google = google;
-          methodSettings.google = { available: true, username: googleEmail.trim(), autoTotp: typeof google.totpSecret === 'string', loginUrl };
-        }
         await this.credentials.upsert(account.id, { ...stored, extensionLogin: credential, extensionLoginMethods: methods }, null, tx);
         await tx.platformAccount.update({ where: { id: account.id }, data: { settings: { ...settings, extensionLoginMethods: methodSettings } as Prisma.InputJsonObject } });
         ids.push(account.id); result.push({ id: account.id, row: row.source, name, setup });

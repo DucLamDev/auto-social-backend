@@ -78,7 +78,7 @@ Cần backend 1.5.0 trở lên và bật `EXTENSION_UI_RECOVERY_ENABLED=true`; t
 
 ## Bản 1.5.0: nhập file và đăng nhiều nền tảng trong một lần
 
-- **Tài khoản → Nhập file tài khoản**: chọn XLSX/CSV/TSV (tối đa 2 MiB, 500 dòng), Chrome đã ghép nối và email Google dùng chung nếu có. Cột Social Network và User/Email bắt buộc; hỗ trợ cả file Excel cũ có Tên Social, Email / Account, Password / Auth, URL Social. Có mật khẩu thì dùng thông tin dòng đó; dòng chỉ có email dùng Google. Không thực thi công thức hoặc hướng dẫn trong file.
+- **Tài khoản → Nhập file tài khoản**: chọn XLSX/CSV/TSV (tối đa 2 MiB, 500 dòng) và Chrome đã ghép nối. Cột Social Network và User/Email bắt buộc; hỗ trợ cả file Excel cũ có Tên Social, Email / Account, Password / Auth, URL Social. Có mật khẩu thì dùng thông tin dòng đó; dòng chỉ có email dùng Google. Không thực thi công thức hoặc hướng dẫn trong file.
 - Đích Space, publication hoặc chuyên mục có thể đưa vào cột **URL đăng bài**, cùng **Tags** và **Category**. Luồng có đích mặc định được cấu hình tự động. File mẫu ở frontend `/templates/social-accounts.csv`.
 - Sau khi Chrome xác nhận phiên đúng tài khoản, kênh đã có luồng đăng được tự bật. Nếu người dùng tắt kênh, kiểm tra đăng nhập sau đó không tự bật lại.
 - Bộ lọc **Đã kết nối · có thể đăng**, **Cần thao tác**, **Đã đăng nhập · chưa cấu hình đăng**, **Đang kết nối** phân biệt trạng thái đăng nhập và khả năng đưa bài vào luồng đăng.
@@ -357,7 +357,7 @@ và trả hàng đợi ngay, không chờ hết thời gian rồi báo lỗi chu
 |---|---|---|
 | `GET/POST /api/v1/extension/devices`, `DELETE …/:id` | Web (JWT, tạo/thu hồi: ADMIN) | Mã chỉ trả một lần; DB lưu SHA-256 |
 | `PUT /api/v1/extension/accounts/:id` | Web (ADMIN) | `{ enabled, engine, targetUrl, autoSubmit, tags?, category?, flair? }`; nền tảng API cần có luồng tiện ích tương ứng trong danh mục |
-| `POST /api/v1/extension/accounts/import` | Web (ADMIN) | Multipart XLSX/CSV/TSV tối đa 2 MiB, `deviceId`, `googleEmail` tuỳ chọn; `googlePassword`, `googleTotpSecret` tuỳ chọn (cần `googleEmail`); mã hoá credential và xếp lượt kiểm tra, không trả secret |
+| `POST /api/v1/extension/accounts/import` | Web (ADMIN) | Multipart XLSX/CSV/TSV tối đa 2 MiB, `deviceId`; mỗi dòng dùng email / mật khẩu / 2FA của chính dòng đó; mã hoá credential và xếp lượt kiểm tra, không trả secret |
 | `PUT /api/v1/extension/accounts/:id/session` | Web (ADMIN) | Gán hồ sơ, danh tính, phương thức login và secret mã hóa; không trả lại secret |
 | `POST /api/v1/extension/jobs/:id/requeue` | Web (ADMIN/EDITOR) | Chỉ job tiện ích đang chờ người vận hành; không nhận bài đã chờ diễn đàn duyệt |
 | `POST /api/v1/extension/agent/heartbeat` | Tiện ích (`Bearer spx_…`) | Số bài chờ, danh sách tên miền cần quyền |
@@ -378,18 +378,14 @@ Công thức trong Excel không được thực thi. Mật khẩu và khóa TOTP
 không trả về màn hình kết quả nhập file.
 
 Dòng có mật khẩu dùng phương thức trong file; dòng chỉ có email chuyển sang Google.
-Email Google chung trong hộp nhập chỉ áp dụng cho các dòng Google, không thay mật khẩu
-của dòng đăng nhập trực tiếp. Chrome dùng phiên Google sẵn có. Trang chỉ hỗ trợ email/mật khẩu,
-chưa có blog/Space, yêu cầu CAPTCHA hoặc xác minh khác sẽ hiện lý do ở **Cần thao tác**.
-
-**Mật khẩu Google** và **Khoá TOTP Google** (tuỳ chọn, cạnh ô email Google dùng chung) giúp tiện ích tự đăng nhập Google
-và tự điền mã 2 bước khi phiên Google hết hạn. Hai ô này áp cho mọi dòng đăng nhập bằng email Google đó trong lần nhập,
-và cho phương án "đăng nhập bằng Google" của các dòng còn lại. Hệ thống lưu mã hoá và không hiển thị lại. Mật khẩu social
-trong file không bao giờ được dùng làm mật khẩu Google.
+Mỗi dòng đăng nhập bằng đúng tài khoản của dòng đó; không có Google dùng chung (từ backend 1.6.1), vì các social trong
+một file thường dùng nhiều tài khoản Google khác nhau. Với dòng "Gmail / Google Auth", cột Pass và 2FA là mật khẩu và
+khoá 2 bước của chính email Google ở cột User; tiện ích dùng chúng khi phiên Google trong Chrome hết hạn. Trang chỉ hỗ
+trợ email/mật khẩu, chưa có blog/Space, yêu cầu CAPTCHA hoặc xác minh khác sẽ hiện lý do ở **Cần thao tác**.
 
 - Khoá TOTP là **khoá thiết lập** (chuỗi Base32) hoặc chuỗi `otpauth://totp/…`, không phải mã 6 số đang hiện.
 - Đang dùng extension **Authenticator**: mở phần sao lưu/xuất của Authenticator để lấy chuỗi `otpauth://…` của tài
-  khoản Google, rồi dán vào ô này. Tiện ích VPSTTT tự tính mã giống Authenticator, nên không cần đọc dữ liệu từ
+  khoản Google, rồi dán vào cột 2FA. Tiện ích VPSTTT tự tính mã giống Authenticator, nên không cần đọc dữ liệu từ
   extension kia; Chrome cũng không cho phép extension đọc dữ liệu của nhau.
 - Google vẫn có thể đòi xác nhận trên điện thoại, passkey hoặc CAPTCHA. Khi đó tiện ích dừng và báo **Cần thao tác**.
   Nếu Google cho chọn "Thử cách khác", tiện ích chọn ứng dụng Authenticator.
