@@ -7,8 +7,9 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   Trước đây sửa mật khẩu trong form làm mất tên miền đăng nhập phụ đã có từ lúc nhập file, nên kiểm tra đăng nhập
   social.vivaldi.net báo "Trang đăng nhập chuyển sang https://login.vivaldi.net; tên miền này chưa được cấu hình".
   Nay form giữ các tên miền này và cách nhận tài khoản theo email khi tài khoản vẫn ở cùng trang. Mọi tài khoản
-  social.vivaldi.net, kể cả tài khoản đã bị mất trước đây, tự nhận login.vivaldi.net, không cần nhập lại. Sau khi cập
-  nhật, mở Cài đặt tiện ích và cấp quyền thêm cho `https://login.vivaldi.net` nếu được hỏi.
+  social.vivaldi.net, kể cả tài khoản đã bị mất trước đây, tự nhận login.vivaldi.net, không cần nhập lại. MongoDB
+  Community cũng vậy với trang đăng nhập `https://account.mongodb.com` (trước đây báo "tên miền này chưa được cấu
+  hình"). Sau khi cập nhật, mở Cài đặt tiện ích và cấp quyền cho hai tên miền này nếu được hỏi.
 
 ## 1.7.0 · 03/11/2026
 ### Tính năng

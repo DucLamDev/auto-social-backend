@@ -43,7 +43,11 @@ export function movedUrl(url: string): string {
  * site. Sessions saved without it (an older import, or a form save that dropped
  * it) still let the login check follow the redirect.
  */
-export const SITE_LOGIN_ORIGINS: Readonly<Record<string, readonly string[]>> = { 'https://social.vivaldi.net': ['https://login.vivaldi.net'] };
+export const SITE_LOGIN_ORIGINS: Readonly<Record<string, readonly string[]>> = {
+  'https://social.vivaldi.net': ['https://login.vivaldi.net'],
+  // MongoDB Community (www.mongodb.com/community/forums) signs in through MongoDB Cloud.
+  'https://www.mongodb.com': ['https://account.mongodb.com'],
+};
 
 export function sessionOf(settings: unknown): ExtensionSession | undefined {
   const session = object(object(settings).extensionSession);

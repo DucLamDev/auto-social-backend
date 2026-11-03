@@ -63,12 +63,13 @@ describe('Chrome account sessions', () => {
     expect(savedSession(1).allowedOrigins).toBeUndefined();
   });
 
-  it('lets every social.vivaldi.net session follow the sign-in redirect to login.vivaldi.net', () => {
+  it('lets Vivaldi and MongoDB sessions follow the sign-in redirect to their login site', () => {
     const vivaldi = { deviceId: 'chrome-a', expectedUsername: 'vpsttt', origin: 'https://social.vivaldi.net', loginUrl: 'https://social.vivaldi.net/auth/sign_in' };
     expect(sessionOf({ extensionSession: { ...vivaldi, allowedOrigins: [] } })?.allowedOrigins).toEqual(['https://login.vivaldi.net']);
     expect(sessionOf({ extensionSession: vivaldi })?.allowedOrigins).toEqual(['https://login.vivaldi.net']);
     expect(sessionOf({ extensionSession: { ...vivaldi, allowedOrigins: ['https://login.vivaldi.net'] } })?.allowedOrigins).toEqual(['https://login.vivaldi.net']);
     expect(sessionOf({ extensionSession: { ...vivaldi, origin: 'https://mastodon.social' } })?.allowedOrigins).toBeUndefined();
+    expect(sessionOf({ extensionSession: { ...vivaldi, origin: 'https://www.mongodb.com' } })?.allowedOrigins).toEqual(['https://account.mongodb.com']);
   });
 
   it('rejects a foreign device, a second identity in the same cookie scope, and reassignment during a claimed job', async () => {
