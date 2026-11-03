@@ -1,5 +1,13 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.9.1: kiểm tra đăng nhập trên Chrome mới (VPS)
+
+- Trước khi bấm nút **Đăng nhập bằng Google**, **Log in** hay nút SSO, tiện ích đưa tab kiểm tra lên trước. Nhiều trang
+  không mở đăng nhập Google từ tab đang chạy ẩn, nên trước đây tab đứng yên rồi báo "Bước đăng nhập chưa được chấp nhận".
+- Trang kiểm tra trình duyệt toàn màn hình của Cloudflare ("Just a moment…", hay gặp với IP của VPS) được chờ tự qua tới
+  20 giây thay vì báo CAPTCHA ngay. reCAPTCHA, hCaptcha hay Turnstile nằm trong form vẫn dừng để bạn xử lý.
+- Cần backend 1.7.1 và frontend 1.6.1: nút **Test**, **Kiểm tra tất cả** cũng tự đăng nhập như kiểm tra hàng loạt.
+
 ## Bản 1.9.0: gắn ảnh cho Bluesky, Mastodon, Tumblr, LinkedIn
 
 - Bài có ảnh (ảnh AI của kênh hoặc ảnh bạn tải lên) được gắn vào khung soạn **sau khi** điền và kiểm tra chữ:
@@ -454,10 +462,11 @@ hoặc `https://TEN-SPACE.quora.com/` cho Space của bạn. Bản 1.6.3 nhận 
 nội dung và bấm Post khi bật **Tự bấm Đăng**. Nếu gặp một bản nháp khác hoặc đối tượng xem bài không phải Everyone,
 luồng bài cá nhân báo rõ nguyên nhân và giữ bản nháp. Việc nhận diện tài khoản vẫn dựa trên phiên Chrome đã gán.
 
-Trong **Tài khoản**, nút **Test**, **Kiểm tra tất cả** và **Hướng dẫn kết nối → Tôi đã đăng nhập · Kiểm tra**
-chỉ xác nhận phiên sẵn có trên Chrome đã ghép nối. Các lượt này không lấy mật khẩu/TOTP từ backend và
-không đăng bài. Hệ thống kiểm tra tối đa 3 nền tảng khác nhau đồng thời; các tài khoản dùng chung phiên
-của một nền tảng vẫn được kiểm tra lần lượt. Tính năng đăng nhập tự động ở bảng kiểm tra hàng loạt được giữ riêng.
+Trong **Tài khoản**, nút **Test**, **Kiểm tra tất cả** và bật công tắc tài khoản (từ frontend 1.6.1) chạy giống
+**Test đăng nhập hàng loạt**: dùng phiên sẵn có, Chrome chưa đăng nhập thì tự đăng nhập bằng mật khẩu đã lưu rồi
+Google, mỗi cách thử một lần. Chỉ **Hướng dẫn kết nối → Tôi đã đăng nhập · Kiểm tra** xác nhận phiên sẵn có mà không
+lấy mật khẩu/TOTP từ backend, dành cho lúc bạn vừa đăng nhập tay. Không lượt nào đăng bài. Các tài khoản dùng chung
+phiên của một nền tảng vẫn được kiểm tra lần lượt.
 
 Nếu tài khoản hiện **Cần thao tác**, mở **Hướng dẫn kết nối** tại đúng dòng tài khoản:
 

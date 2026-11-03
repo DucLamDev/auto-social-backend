@@ -40,7 +40,12 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
   let verifiedGoogleIdentity = false;
   const response = state => ({ state, url: location.href, ...(verifiedGoogleIdentity ? { verifiedGoogleIdentity: true } : {}) });
   const challenge = (message, googleBlocked = false) => ({ state: 'challenge', message, url: location.href, googleBlocked });
-  if (all('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running').some(visible)) return challenge('Cần xử lý CAPTCHA trên trang đăng nhập.', google);
+  // Cloudflare's full-page check ("Just a moment…") passes by itself; the worker waits for
+  // it. A CAPTCHA inside the page (reCAPTCHA, hCaptcha, Turnstile) needs a person.
+  if (/^(?:just a moment|un instant|einen moment|chờ một chút)/i.test(document.title.trim()) || all('#challenge-running, #challenge-stage, #challenge-form, #challenge-success-text').length) {
+    return { state: 'cloudflare', url: location.href, message: 'Trang đang chạy bước kiểm tra trình duyệt của Cloudflare và chưa tự qua sau 20 giây. Mở tab, hoàn tất kiểm tra rồi chạy lại.' };
+  }
+  if (all('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"], .cf-turnstile').some(visible)) return challenge('Cần xử lý CAPTCHA trên trang đăng nhập.', google);
   const text = document.body?.innerText ?? '';
   if (location.hostname === 'www.blogger.com' && /\/onboarding\/?$/.test(location.pathname)) return challenge('Google đã đăng nhập, nhưng Blogger còn ở bước tạo hồ sơ/blog. Cần có blog đích trước khi đăng bài.');
   if (location.hostname === 'huggingface.co' && location.pathname === '/email_confirmation') return challenge('Hugging Face yêu cầu xác minh email trước khi tạo bài. Mở email xác minh và kiểm tra quyền tạo blog của tài khoản.');
