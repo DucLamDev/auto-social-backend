@@ -224,7 +224,12 @@ Nguồn chính thức: [Threads API docs](https://developers.facebook.com/docs/t
 - Đọc `x-rate-limit-limit`, `x-rate-limit-remaining`, `x-rate-limit-reset`. Tại thời điểm đối chiếu, tài liệu X liệt kê limit riêng theo user/app/endpoint; con số có thể đổi theo access tier nên response/console mới là nguồn chạy thật.
 - Self-serve API có thêm hạn chế nội dung/reply. Connector phải trả lỗi chính sách rõ ràng, không cố lách bằng browser automation.
 
-**Smoke test release MVP:** nhập user-context access token → test `/2/users/me` → post text ≤ 280 ký tự → xác minh ID/URL → delete bài test → token sai/hết hạn phải báo reconnect. Media upload, OAuth PKCE/refresh và quota integration là DoD tương lai.
+**Ảnh (từ backend 1.7.0):** bài X có ảnh AI hoặc ảnh tải lên được tải lên trước bằng `POST /2/media/upload`
+(`media_category=tweet_image`, một ảnh, tối đa 5 MB), gắn alt text bằng `POST /2/media/metadata` (lỗi alt text không chặn
+bài), rồi đăng `POST /2/tweets` kèm `media.media_ids`. Token phải có scope `media.write`; token cũ thiếu scope này cần tạo
+lại, nếu không X trả 403 và bài báo lỗi quyền. Ảnh quá 5 MB thì bài đăng chữ và kết quả ghi `mediaSkipped`.
+
+**Smoke test release MVP:** nhập user-context access token → test `/2/users/me` → post text ≤ 280 ký tự → xác minh ID/URL → delete bài test → token sai/hết hạn phải báo reconnect. Video, OAuth PKCE/refresh và quota integration là DoD tương lai.
 
 Nguồn chính thức: [Manage Posts](https://docs.x.com/x-api/posts/manage-tweets/introduction), [OAuth 2.0 Authorization Code with PKCE](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code), [Media upload](https://docs.x.com/x-api/media/introduction), [X API rate limits](https://docs.x.com/x-api/fundamentals/rate-limits).
 

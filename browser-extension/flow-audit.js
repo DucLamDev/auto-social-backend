@@ -8,6 +8,8 @@ const destinations = {
   dailymotion: 'https://www.dailymotion.com', blogger: 'https://www.blogger.com', ubiquiti: 'https://community.ui.com',
   studio: 'https://studio.dailymotion.com',
   daily: 'https://app.daily.dev', warrior: 'https://www.warriorforum.com', linuxfoundation: 'https://forum.linuxfoundation.org',
+  // Composers that take one image: check where the file input and preview appear.
+  mastodon: 'https://mastodon.social/publish', bluesky: 'https://bsky.app/intent/compose', tumblr: 'https://www.tumblr.com/new/text',
 };
 async function run() {
   const missingPermissions = [];
@@ -42,6 +44,7 @@ async function run() {
         return { origin: location.origin, path: location.pathname,
           workflowControls: location.hostname === 'dzone.com' ? [...document.querySelectorAll('.dropdown-menu [ng-click],button.dropdown-toggle')].map(n => ({tag:n.tagName,text:safe(n.innerText || n.textContent),click:n.getAttribute('ng-click'),shown:!!visible(n)})) : undefined,
           labels: [...document.querySelectorAll('label')].filter(visible).slice(0, 25).map(n => safe(n.innerText)),
+          fileInputs: [...document.querySelectorAll('input[type="file"]')].map(n => ({ accept: safe(n.accept), shown: !!visible(n), inDialog: !!n.closest('[role="dialog"]') })),
           frames: [...document.querySelectorAll('iframe')].filter(visible).map(n => ({ title: safe(n.title), name: safe(n.name), src: n.src ? new URL(n.src).origin + new URL(n.src).pathname : '' })),
           fields: [...document.querySelectorAll('input:not([type="hidden"]),textarea,[contenteditable]:not([contenteditable="false"]),select')].filter(visible).map(n => ({
             tag: n.tagName, type: n.type, id: n.id, name: n.name, class: safe(n.className), label: safe(n.getAttribute('aria-label')), placeholder: safe(n.getAttribute('placeholder') || n.getAttribute('data-placeholder')), role: n.getAttribute('role'),

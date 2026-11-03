@@ -1,5 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { CampaignStatus, ContentStatus, PlatformMode, VariantStatus } from '@prisma/client';
+import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { AiContentService } from '../ai/ai-content.service';
 import { AuditService } from '../audit/audit.service';
 import { sha256 } from '../common/utils/crypto.utils';
@@ -116,7 +117,8 @@ describe('CampaignAutomationService', () => {
 
     expect(ai.resolveProvider).toHaveBeenCalledWith('openai');
     expect(ai.assertReady).toHaveBeenCalledWith(['devto'], 'openai');
-    expect(ai.generate).toHaveBeenCalledWith(ownerId, contentId, ['devto'], 'openai');
+    // No image service is configured here, so the image plan is empty.
+    expect(ai.generate).toHaveBeenCalledWith(ownerId, contentId, ['devto'], 'openai', undefined, new Map());
     expect(variantUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: { in: [variantId] }, status: VariantStatus.GENERATED }) as unknown,
       data: { status: VariantStatus.APPROVED },
@@ -579,6 +581,102 @@ describe('CampaignAutomationService', () => {
     expect(contentUpdateMany).toHaveBeenCalledWith({
       where: { id: contentId, ownerId, status: ContentStatus.AI_GENERATING },
       data: { status: ContentStatus.DRAFT },
+    });
+  });
+
+  describe('AI images per destination', () => {
+    const pixelfedAccount = { id: accountId, platformId: 'platform-pixelfed', settings: { delivery: 'extension', extensionEngine: 'pixelfed', extensionTargetUrl: 'https://pixelfed.social/i/web', extensionAutoSubmit: true },
+      platform: { id: 'platform-pixelfed', slug: 'pixelfed-social', mode: PlatformMode.MANUAL, capability: { text: true, image: true } } };
+    const forumId = '66666666-6666-4666-8666-666666666666';
+    const forumAccount = { id: forumId, platformId: 'platform-forum', settings: { delivery: 'extension', extensionEngine: 'discourse', extensionTargetUrl: 'https://forum.hestiacp.com/new-topic', extensionAutoSubmit: true },
+      platform: { id: 'platform-forum', slug: 'hestiacp-forum', mode: PlatformMode.COMPATIBLE_API, capability: { text: true, image: false } } };
+    const imageDto: AutomateCampaignDto = { ...dto, platformAccountIds: [accountId, forumId], publishImmediately: false };
+    const png = { bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), mimeType: 'image/png', model: 'vpsttt-image' };
+
+    function setup(options: { generate?: jest.Mock; existingImages?: number; configured?: boolean } = {}) {
+      const variantUpdate = jest.fn().mockResolvedValue({});
+      const prisma = {
+        platformAccount: { findMany: jest.fn().mockResolvedValue([pixelfedAccount, forumAccount]) },
+        campaign: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockImplementation((input: { data: { automationRequestHash: string } }) => ({
+            id: campaignId, ownerId, contentId, status: CampaignStatus.DRAFT, automationRequestHash: input.data.automationRequestHash,
+            automationErrorCode: null, updatedAt: new Date(), content: { id: contentId }, targets: [],
+          })),
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        content: { create: jest.fn().mockResolvedValue({ id: contentId }), update: jest.fn().mockResolvedValue({}), findFirstOrThrow: jest.fn().mockResolvedValue({ id: contentId, status: ContentStatus.APPROVED }) },
+        contentVariant: { updateMany: jest.fn((args: { where: { id: { in: string[] } } }) => Promise.resolve({ count: args.where.id.in.length })), update: variantUpdate },
+        mediaAsset: { count: jest.fn().mockResolvedValue(options.existingImages ?? 0) },
+        campaignTarget: { create: jest.fn().mockResolvedValue({ id: 'target-1' }) },
+        publishJob: { create: jest.fn().mockResolvedValue({ id: 'job-1' }) },
+      };
+      Object.assign(prisma, { $transaction: jest.fn((callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma)) });
+      const ai = {
+        resolveProvider: providerResolver(),
+        assertReady: jest.fn().mockResolvedValue(undefined),
+        generate: jest.fn().mockResolvedValue([
+          { id: variantId, platformId: 'platform-pixelfed', status: VariantStatus.GENERATED, recommended: true, reason: 'Đạt',
+            mediaRecommendation: { type: 'image', altText: 'Máy chủ VPS', prompt: 'A calm server room photo' } },
+          { id: 'variant-forum', platformId: 'platform-forum', status: VariantStatus.GENERATED, recommended: true, reason: 'Đạt', mediaRecommendation: { type: 'none', altText: '', prompt: null } },
+        ]),
+      };
+      const images = { status: () => ({ configured: options.configured ?? true, model: 'vpsttt-image' }), generate: options.generate ?? jest.fn().mockResolvedValue(png) };
+      const media = { storeGeneratedImage: jest.fn().mockResolvedValue({ id: 'media-1' }) };
+      const service = new CampaignAutomationService(
+        prisma as unknown as PrismaService,
+        ai as unknown as AiContentService,
+        { publish: jest.fn(), get: jest.fn().mockResolvedValue(resultCampaign(CampaignStatus.DRAFT)) } as unknown as CampaignsService,
+        { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+        undefined,
+        images as never,
+        media as never,
+        { has: () => false, get: jest.fn() } as never,
+      );
+      return { service, prisma, ai, images, media, variantUpdate };
+    }
+
+    it('creates one square image for Pixelfed and none for a forum, from the description the writer produced', async () => {
+      const { service, ai, images, media, variantUpdate } = setup();
+      await service.automate(ownerId, imageDto, 'request-key-images-1');
+      const plan = (ai.generate.mock.calls[0] as unknown[])[5] as Map<string, unknown>;
+      expect([...plan.keys()]).toEqual(['pixelfed-social']);
+      expect(images.generate).toHaveBeenCalledTimes(1);
+      expect(images.generate).toHaveBeenCalledWith('A calm server room photo', '1024x1024');
+      expect(media.storeGeneratedImage).toHaveBeenCalledWith(ownerId, variantId, png, { altText: 'Máy chủ VPS', prompt: 'A calm server room photo' });
+      expect(variantUpdate).toHaveBeenCalledWith({ where: { id: variantId }, data: { mediaRecommendation: expect.objectContaining({ status: 'generated', size: '1024x1024' }) as unknown } });
+    });
+
+    it('keeps the text and holds Pixelfed for review when its required image fails', async () => {
+      const generate = jest.fn().mockRejectedValue(new ApplicationException(ErrorCode.PLATFORM_PERMISSION_DENIED, 'Key VPSTTT AI chưa có quyền tạo ảnh.', 502));
+      const { service, prisma, media, variantUpdate } = setup({ generate });
+      await service.automate(ownerId, { ...imageDto, publishImmediately: true }, 'request-key-images-2');
+      expect(media.storeGeneratedImage).not.toHaveBeenCalled();
+      expect(variantUpdate).toHaveBeenCalledWith({ where: { id: variantId }, data: expect.objectContaining({ recommended: false,
+        reason: 'Chưa tạo được ảnh bắt buộc cho kênh này: Key VPSTTT AI chưa có quyền tạo ảnh.',
+        mediaRecommendation: expect.objectContaining({ status: 'failed', error: 'Key VPSTTT AI chưa có quyền tạo ảnh.' }) as unknown }) as unknown });
+      // The forum draft is still approved and scheduled; Pixelfed waits in needs-action.
+      expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: ['variant-forum'] } }) as unknown }));
+      expect(prisma.publishJob.create).toHaveBeenCalledWith({ data: expect.objectContaining({ status: 'NEEDS_ACTION' }) as unknown });
+    });
+
+    it('does not create AI images when the user supplied one, opted out, or images are not configured', async () => {
+      for (const [options, request] of [
+        [{}, { ...imageDto, generateImages: false }],
+        [{ configured: false }, imageDto],
+      ] as const) {
+        const { service, ai, images } = setup(options);
+        await service.automate(ownerId, request, `request-key-images-${String(options.configured)}-${String(request.generateImages)}`);
+        expect(((ai.generate.mock.calls[0] as unknown[])[5] as Map<string, unknown>).size).toBe(0);
+        expect(images.generate).not.toHaveBeenCalled();
+      }
+    });
+
+    it('does not create a second image for a variant that already has one', async () => {
+      const { service, images } = setup({ existingImages: 1 });
+      await service.automate(ownerId, imageDto, 'request-key-images-3');
+      expect(images.generate).not.toHaveBeenCalled();
     });
   });
 });

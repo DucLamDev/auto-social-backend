@@ -52,6 +52,28 @@ describe('ExtensionAgentService', () => {
     expect((await service.claim(device, [], ['slideshare']))?.media).toEqual([{ id: 'content-asset', mimeType: 'application/pdf', sizeBytes: 25 }]);
   });
 
+  it('sends one planned image to composers that can attach it, and none to text-only engines', async () => {
+    const { service, prisma } = setup();
+    const blueskySettings = { ...settings, extensionEngine: 'bluesky', extensionTargetUrl: 'https://bsky.app/intent/compose' };
+    const image = (id: string) => ({ id, type: 'IMAGE', mimeType: 'image/png', sizeBytes: 9n });
+    const variant = { title: null, body: 'Approved body', hashtags: [], media: [image('ai-image'), image('second-image')], content: { canonicalUrl: null, media: [image('shared-image')] } };
+    prisma.publishJob.findFirst.mockResolvedValue({ id: 'job-1' });
+    prisma.publishJob.findUniqueOrThrow.mockResolvedValue({ id: 'job-1', platformAccount: { id: 'acc-1', name: 'Bluesky', settings: blueskySettings, platform: { name: 'Bluesky', slug: 'bluesky' } }, target: { campaign: { name: 'Campaign' }, contentVariant: variant } });
+    expect((await service.claim(device, [], ['bluesky']))?.media).toEqual([{ id: 'ai-image', mimeType: 'image/png', sizeBytes: 9 }]);
+
+    prisma.publishJob.findUniqueOrThrow.mockResolvedValue({ id: 'job-1', platformAccount: { id: 'acc-1', name: 'DEV', settings: { ...settings, extensionEngine: 'devto', extensionTargetUrl: 'https://dev.to/new' }, platform: { name: 'DEV', slug: 'devto' } }, target: { campaign: { name: 'Campaign' }, contentVariant: variant } });
+    expect((await service.claim(device, [], ['devto']))?.media).toEqual([]);
+  });
+
+  it('serves the image and its alt text to a composer that can attach one', async () => {
+    const { service, prisma, storage } = setup();
+    prisma.publishJob.findFirst.mockResolvedValue({ platformAccount: { settings: { ...settings, extensionEngine: 'mastodon', extensionTargetUrl: 'https://mastodon.social/publish' } }, target: { contentVariant: { id: 'variant-1', contentId: 'content-1' } } });
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    prisma.mediaAsset.findFirst.mockResolvedValue({ id: 'asset-1', storageKey: 'media/a.png', mimeType: 'image/png', sizeBytes: BigInt(bytes.length), checksum: createHash('sha256').update(bytes).digest('hex'), metadata: { altText: 'Máy chủ VPS' } });
+    storage.get.mockResolvedValue(bytes);
+    await expect(service.taskMedia(device, 'job-1', 'asset-1')).resolves.toMatchObject({ name: 'asset-1.png', mimeType: 'image/png', altText: 'Máy chủ VPS' });
+  });
+
   it('keeps new social jobs away from extension versions that do not support their engine', async () => {
     const { service, prisma } = setup();
     prisma.platformAccount.findMany.mockResolvedValue([{ id: 'social-account', settings: { ...settings, extensionEngine: 'substack', extensionTargetUrl: 'https://example.substack.com/publish/post' } }]);

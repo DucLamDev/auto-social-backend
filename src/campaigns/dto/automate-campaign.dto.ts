@@ -52,6 +52,14 @@ export class AutomateCampaignDto {
   @IsUUID('4', { each: true })
   mediaAssetIds?: string[];
 
+  @ApiPropertyOptional({
+    default: true,
+    description: 'Let VPSTTT AI create one image per destination whose publishing route can attach it. Ignored when mediaAssetIds supplies your own image.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  generateImages?: boolean;
+
   @ApiPropertyOptional({ enum: AI_PROVIDER_IDS, description: 'AI provider for this automation run. Uses the backend default when omitted.' })
   @IsOptional()
   @IsIn(AI_PROVIDER_IDS)

@@ -1,24 +1,29 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, Optional } from '@nestjs/common';
 import {
   AccountStatus,
   CampaignStatus,
   ContentStatus,
   CredentialStatus,
+  MediaType,
   PlatformMode,
   Prisma,
   PublishJobStatus,
   VariantStatus,
 } from '@prisma/client';
 import { AiContentService } from '../ai/ai-content.service';
+import { AiImageService } from '../ai/ai-image.service';
 import { AuditService } from '../audit/audit.service';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { sha256, stableIdempotencyKey } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { hasUsableBrowserStorageState } from '../connectors/browser/browser-session-readiness';
+import { ConnectorRegistryService } from '../connectors/core/connector-registry.service';
 import { isExtensionDelivery } from '../connectors/extension/extension-delivery';
 import { CONTENT_REVIEW_REQUIRED_CODE } from '../publishing/publishing.constants';
+import { MediaService } from '../media/media.service';
 import { CampaignsService } from './campaigns.service';
+import { PlatformImagePlan, planImages } from './image-plan';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
 import { ApproveAiCampaignDto } from './dto/approve-ai-campaign.dto';
 import { ReviewExistingContentDto } from './dto/review-existing-content.dto';
@@ -44,7 +49,16 @@ type ConnectedAccount = {
     slug: string;
     mode: PlatformMode;
     connectorKey?: string;
+    capability?: Prisma.JsonValue;
   };
+};
+
+type DraftVariant = {
+  id: string;
+  platformId: string;
+  recommended: boolean;
+  reason: string | null;
+  mediaRecommendation?: Prisma.JsonValue | null;
 };
 
 type SelectedMediaAsset = {
@@ -55,12 +69,17 @@ type SelectedMediaAsset = {
 
 @Injectable()
 export class CampaignAutomationService {
+  private readonly logger = new Logger(CampaignAutomationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ai: AiContentService,
     private readonly campaigns: CampaignsService,
     private readonly audit: AuditService,
     private readonly credentials?: CredentialsService,
+    @Optional() private readonly images?: AiImageService,
+    @Optional() private readonly media?: MediaService,
+    @Optional() private readonly connectors?: ConnectorRegistryService,
   ) {}
 
   async automate(
@@ -97,6 +116,8 @@ export class CampaignAutomationService {
       timezone,
       publishImmediately,
       ...(background ? { reviewRequired: true } : {}),
+      // Only the opt-out changes the hash, so requests stored before images existed still replay.
+      ...(dto.generateImages === false ? { generateImages: false } : {}),
     }));
 
     const alreadyReserved = await this.findReservation(ownerId, automationKey);
@@ -123,6 +144,7 @@ export class CampaignAutomationService {
 
     let accounts: ConnectedAccount[];
     let platformSlugs: string[];
+    let imagePlan = new Map<string, PlatformImagePlan>();
     try {
       await this.validateMediaAssets(ownerId, mediaAssetIds, alreadyReserved?.contentId);
       accounts = await this.loadConnectedAccounts(ownerId, dto.platformAccountIds);
@@ -131,6 +153,9 @@ export class CampaignAutomationService {
         throw new BadRequestException(`A campaign automation supports at most ${MAX_PLATFORMS_PER_AUTOMATION} platforms`);
       }
       await this.ai.assertReady(platformSlugs, aiProvider);
+      if (this.images?.status().configured && this.media) {
+        imagePlan = planImages(accounts, { enabled: dto.generateImages !== false, userImage: mediaAssetIds.length > 0 }, this.connectors);
+      }
     } catch (error) {
       await this.audit.recordBestEffort({
         actorId: ownerId,
@@ -180,6 +205,7 @@ export class CampaignAutomationService {
         accountCount: accounts.length,
         platformCount: platformSlugs.length,
         mediaAssetCount: mediaAssetIds.length,
+        imagesPlanned: imagePlan.size,
         aiProvider,
         resumed: !reservation.created,
       },
@@ -198,7 +224,7 @@ export class CampaignAutomationService {
             targets: { none: {} },
           },
           orderBy: { version: 'desc' },
-          select: { id: true, platformId: true, recommended: true, reason: true },
+          select: { id: true, platformId: true, recommended: true, reason: true, mediaRecommendation: true },
         });
       const reusableByPlatform = new Map<string, (typeof reusable)[number]>();
       for (const variant of reusable) {
@@ -210,11 +236,13 @@ export class CampaignAutomationService {
           data: { status: VariantStatus.REJECTED },
         });
       }
-      const variants = reusableByPlatform.size === platformSlugs.length
+      const drafts: DraftVariant[] = reusableByPlatform.size === platformSlugs.length
         ? [...reusableByPlatform.values()]
         : background?.assertOwnership
-          ? await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider, background.assertOwnership)
-          : await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider);
+          ? await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider, background.assertOwnership, imagePlan)
+          : await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider, undefined, imagePlan);
+      const slugByPlatform = new Map(accounts.map((account) => [account.platformId, account.platform.slug]));
+      const variants = await this.attachGeneratedImages(ownerId, drafts, slugByPlatform, imagePlan, background?.assertOwnership);
       const variantByPlatform = new Map(variants.map((variant) => [variant.platformId, variant]));
       if (variantByPlatform.size !== platformSlugs.length) {
         throw new ConflictException('AI did not generate exactly one variant for every selected platform');
@@ -476,6 +504,60 @@ export class CampaignAutomationService {
     }
     const byId = new Map(found.map((account) => [account.id, account]));
     return accountIds.map((id) => byId.get(id)!);
+  }
+
+  /**
+   * One VPSTTT AI image per planned destination, from the description the
+   * writer produced. A failed image never loses the text: optional images
+   * leave a note, a required one (Pixelfed) holds the draft for review.
+   * Variants that already carry an image (a resumed run) are left as they are.
+   */
+  private async attachGeneratedImages(
+    ownerId: string,
+    variants: DraftVariant[],
+    slugByPlatform: Map<string, string>,
+    plan: Map<string, PlatformImagePlan>,
+    assertOwnership?: () => Promise<void>,
+  ): Promise<DraftVariant[]> {
+    const images = this.images;
+    const media = this.media;
+    if (!plan.size || !images || !media) return variants;
+    const results: DraftVariant[] = [];
+    for (const variant of variants) {
+      const slug = slugByPlatform.get(variant.platformId);
+      const image = slug ? plan.get(slug) : undefined;
+      if (!image || await this.prisma.mediaAsset.count({ where: { variantId: variant.id, type: MediaType.IMAGE } })) {
+        results.push(variant);
+        continue;
+      }
+      const request = variant.mediaRecommendation && typeof variant.mediaRecommendation === 'object' && !Array.isArray(variant.mediaRecommendation)
+        ? variant.mediaRecommendation as Record<string, unknown> : {};
+      const prompt = typeof request.prompt === 'string' && request.prompt.trim() ? request.prompt.trim() : image.style;
+      const altText = typeof request.altText === 'string' ? request.altText : '';
+      // A lost worker lease must stop the run, not be recorded as an image failure.
+      await assertOwnership?.();
+      let failure: string | undefined;
+      try {
+        const generated = await images.generate(prompt, image.size);
+        await assertOwnership?.();
+        await media.storeGeneratedImage(ownerId, variant.id, generated, { altText, prompt });
+      } catch (error) {
+        if (error instanceof ConflictException) throw error;
+        failure = error instanceof ApplicationException ? error.message : 'Không tạo được ảnh bằng VPSTTT AI.';
+        this.logger.warn(`AI image for ${slug} failed: ${failure}`);
+      }
+      const required = image.need === 'required';
+      const reason = failure && required ? `Chưa tạo được ảnh bắt buộc cho kênh này: ${failure}`.slice(0, 1_000) : variant.reason;
+      await this.prisma.contentVariant.update({
+        where: { id: variant.id },
+        data: {
+          mediaRecommendation: { ...request, type: 'image', prompt, altText, size: image.size, status: failure ? 'failed' : 'generated', ...(failure ? { error: failure } : {}) },
+          ...(failure && required ? { recommended: false, reason } : {}),
+        },
+      });
+      results.push(failure && required ? { ...variant, recommended: false, reason } : variant);
+    }
+    return results;
   }
 
   private async validateMediaAssets(

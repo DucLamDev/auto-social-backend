@@ -33,6 +33,22 @@ export interface ExtensionRecipe {
   engine: ExtensionEngine;
   workflow?: 'social';
   requiredMedia?: 'image' | 'document';
+  /** The composer can take one image when the post has one; text-only posts skip this step. */
+  optionalMedia?: 'image';
+  /** File input that receives the image (inside the composer). */
+  mediaInputSelectors?: string[];
+  /** Exact labels of the control that reveals the file input or media dialog. */
+  mediaOpenerLabels?: string[];
+  /** Visible once the composer holds the image (thumbnail, preview, remove button). */
+  mediaPreviewSelectors?: string[];
+  /** Field for the image description, when the composer offers one. */
+  mediaAltSelectors?: string[];
+  /** Visible while the composer is still uploading the image. */
+  mediaBusySelectors?: string[];
+  /** Exact labels of the step that confirms the chosen image (LinkedIn "Next"). */
+  mediaConfirmLabels?: string[];
+  /** How long the composer may take to show the image preview (default 45 s). */
+  mediaWaitMs?: number;
   publishedTitleSelectors?: string[];
   publishedBodySelectors?: string[];
   publishedLinkSelectors?: string[];

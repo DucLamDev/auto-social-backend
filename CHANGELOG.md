@@ -1,6 +1,21 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.7.0 · 03/11/2026
+### Tính năng
+- AI tạo ảnh riêng cho từng kênh cần ảnh khi tạo nội dung (VPSTTT AI, tiện ích 1.9.0)
+  Khi tạo nội dung bằng AI, mỗi kênh mà đường đăng gửi được ảnh có thêm một ảnh do VPSTTT AI tạo (model `vpsttt-image`,
+  cùng key, cần quyền "image"). Kênh có ảnh: Pixelfed, Bluesky, Mastodon / Vivaldi, Tumblr, LinkedIn qua tiện ích Chrome;
+  X, Discord, dev.to, Threads, Instagram qua API. AI viết bài biết trước kênh nào có ảnh: viết thêm mô tả ảnh theo khổ và
+  phong cách của kênh, còn bài cho diễn đàn và kênh chỉ có chữ thì không nhắc tới ảnh. Ảnh lỗi không làm mất bài; riêng
+  Pixelfed (bắt buộc ảnh) thì bài chờ duyệt tay. Ảnh bạn tự tải lên được dùng thay ảnh AI.
+- Xem, tạo lại, bỏ hoặc thay ảnh của từng kênh khi duyệt
+  Lệnh mới `POST /content-variants/{id}/image` (tạo lại ở chế độ nền, có thể sửa mô tả ảnh) và
+  `DELETE /content-variants/{id}/image/{mediaId}`; `GET /ai/image-status` cho biết máy chủ đã bật tạo ảnh chưa.
+- Tiện ích Chrome gắn ảnh vào khung soạn Bluesky, Mastodon, Tumblr, LinkedIn
+  Chỉ bấm Đăng khi khung soạn đã hiện ảnh; không gắn được thì dừng và báo, không đăng thiếu ảnh.
+- X đăng kèm ảnh qua API chính thức
+  Tải ảnh qua `/2/media/upload` rồi đăng kèm; token X cần scope `media.write`. Ảnh quá 5 MB thì đăng chữ và ghi chú lại.
 ## 1.6.3 · 03/11/2026
 ### Sửa lỗi
 - Nhập file không còn lấy nhầm tên màn hình của trang làm username

@@ -449,6 +449,13 @@ async function fill(task) {
         try { attachments = [await api(`tasks/${task.job.jobId}/media/${task.job.media[0].id}`, undefined, 'GET')]; }
         catch (error) { result = { status: 'mediaRequired', message: `Không tải được file đính kèm: ${error.message}` }; }
       }
+    } else if (task.job.recipe.optionalMedia && task.job.media?.length) {
+      // The post was planned with an image: never post it silently without one.
+      if (task.job.media[0].sizeBytes > 20 * 1024 * 1024) result = { status: 'mediaRequired', message: 'Ảnh của bài lớn hơn 20 MiB; thay ảnh nhỏ hơn trên web rồi chạy lại.' };
+      else {
+        try { attachments = [await api(`tasks/${task.job.jobId}/media/${task.job.media[0].id}`, undefined, 'GET')]; }
+        catch (error) { result = { status: 'mediaRequired', message: `Không tải được ảnh của bài: ${error.message}` }; }
+      }
     }
     if (!result && task.job.recipe.engine === 'discourse' && task.job.autoSubmit && !task.uiOverride) {
       [{ result }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: submitDiscoursePost, args: [task.job], injectImmediately: true });

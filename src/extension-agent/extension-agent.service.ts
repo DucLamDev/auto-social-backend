@@ -366,10 +366,12 @@ export class ExtensionAgentService {
     const variant = job.target.contentVariant;
     const flow = validateExtensionFlow(job.platformAccount.platform.slug, settings);
     const post = renderForExtension(variant, job.platformAccount.platform.slug, settings.engine, variant.content.canonicalUrl);
-    const requiredMedia = EXTENSION_RECIPES[settings.engine].requiredMedia;
-    const variantMedia = (variant.media ?? []).filter(asset => asset.type.toLowerCase() === requiredMedia);
-    const media = requiredMedia ? (variantMedia.length ? variantMedia : (variant.content.media ?? []).filter(asset => asset.type.toLowerCase() === requiredMedia))
-      .map(asset => ({ id: asset.id, mimeType: asset.mimeType, sizeBytes: Number(asset.sizeBytes) })) : [];
+    // Required media (Pixelfed photo, SlideShare PDF) or one optional image the
+    // composer can take; the variant's own file wins over the shared upload.
+    const mediaKind = EXTENSION_RECIPES[settings.engine].requiredMedia ?? EXTENSION_RECIPES[settings.engine].optionalMedia;
+    const variantMedia = (variant.media ?? []).filter(asset => asset.type.toLowerCase() === mediaKind);
+    const media = mediaKind ? (variantMedia.length ? variantMedia : (variant.content.media ?? []).filter(asset => asset.type.toLowerCase() === mediaKind))
+      .slice(0, EXTENSION_RECIPES[settings.engine].requiredMedia ? undefined : 1).map(asset => ({ id: asset.id, mimeType: asset.mimeType, sizeBytes: Number(asset.sizeBytes) })) : [];
     const targetOrigin = new URL(settings.targetUrl).origin;
     // Selectors an ADMIN approved for this destination after a page redesign.
     const approvedSelectors = await this.suggestions?.approvedFor(device.ownerId, settings.engine, targetOrigin) ?? [];
@@ -401,11 +403,12 @@ export class ExtensionAgentService {
     });
     if (!job) throw new NotFoundException('Claimed extension job not found');
     const variant = job.target.contentVariant;
-    const required = EXTENSION_RECIPES[parseExtensionDeliverySettings(job.platformAccount.settings).engine].requiredMedia;
+    const recipe = EXTENSION_RECIPES[parseExtensionDeliverySettings(job.platformAccount.settings).engine];
+    const required = recipe.requiredMedia ?? recipe.optionalMedia;
     if (!required) throw new BadRequestException('This flow does not upload attachments');
     const asset = await this.prisma.mediaAsset.findFirst({
       where: { id: assetId, ownerId: device.ownerId, OR: [{ variantId: variant.id }, { contentId: variant.contentId, variantId: null }] },
-      select: { id: true, storageKey: true, mimeType: true, sizeBytes: true, checksum: true },
+      select: { id: true, storageKey: true, mimeType: true, sizeBytes: true, checksum: true, metadata: true },
     });
     if (!asset) throw new NotFoundException('Attachment not found for this job');
     const formats: Record<string, string> = required === 'document' ? { 'application/pdf': 'pdf' } : { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
@@ -413,7 +416,9 @@ export class ExtensionAgentService {
     if (!extension || asset.sizeBytes > 20n * 1024n * 1024n) throw new BadRequestException('Attachment must be a supported file of at most 20 MiB');
     const bytes = await this.storage.get(asset.storageKey, 20 * 1024 * 1024);
     if (bytes.length !== Number(asset.sizeBytes) || createHash('sha256').update(bytes).digest('hex') !== asset.checksum) throw new BadRequestException('Attachment integrity check failed');
-    return { name: `${asset.id}.${extension}`, mimeType: asset.mimeType, sizeBytes: bytes.length, base64: bytes.toString('base64') };
+    const altText = asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata) && typeof (asset.metadata as Record<string, unknown>).altText === 'string'
+      ? ((asset.metadata as Record<string, unknown>).altText as string).slice(0, 1_000) : undefined;
+    return { name: `${asset.id}.${extension}`, mimeType: asset.mimeType, sizeBytes: bytes.length, base64: bytes.toString('base64'), ...(altText ? { altText } : {}) };
   }
 
   private async completePublished(
