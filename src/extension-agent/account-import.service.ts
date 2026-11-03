@@ -24,7 +24,7 @@ export const LOGIN_URLS: Record<string, string> = {
   mastodon: 'https://mastodon.social/auth/sign_in', 'vivaldi-social': 'https://social.vivaldi.net/auth/sign_in',
   'pixelfed-social': 'https://pixelfed.social/login', 'lemmy-world': 'https://lemmy.world/login',
   discuit: 'https://discuit.org/', minds: 'https://www.minds.com/login', mewe: 'https://mewe.com/login',
-  dzone: 'https://dzone.com/', 'daily-dev': 'https://app.daily.dev/', differ: 'https://differ.blog/',
+  dzone: 'https://dzone.com/', 'daily-dev': 'https://daily.dev/', differ: 'https://differ.blog/',
   'product-hunt': 'https://www.producthunt.com/login', dailymotion: 'https://www.dailymotion.com/',
   'stack-overflow': 'https://stackoverflow.com/users/login', 'server-fault': 'https://serverfault.com/users/login',
   'hugging-face': 'https://huggingface.co/login', 'linux-foundation-forum': 'https://forum.linuxfoundation.org/',

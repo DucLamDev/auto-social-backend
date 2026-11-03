@@ -108,6 +108,9 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
       } catch { /* Other identity markers may still be available. */ }
     } else if (job.recipe.engine === 'reddit') {
       try { const r = await fetch('/api/v1/me', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) }); if (r.ok) identity = (await r.json()).name; } catch { /* DOM fallback */ }
+    } else if (location.hostname === 'huggingface.co') {
+      // The hub's own session endpoint names the signed-in user (the avatar menu is closed).
+      try { const r = await fetch('/api/whoami-v2', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) }); if (r.ok) { const me = await r.json(); if (typeof me?.name === 'string') identity = me.name; } } catch { /* DOM fallback */ }
     }
     if (location.hostname === 'differ.blog') {
       try {
@@ -257,6 +260,17 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
         }
         return response('accountMenu');
       }
+    }
+    // Sites without a known account marker: the signed-in user's own profile
+    // link in the site navigation, or owner-only controls on the configured
+    // profile page itself, prove which account this browser is using.
+    if (auth.profileUrl) {
+      const ownLink = all('header a[href], nav a[href], aside a[href], [role="navigation"] a[href], [role="banner"] a[href], [class*="sidebar" i] a[href]')
+        .filter(visible).some(node => samePage(node.href, auth.profileUrl));
+      const ownerOnly = samePage(location.href, auth.profileUrl) && all('button, [role="button"], a').filter(visible).some(node =>
+        /^(?:edit profile|edit your profile|edit appearance|customize|customise|account settings|profile settings|modifier le profil|modifier l.apparence|personnaliser|chỉnh sửa hồ sơ|chỉnh sửa trang cá nhân|sửa hồ sơ)$/i
+          .test(norm(node.innerText || node.getAttribute('aria-label') || '')));
+      if (ownLink || ownerOnly) return { ...response('authenticated'), ...(auth.expectedUsername ? { detectedUsername: auth.expectedUsername } : {}) };
     }
   } else {
     const displayed = one(['#profileIdentifier', '[data-email]']);

@@ -7,6 +7,11 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   Khi backend đã lên 1.6.1 mà giao diện web chưa cập nhật, hộp Nhập file còn ô "Google dùng chung" và lần nhập bị từ chối
   với chữ "Too many fields". Nay nếu các ô đó còn điền, hệ thống báo rõ ô Google dùng chung đã bỏ, cần xoá trống ba ô
   hoặc tải lại trang sau khi cập nhật giao diện 1.4.1; để trống thì nhập bình thường bằng tài khoản của từng dòng.
+- Kiểm tra đăng nhập nhận ra tài khoản đã đăng nhập trên daily.dev, Tumblr, Hugging Face (tiện ích 1.8.2)
+  daily.dev đã chuyển từ app.daily.dev sang daily.dev nên trước đây bị báo "tên miền chưa được cấu hình"; nay tài khoản
+  đã nhập tự dùng tên miền mới, không cần nhập lại. Với trang chưa có cách nhận diện riêng, tiện ích nhận tài khoản khi
+  thấy link tới đúng URL hồ sơ đã khai trong thanh điều hướng, hoặc tự mở URL hồ sơ đó một lần và thấy nút chỉ chủ tài
+  khoản mới có (Edit profile, Modifier l'apparence…). Hugging Face đọc tên tài khoản đang đăng nhập từ chính trang.
 ## 1.6.1 · 03/11/2026
 ### Sửa lỗi
 - Kiểm tra đăng nhập hàng loạt đóng tab, nhận đúng tài khoản và không đứng im (tiện ích 1.8.1)

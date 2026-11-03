@@ -827,3 +827,21 @@ test('"Sign in with password" is clicked before the password step, without askin
   assert.equal(state.injections.find(injection => injection.args?.[0]?.action === 'usePassword').args[0].payload, undefined);
   assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
 });
+
+test('an unrecognized signed-in page opens the configured profile once before giving up', async () => {
+  const { state, worker } = setup();
+  state.authResult = () => ({ state: state.openedUrls.includes('http://forum.test/members/vpsttt.1/') ? 'authenticated' : 'unknown', url: 'https://forum.test/' });
+  await worker.authenticateTask({ tabId: 8, authActivated: true, authUnknownSince: Date.now() - 2_500,
+    job: loginCheck({ profileUrl: 'http://forum.test/members/vpsttt.1/' }) });
+  assert.deepEqual(state.openedUrls, ['http://forum.test/members/vpsttt.1/']);
+  assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
+});
+
+test('a profile on another site is never opened during a login check', async () => {
+  const { state, worker } = setup();
+  state.authResult = { state: 'unknown', url: 'https://forum.test/' };
+  await worker.authenticateTask({ tabId: 8, authActivated: true, authUnknownSince: Date.now() - 9_000,
+    job: loginCheck({ profileUrl: 'https://elsewhere.test/u/vpsttt' }) });
+  assert.deepEqual(state.openedUrls, []);
+  assert.equal(state.reports[0].outcome, 'NEEDS_ACTION');
+});
