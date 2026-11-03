@@ -1,6 +1,14 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.3.0 · 03/11/2026
+### Tính năng
+- Viết bài bằng AI API của IDE công ty (VPSTTT AI)
+  Thêm nhà cung cấp AI thứ tư "VPSTTT AI" dùng mục AI API của IDE (tài khoản Claude/Codex công ty cấp), không cần mua
+  key OpenAI hay Gemini. Đặt AI_DEFAULT_PROVIDER=vpsttt cùng VPSTTT_AI_BASE_URL (https) và VPSTTT_AI_API_KEY; Studio và
+  Tạo tự động chọn được VPSTTT AI cho từng lần. Backend chỉ gửi đúng các tham số API này nhận, giữ mỗi lượt dưới 100.000
+  ký tự, giới hạn số lượt cùng lúc và số lượt mỗi phút theo hạn mức của key, và báo rõ khi key sai hoặc IP chưa được
+  cho phép. Gemini, OpenAI, DeepSeek giữ nguyên để dùng song song hoặc dự phòng.
 ## 1.2.1 · 03/11/2026
 ### Cải tiến
 - Tiện ích Chrome nhận bài kế tiếp ngay sau bài trước (bản 1.7.6)

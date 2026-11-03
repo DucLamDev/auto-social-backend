@@ -22,6 +22,7 @@ import {
   rewriteFeedback,
 } from './content-quality';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
+import { ProviderThrottle } from './provider-throttle';
 import {
   AI_PROVIDER_IDS,
   AI_PROVIDER_LABELS,
@@ -72,18 +73,21 @@ const PROVIDER_API_KEY_ENV: Record<AiProvider, string> = {
   openai: 'OPENAI_API_KEY',
   deepseek: 'DEEPSEEK_API_KEY',
   gemini: 'GEMINI_API_KEY',
+  vpsttt: 'VPSTTT_AI_API_KEY',
 };
 
 const PROVIDER_MODEL_ENV: Record<AiProvider, string> = {
   openai: 'OPENAI_MODEL',
   deepseek: 'DEEPSEEK_MODEL',
   gemini: 'GEMINI_MODEL',
+  vpsttt: 'VPSTTT_AI_MODEL',
 };
 
 const PROVIDER_DEFAULT_MODELS: Record<AiProvider, string> = {
   openai: 'gpt-5-mini',
   deepseek: 'deepseek-flash',
   gemini: 'gemini-3.5-flash',
+  vpsttt: 'claude:sonnet',
 };
 
 const DEFAULT_GEMINI_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
@@ -94,6 +98,9 @@ const INVALID_JSON_MESSAGE = 'AI returned invalid JSON';
 const SCHEMA_MISMATCH_MESSAGE = 'AI output did not match the required schema';
 const MAX_REASON_LENGTH = 1_000;
 const RETRYABLE_GENERATION_STATUSES = new Set<number>([HttpStatus.TOO_MANY_REQUESTS, HttpStatus.SERVICE_UNAVAILABLE, HttpStatus.GATEWAY_TIMEOUT]);
+// The IDE AI API accepts at most 100,000 characters across all messages.
+const VPSTTT_MAX_TOTAL_CHARS = 100_000;
+const VPSTTT_CHAR_MARGIN = 500;
 
 interface StructuredSpec<T> {
   name: string;
@@ -193,6 +200,8 @@ export class AiContentService {
   private readonly models: Record<AiProvider, string>;
   private readonly defaultProvider: AiProvider;
   private readonly geminiFallbackModel?: string;
+  private readonly vpstttThrottle: ProviderThrottle;
+  private readonly vpstttBaseUrl?: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -219,10 +228,27 @@ export class AiContentService {
       'AI_TIMEOUT_MS',
       config.get<number>('OPENAI_TIMEOUT_MS', 60_000),
     );
+    this.vpstttBaseUrl = config.get<string>('VPSTTT_AI_BASE_URL')?.trim() || undefined;
+    this.vpstttThrottle = new ProviderThrottle(
+      Number(config.get<number>('VPSTTT_AI_MAX_CONCURRENCY', 2)),
+      Number(config.get<number>('VPSTTT_AI_RPM', 10)),
+    );
     for (const provider of AI_PROVIDER_IDS) {
       if (provider === 'gemini') continue;
       const apiKey = config.get<string>(PROVIDER_API_KEY_ENV[provider])?.trim();
       if (!apiKey) continue;
+      if (provider === 'vpsttt') {
+        if (!this.vpstttBaseUrl) continue;
+        // Each request runs a Claude/Codex session, so it is slow and counted
+        // against a small per-key quota: no SDK retries, a longer timeout.
+        this.clients.vpsttt = new OpenAI({
+          apiKey,
+          baseURL: this.vpstttBaseUrl,
+          timeout: Number(config.get<number>('VPSTTT_AI_TIMEOUT_MS', 180_000)),
+          maxRetries: 0,
+        });
+        continue;
+      }
       this.clients[provider] = new OpenAI({
         apiKey,
         timeout,
@@ -502,6 +528,7 @@ export class AiContentService {
 
   private async requestStructured<T>(provider: AiProvider, instructions: string, input: string, spec: StructuredSpec<T>): Promise<T> {
     if (provider === 'gemini') return this.callGemini(instructions, input, spec);
+    if (provider === 'vpsttt') return this.callVpsttt(instructions, input, spec);
     const client = this.clientFor(provider);
     const model = this.models[provider];
     if (provider === 'openai') {
@@ -532,6 +559,30 @@ export class AiContentService {
       })
     ));
     return this.parseStructured(response.choices[0]?.message.content ?? '', spec);
+  }
+
+  /**
+   * The IDE AI API accepts only model, messages (plain text) and stream=false;
+   * any other parameter is rejected with HTTP 400. The JSON contract therefore
+   * travels in the system message and the reply is validated here.
+   */
+  private async callVpsttt<T>(instructions: string, input: string, spec: StructuredSpec<T>): Promise<T> {
+    const client = this.clientFor('vpsttt');
+    const system = `${instructions}\n\nReturn only one JSON object, with no Markdown, code fence or text around it, matching this JSON Schema:\n${JSON.stringify(spec.jsonSchema)}`;
+    const budget = VPSTTT_MAX_TOTAL_CHARS - system.length - VPSTTT_CHAR_MARGIN;
+    if (budget < 1_000) {
+      throw new ApplicationException(ErrorCode.VALIDATION_FAILED, 'The AI prompt is too long for VPSTTT AI', HttpStatus.BAD_REQUEST);
+    }
+    const user = input.length > budget ? input.slice(0, budget) : input;
+    if (user.length < input.length) this.logger.warn(`VPSTTT AI input trimmed from ${input.length} to ${user.length} characters`);
+    const response = await this.requestFromProvider('vpsttt', () => this.vpstttThrottle.run(() => (
+      client.chat.completions.create({
+        model: this.models.vpsttt,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        stream: false,
+      })
+    )));
+    return this.parseStructured(extractJsonObject(response.choices[0]?.message.content ?? ''), spec);
   }
 
   private async requestFromGemini<T>(request: (model: string) => Promise<T>): Promise<T> {
@@ -606,6 +657,20 @@ export class AiContentService {
     const label = AI_PROVIDER_LABELS[provider];
     const status = this.readNumericErrorProperty(error, 'status');
 
+    if (provider === 'vpsttt' && (status === 401 || status === 403)) {
+      return new ApplicationException(
+        ErrorCode.PLATFORM_AUTH_FAILED,
+        `${label} refused the key. Check VPSTTT_AI_API_KEY, the key's allowed IPs and that the IDE AI API is enabled for its owner`,
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+    if (provider === 'vpsttt' && status === 400) {
+      return new ApplicationException(
+        ErrorCode.PLATFORM_API_ERROR,
+        `${label} rejected the request (unsupported parameter, model or input size)`,
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
     if (status === 401 || status === 403) {
       return new ApplicationException(
         ErrorCode.PLATFORM_AUTH_FAILED,
@@ -695,14 +760,29 @@ export class AiContentService {
   private clientFor(provider: AiProvider): OpenAI {
     const client = this.clients[provider];
     if (!client) {
+      const missing = provider === 'vpsttt' && !this.vpstttBaseUrl ? 'VPSTTT_AI_BASE_URL' : PROVIDER_API_KEY_ENV[provider];
       throw new ApplicationException(
         ErrorCode.INFRASTRUCTURE_UNAVAILABLE,
-        `${PROVIDER_API_KEY_ENV[provider]} is not configured`,
+        `${missing} is not configured`,
         HttpStatus.SERVICE_UNAVAILABLE,
       );
     }
     return client;
   }
+}
+
+/**
+ * Chat models without a JSON mode sometimes wrap the object in a code fence or
+ * a sentence. Keep only the outermost object; parseStructured still validates it.
+ */
+export function extractJsonObject(text: string): string {
+  const trimmed = text.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  if (fenced?.[1] !== undefined) return fenced[1].trim();
+  if (trimmed.startsWith('{')) return trimmed;
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
 }
 
 function reviewPassedOrMissing(review: ContentReview | null): boolean {

@@ -12,6 +12,7 @@ import {
   SourceType,
   VariantStatus,
 } from '@prisma/client';
+import { AI_PROVIDER_IDS } from '../../ai/ai-provider';
 
 export class ApiMetaContractDto {
   @ApiProperty() requestId!: string;
@@ -228,7 +229,7 @@ export class AutomatedCampaignContractDto {
 }
 
 export class AiProviderContractDto {
-  @ApiProperty({ enum: ['openai', 'deepseek', 'gemini'] }) id!: string;
+  @ApiProperty({ enum: AI_PROVIDER_IDS }) id!: string;
   @ApiProperty() label!: string;
   @ApiProperty() model!: string;
   @ApiProperty() configured!: boolean;

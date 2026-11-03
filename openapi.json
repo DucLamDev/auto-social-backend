@@ -10256,7 +10256,8 @@
             "enum": [
               "openai",
               "deepseek",
-              "gemini"
+              "gemini",
+              "vpsttt"
             ],
             "description": "AI provider for this generation run. Uses the backend default when omitted."
           }
@@ -10273,7 +10274,8 @@
             "enum": [
               "openai",
               "deepseek",
-              "gemini"
+              "gemini",
+              "vpsttt"
             ]
           },
           "label": {
@@ -10900,7 +10902,8 @@
             "enum": [
               "openai",
               "deepseek",
-              "gemini"
+              "gemini",
+              "vpsttt"
             ],
             "description": "AI provider for this automation run. Uses the backend default when omitted."
           },

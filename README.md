@@ -70,9 +70,25 @@ DEEPSEEK_MODEL=deepseek-flash
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-3.5-flash
 GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite
+
+VPSTTT_AI_BASE_URL=https://<ide-host>/ai-api/v1
+VPSTTT_AI_API_KEY=
+VPSTTT_AI_MODEL=claude:sonnet
+VPSTTT_AI_TIMEOUT_MS=180000
+VPSTTT_AI_MAX_CONCURRENCY=2
+VPSTTT_AI_RPM=10
 ```
 
-`AI_DEFAULT_PROVIDER` chỉ nhận `openai`, `deepseek` hoặc `gemini`. Studio và luồng **Tạo tự động** cho phép chọn provider cho từng lần sinh nội dung; nếu request không chỉ định, backend dùng provider mặc định. Giao diện chỉ nhận trạng thái đã cấu hình và tên model từ `GET /api/v1/ai/providers`, không nhận API key đã lưu. Provider chưa có key sẽ bị vô hiệu hóa trong danh sách chọn. Các biến `*_MODEL` do backend kiểm soát, người dùng không gửi model tùy ý từ trình duyệt.
+`AI_DEFAULT_PROVIDER` nhận `openai`, `deepseek`, `gemini` hoặc `vpsttt`. Studio và luồng **Tạo tự động** cho phép chọn provider cho từng lần sinh nội dung; nếu request không chỉ định, backend dùng provider mặc định. Giao diện chỉ nhận trạng thái đã cấu hình và tên model từ `GET /api/v1/ai/providers`, không nhận API key đã lưu. Provider chưa có key sẽ bị vô hiệu hóa trong danh sách chọn. Các biến `*_MODEL` do backend kiểm soát, người dùng không gửi model tùy ý từ trình duyệt.
+
+**VPSTTT AI** là mục **AI API** của IDE công ty: tạo key trong IDE (khai báo IP công khai của máy chạy backend, quyền
+sinh nội dung, hạn mức), dán địa chỉ hiện trong mục đó vào `VPSTTT_AI_BASE_URL` (chỉ nhận https; http chỉ cho máy thử
+`127.0.0.1` ngoài production). API này chỉ nhận `model`, `messages` dạng chữ và `stream=false`, tối đa 100.000 ký tự mỗi
+lượt; backend đưa khuôn JSON vào lời dặn hệ thống, cắt phần nhập quá dài, bóc JSON khỏi khối code và kiểm tra lại như
+các provider khác. Mỗi lượt chạy một phiên Claude/Codex nên chậm: backend giới hạn `VPSTTT_AI_MAX_CONCURRENCY` lượt cùng
+lúc và rải đều `VPSTTT_AI_RPM` lượt mỗi phút, đặt hai số này không vượt hạn mức của key (mặc định của IDE: 2 và 10). Một
+bài cho mỗi nền tảng cần 2–4 lượt (viết, chấm, viết lại khi chưa đạt), nên với 10 lượt/phút nên chọn khoảng 8 nền tảng
+trở xuống mỗi lần tạo tự động. Model: `claude:haiku` (nhanh), `claude:sonnet`, `claude:opus`, `gpt:`.
 
 ADMIN có thể vào **Cài đặt → API key Gemini** để lưu tối đa 10 key, áp dụng ngay cho lần tạo nội dung tiếp theo. Key cũ trong `GEMINI_API_KEY` được giữ ở ô 1 cho đến khi lưu cấu hình trên web; các ô để trống giữ nguyên key đã lưu, nút Xóa loại bỏ key khi lưu. Backend mã hóa danh sách trong `SystemSetting`, chỉ trả trạng thái từng ô qua `GET /api/v1/ai/gemini-keys`; cập nhật bằng `PUT` cùng đường dẫn. Khi gặp quota/giới hạn (429 hoặc 402), hệ thống chuyển sang key tiếp theo, nhớ key thành công và tạm bỏ qua key vừa lỗi ít nhất 60 giây (tôn trọng `Retry-After` dài hơn). Mỗi yêu cầu thử mỗi key tối đa một lần; nếu tất cả bị giới hạn thì trả lỗi rõ ràng. Các key cùng Google Cloud project dùng chung quota: https://ai.google.dev/gemini-api/docs/rate-limits.
 
