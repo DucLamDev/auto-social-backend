@@ -13,7 +13,7 @@ const job = {
 
 // Existing cases drive polling by hand; the early next-job poll stays out of
 // their way unless a test asks for it.
-function setup({ nextJobDelay = 60_000 } = {}) {
+function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
   const state ={ ready: true, fills: 0, result: { status: 'filled' }, reports: [], injections: [], openedUrls: [], claims: 0, waiting: false, alarm: null, alarmCreates: 0, jobs: null, claimRequests: [], nextTabId: 0 };
   const area = initial => {
     const data = structuredClone(initial);
@@ -69,7 +69,8 @@ function setup({ nextJobDelay = 60_000 } = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../../browser-extension/background.js'), 'utf8')
     .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery)\.js';\r?\n/gm, '')
     .replace(/const NEXT_JOB_DELAY_MS = [\d_]+;/, `const NEXT_JOB_DELAY_MS = ${nextJobDelay};`)
-    .replace(/const NO_GOOGLE_GRACE_MS = [\d_]+;/, 'const NO_GOOGLE_GRACE_MS = 0;');
+    .replace(/const NO_GOOGLE_GRACE_MS = [\d_]+;/, 'const NO_GOOGLE_GRACE_MS = 0;')
+    .replace(/const CLOUDFLARE_WAIT_MS = [\d_]+;/, `const CLOUDFLARE_WAIT_MS = ${cloudflareWait};`);
   const context = vm.createContext({
     chrome, URL, Date, AbortSignal, setTimeout, clearTimeout,
     canFillPage: function canFillPage() {}, fillAndSubmit: function fillAndSubmit() {}, readErrors: function readErrors() {}, readModeration: function readModeration() {}, readPublishedPost: function readPublishedPost() {},
@@ -853,3 +854,35 @@ test('a different signed-in account is named in the message so the operator can 
   assert.match(state.reports[0].message, /@real-handle/);
   assert.match(state.reports[0].message, /@configured-handle/);
 });
+
+// ---- login checks on a fresh Chrome (VPS): visible sign-in, Cloudflare check ----
+test('a Google sign-in button is pressed with the test tab in front', async () => {
+  const { state, worker } = setup();
+  let pressed = false;
+  state.authResult = ({ action }) => {
+    if (action === 'google') { pressed = true; state.activeWhenPressed = state.activated; return { state: 'submitted', url: 'https://social.test/login' }; }
+    return pressed ? { state: 'authenticated', url: 'https://social.test/' } : { state: 'google', url: 'https://social.test/login' };
+  };
+  await worker.authenticateTask({ tabId: 8, job: loginCheck({ provider: 'google' }) });
+  assert.equal(state.activeWhenPressed, 8, 'the tab was brought to the front before the click');
+  assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
+});
+
+test('a Cloudflare browser check that passes by itself lets the login check continue', async () => {
+  const { state, worker } = setup();
+  let polls = 0;
+  state.authResult = () => (++polls < 3 ? { state: 'cloudflare', url: 'https://social.test/login', message: 'Cloudflare chưa tự qua' } : { state: 'authenticated', url: 'https://social.test/' });
+  await worker.authenticateTask({ tabId: 8, job: loginCheck() });
+  assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
+  assert.equal(state.activated, 8);
+});
+
+test('a Cloudflare check that does not pass is reported after the wait, without sending a password', async () => {
+  const { state, worker } = setup({ cloudflareWait: 0 });
+  state.authResult = () => ({ state: 'cloudflare', url: 'https://social.test/login', message: 'Cloudflare chưa tự qua' });
+  await worker.authenticateTask({ tabId: 8, job: loginCheck() });
+  assert.equal(state.reports[0].outcome, 'NEEDS_ACTION');
+  assert.equal(state.reports[0].message, 'Cloudflare chưa tự qua');
+  assert.ok(!state.injections.some(injection => ['identifier', 'password'].includes(injection.args?.[0]?.action)));
+});
+

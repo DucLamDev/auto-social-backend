@@ -40,6 +40,12 @@ const UI_HINT_FIELDS = ['title', 'body', 'submit', 'opener'];
 // A Google-login account on a page that only offers the site's own form: give a
 // late-rendered Google button this long before reporting it.
 const NO_GOOGLE_GRACE_MS = 6_000;
+// Cloudflare's full-page "Just a moment…" browser check usually passes by itself
+// in a few seconds; datacenter IPs (a VPS) see it far more often than home ones.
+const CLOUDFLARE_WAIT_MS = 20_000;
+// Sign-in buttons that start Google/SSO often do nothing in a hidden background
+// tab: bring the test tab to the front before pressing them.
+const VISIBLE_AUTH_STEPS = ['accountMenu', 'google', 'openLogin', 'sso'];
 // An unrecognized signed-in page is given this long before the profile page is opened.
 const PROFILE_CHECK_AFTER_MS = 2_000;
 const LOG_LIMIT = 20;
@@ -340,6 +346,15 @@ async function authenticateTask(task) {
         if (current.authUnknownSince && Date.now() - current.authUnknownSince > 8_000) return stop('Trang đã tải nhưng chưa nhận diện được form đăng nhập hoặc đúng tài khoản. Cần cập nhật luồng của nền tảng này.');
         if (!current.authUnknownSince) { current = { ...current, authUnknownSince: Date.now() }; await setTask(task.tabId, current); }
       } else if (current.authUnknownSince) { current = { ...current, authUnknownSince: null }; await setTask(task.tabId, current); }
+      if (result?.state === 'cloudflare') {
+        if (!current.authCloudflareSince) {
+          current = { ...current, authCloudflareSince: Date.now() };
+          await setTask(task.tabId, current);
+          await focusTab(tabId);
+        } else if (Date.now() - current.authCloudflareSince > CLOUDFLARE_WAIT_MS) return stop(result.message);
+        await new Promise(resolve => setTimeout(resolve, 750));
+        continue;
+      }
       if (result?.state === 'noGoogle') {
         if (!current.authNoGoogleSince) { current = { ...current, authNoGoogleSince: Date.now() }; await setTask(task.tabId, current); }
         else if (Date.now() - current.authNoGoogleSince > NO_GOOGLE_GRACE_MS) return stop(result.message);
@@ -377,7 +392,7 @@ async function authenticateTask(task) {
         if (!attempted) {
           current = { ...current, authSteps: { ...current.authSteps, [result.state]: Date.now() } };
           await setTask(task.tabId, current); // reserve before obtaining a secret
-          if (result.state === 'accountMenu') {
+          if (VISIBLE_AUTH_STEPS.includes(result.state)) {
             await focusTab(tabId);
             await new Promise(resolve => setTimeout(resolve, 350));
           }

@@ -447,3 +447,13 @@ test('Bluesky identifies the signed-in account from its own session storage, nev
     assert.equal(other.detectedUsername, 'stranger.bsky.social');
   } finally { await page.close(); }
 });
+
+test('a Cloudflare "Just a moment" page waits for the check; a CAPTCHA in the form still needs a person', async () => {
+  const page = await pageAt('https://forum.test/login', '<title>Just a moment...</title><div id="challenge-stage"></div>');
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job })).state, 'cloudflare');
+    await page.setContent('<form><input name="login"><input type="password"><iframe src="https://www.google.com/recaptcha/api2/anchor" style="width:300px;height:80px"></iframe></form>');
+    assert.equal((await page.evaluate(accountAuthStep, { job })).state, 'challenge');
+  } finally { await page.close(); }
+});
+

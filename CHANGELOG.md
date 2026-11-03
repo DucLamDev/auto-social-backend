@@ -3,6 +3,10 @@ Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cu�
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
 ## 1.7.1 · 03/11/2026
 ### Sửa lỗi
+- Kiểm tra đăng nhập trên Chrome mới (VPS) tự bấm được nút Google và chờ Cloudflare (tiện ích 1.9.1)
+  Tiện ích đưa tab lên trước khi bấm Đăng nhập bằng Google / Log in, vì nhiều trang không mở đăng nhập Google từ tab
+  ẩn và trước đây tab đứng yên rồi báo "Bước đăng nhập chưa được chấp nhận". Trang "Just a moment…" của Cloudflare được
+  chờ tự qua tới 20 giây thay vì báo CAPTCHA ngay. Cần frontend 1.6.1 để nút Test / Kiểm tra tất cả cũng tự đăng nhập.
 - Lưu "Phiên Chrome / 2FA" không còn làm mất trang đăng nhập phụ của tài khoản
   Trước đây sửa mật khẩu trong form làm mất tên miền đăng nhập phụ đã có từ lúc nhập file, nên kiểm tra đăng nhập
   social.vivaldi.net báo "Trang đăng nhập chuyển sang https://login.vivaldi.net; tên miền này chưa được cấu hình".
