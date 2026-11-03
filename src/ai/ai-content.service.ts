@@ -1,6 +1,6 @@
 import { HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ContentStatus, Prisma, VariantStatus } from '@prisma/client';
+import { ContentStatus, ContentVariant, Prisma, VariantStatus } from '@prisma/client';
 import OpenAI from 'openai';
 import { zodResponseFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
@@ -351,6 +351,12 @@ export class AiContentService {
     requestedProvider?: AiProvider,
     assertOwnership?: () => Promise<void>,
     images?: ReadonlyMap<string, PlatformImagePlan>,
+    /**
+     * Saves each platform's variant as soon as it is generated and reports it, so
+     * a long run can be reviewed while it goes on. Without it, nothing is saved
+     * unless every platform succeeds (Content Studio keeps that all-or-nothing).
+     */
+    onVariant?: (variant: ContentVariant) => Promise<void>,
   ) {
     await assertOwnership?.();
     const provider = this.resolveProvider(requestedProvider);
@@ -373,41 +379,45 @@ export class AiContentService {
     }
     try {
       const brand = await this.brandProfiles?.load() ?? null;
-      const generatedByPlatform: Array<{ platform: (typeof platforms)[number]; generated: GeneratedVariant }> = [];
-      // Bound provider concurrency for large multi-platform campaigns.
-      for (let offset = 0; offset < platforms.length; offset += 4) {
-        generatedByPlatform.push(...await Promise.all(platforms.slice(offset, offset + 4).map(async (platform) => {
-        const prompt = platform.prompts[0];
-        if (!prompt) throw new ApplicationException(ErrorCode.RESOURCE_NOT_FOUND, `No active prompt for ${platform.slug}`, HttpStatus.NOT_FOUND);
-        const generated = await this.generateChecked(provider, platform.slug, prompt.systemPrompt, prompt.userTemplate, content, brand, images?.get(platform.slug) ?? null);
-        return { platform, generated };
-        })));
-      }
-      await assertOwnership?.();
-      return await this.prisma.$transaction(async (transaction) => {
-        const results = [];
-        for (const { platform, generated } of generatedByPlatform) {
-          const latest = await transaction.contentVariant.aggregate({
-            where: { contentId, platformId: platform.id },
-            _max: { version: true },
-          });
-          results.push(await transaction.contentVariant.create({
-            data: {
-              contentId,
-              platformId: platform.id,
-              title: generated.title,
-              body: repairEscapedNewlines(generated.body),
-              summary: generated.summary,
-              hashtags: generated.hashtags,
-              cta: generated.cta,
-              recommended: generated.recommended,
-              reason: generated.reason,
-              mediaRecommendation: generated.media,
-              status: VariantStatus.GENERATED,
-              version: (latest._max.version ?? 0) + 1,
-            },
-          }));
+      const generated: Array<GeneratedVariant | undefined> = [];
+      const saved: Array<ContentVariant | undefined> = [];
+      let failure: { error: unknown } | undefined;
+      let next = 0;
+      // Bound provider concurrency for large multi-platform campaigns: four at a
+      // time, and a finished platform frees its slot for the next one at once.
+      // After a failure no new platform starts; the ones in flight still finish.
+      const worker = async () => {
+        while (!failure && next < platforms.length) {
+          const index = next++;
+          const platform = platforms[index]!;
+          try {
+            const prompt = platform.prompts[0];
+            if (!prompt) throw new ApplicationException(ErrorCode.RESOURCE_NOT_FOUND, `No active prompt for ${platform.slug}`, HttpStatus.NOT_FOUND);
+            const result = await this.generateChecked(provider, platform.slug, prompt.systemPrompt, prompt.userTemplate, content, brand, images?.get(platform.slug) ?? null);
+            if (!onVariant) { generated[index] = result; continue; }
+            await assertOwnership?.();
+            const variant = await this.saveVariant(this.prisma, contentId, platform.id, result);
+            saved[index] = variant;
+            await onVariant(variant);
+          } catch (error) { failure ??= { error }; }
         }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, platforms.length) }, worker));
+      if (failure) throw failure.error;
+      await assertOwnership?.();
+      if (onVariant) {
+        const completed = await this.prisma.content.updateMany({
+          where: { id: contentId, ownerId, status: ContentStatus.AI_GENERATING },
+          data: { status: ContentStatus.GENERATED },
+        });
+        if (!completed.count) {
+          throw new ApplicationException(ErrorCode.CONFLICT, 'Content changed while generation was completing', HttpStatus.CONFLICT);
+        }
+        return saved.filter((variant): variant is ContentVariant => Boolean(variant));
+      }
+      return await this.prisma.$transaction(async (transaction) => {
+        const results: ContentVariant[] = [];
+        for (const [index, platform] of platforms.entries()) results.push(await this.saveVariant(transaction, contentId, platform.id, generated[index]!));
         const completed = await transaction.content.updateMany({
           where: { id: contentId, ownerId, status: ContentStatus.AI_GENERATING },
           data: { status: ContentStatus.GENERATED },
@@ -428,6 +438,27 @@ export class AiContentService {
       });
       throw error;
     }
+  }
+
+  /** The next version of this platform's variant for the content. */
+  private async saveVariant(db: Prisma.TransactionClient, contentId: string, platformId: string, generated: GeneratedVariant): Promise<ContentVariant> {
+    const latest = await db.contentVariant.aggregate({ where: { contentId, platformId }, _max: { version: true } });
+    return db.contentVariant.create({
+      data: {
+        contentId,
+        platformId,
+        title: generated.title,
+        body: repairEscapedNewlines(generated.body),
+        summary: generated.summary,
+        hashtags: generated.hashtags,
+        cta: generated.cta,
+        recommended: generated.recommended,
+        reason: generated.reason,
+        mediaRecommendation: generated.media,
+        status: VariantStatus.GENERATED,
+        version: (latest._max.version ?? 0) + 1,
+      },
+    });
   }
 
   /**

@@ -230,17 +230,24 @@ export class CampaignAutomationService {
       for (const variant of reusable) {
         if (!reusableByPlatform.has(variant.platformId)) reusableByPlatform.set(variant.platformId, variant);
       }
-      if (reusable.length && reusableByPlatform.size !== platformSlugs.length) {
-        await this.prisma.contentVariant.updateMany({
-          where: { id: { in: reusable.map((variant) => variant.id) }, targets: { none: {} } },
-          data: { status: VariantStatus.REJECTED },
-        });
+      // Drafts of an interrupted run (and edits made to them during it) are kept;
+      // only the platforms still without a draft are generated.
+      const kept = [...reusableByPlatform.values()];
+      const platformIdBySlug = new Map(accounts.map((account) => [account.platform.slug, account.platformId]));
+      const missing = platformSlugs.filter((slug) => !reusableByPlatform.has(platformIdBySlug.get(slug) ?? ''));
+      const campaignId = reservation.campaign.id;
+      if (background?.processingId) {
+        // The review page lists every saved draft while the rest are generated.
+        await this.prisma.campaign.update({ where: { id: campaignId }, data: { automationVariantIds: kept.map((variant) => variant.id) } });
       }
-      const drafts: DraftVariant[] = reusableByPlatform.size === platformSlugs.length
-        ? [...reusableByPlatform.values()]
+      const generated: DraftVariant[] = !missing.length ? []
         : background?.assertOwnership
-          ? await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider, background.assertOwnership, imagePlan)
-          : await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider, undefined, imagePlan);
+          ? await this.ai.generate(ownerId, reservation.campaign.contentId, missing, aiProvider, background.assertOwnership, imagePlan,
+            background.processingId ? async (variant) => {
+              await this.prisma.campaign.update({ where: { id: campaignId }, data: { automationVariantIds: { push: variant.id } } });
+            } : undefined)
+          : await this.ai.generate(ownerId, reservation.campaign.contentId, missing, aiProvider, undefined, imagePlan);
+      const drafts: DraftVariant[] = [...kept, ...generated];
       const slugByPlatform = new Map(accounts.map((account) => [account.platformId, account.platform.slug]));
       const variants = await this.attachGeneratedImages(ownerId, drafts, slugByPlatform, imagePlan, background?.assertOwnership);
       const variantByPlatform = new Map(variants.map((variant) => [variant.platformId, variant]));

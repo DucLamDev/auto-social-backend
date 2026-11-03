@@ -1,6 +1,15 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.9.0 · 03/11/2026
+### Tính năng
+- Nội dung AI của từng kênh được lưu ngay khi viết xong, để review trong lúc AI viết tiếp
+  Lượt tạo nội dung chạy nền (Content đợi duyệt) lưu biến thể của mỗi kênh ngay khi xong và thêm vào danh sách của lượt,
+  thay vì chờ đủ mọi kênh. AI vẫn viết tối đa 4 kênh cùng lúc, nhưng kênh nào xong thì kênh kế tiếp bắt đầu luôn. Lượt
+  bị gián đoạn hoặc lỗi khi chạy lại chỉ tạo các kênh còn thiếu, giữ các kênh đã xong và chỉnh sửa của bạn (trước đây
+  bỏ hết và tạo lại từ đầu). Duyệt đăng vẫn chỉ mở khi đủ mọi kênh. Content Studio giữ cách cũ: chỉ lưu khi mọi kênh đều
+  tạo được.
+
 ## 1.8.0 · 03/11/2026
 ### Tính năng
 - Tự đăng bài lên daily.dev bằng tiện ích Chrome (tiện ích 1.10.0)

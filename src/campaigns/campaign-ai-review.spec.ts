@@ -90,6 +90,41 @@ describe('Background AI review', () => {
     expect(campaigns.publish).not.toHaveBeenCalled();
   });
 
+  it('lists each draft on the campaign as soon as it is saved, so it can be reviewed during the run', async () => {
+    const { service, prisma, ai, dto, campaign, variant } = setup();
+    await service.automate('owner-1', dto, 'request-key-123', undefined, { enqueue: true });
+    const created = prisma.campaign.create.mock.results[0]?.value as typeof campaign;
+    prisma.campaign.findFirst.mockResolvedValue({ ...created, automationState: 'PROCESSING', automationVariantIds: ['stale'] });
+    prisma.contentVariant.findMany.mockResolvedValue([]);
+    ai.generate.mockImplementation(async (...args: unknown[]) => {
+      await (args[6] as (saved: typeof variant) => Promise<void>)(variant);
+      return [variant];
+    });
+    await service.automate('owner-1', { ...dto, publishImmediately: false }, 'request-key-123', undefined, { processingId: campaign.id, assertOwnership: jest.fn() });
+    const updates = prisma.campaign.update.mock.calls.map(([call]: [{ data: unknown }]) => call.data);
+    expect(updates[0]).toEqual({ automationVariantIds: [] });
+    expect(updates[1]).toEqual({ automationVariantIds: { push: 'variant-1' } });
+    expect(updates[2]).toMatchObject({ automationState: 'WAITING_REVIEW', automationVariantIds: ['variant-1'] });
+  });
+
+  it('resumes an interrupted run by generating only the platforms that still have no draft', async () => {
+    const { service, prisma, ai, dto, campaign, variant } = setup();
+    const second = { id: 'account-2', platformId: 'platform-2', platform: { id: 'platform-2', slug: 'x', mode: PlatformMode.OFFICIAL_API } };
+    prisma.platformAccount.findMany.mockResolvedValue([{ id: 'account-1', platformId: 'platform-1', platform: { id: 'platform-1', slug: 'devto', mode: PlatformMode.OFFICIAL_API } }, second]);
+    const request = { ...dto, platformAccountIds: ['account-1', 'account-2'], publishImmediately: false };
+    await service.automate('owner-1', request, 'request-key-123', undefined, { enqueue: true });
+    const created = prisma.campaign.create.mock.results[0]?.value as typeof campaign;
+    prisma.campaign.findFirst.mockResolvedValue({ ...created, automationState: 'PROCESSING' });
+    prisma.contentVariant.findMany.mockResolvedValue([variant]);
+    const fresh = { ...variant, id: 'variant-2', platformId: 'platform-2' };
+    ai.generate.mockResolvedValue([fresh]);
+    await service.automate('owner-1', request, 'request-key-123', undefined, { processingId: campaign.id, assertOwnership: jest.fn() });
+    expect(ai.generate).toHaveBeenCalledWith('owner-1', 'content-1', ['x'], 'openai', expect.any(Function), expect.any(Map), expect.any(Function));
+    expect(prisma.contentVariant.updateMany).not.toHaveBeenCalled();
+    expect(prisma.campaign.update).toHaveBeenCalledWith({ where: { id: campaign.id }, data: { automationVariantIds: ['variant-1'] } });
+    expect(prisma.campaign.update).toHaveBeenLastCalledWith({ where: { id: campaign.id }, data: expect.objectContaining({ automationState: 'WAITING_REVIEW', automationVariantIds: ['variant-1', 'variant-2'] }) as unknown });
+  });
+
   it('creates and activates posts only after the owner approves, using the requested schedule', async () => {
     const { service, prisma, campaigns } = setup();
     const date = new Date(Date.now() + 86_400_000);

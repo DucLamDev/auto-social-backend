@@ -495,6 +495,50 @@ describe('AiContentService structured parsing and provider routing', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('saves each platform as soon as it is generated and keeps the finished ones when another fails', async () => {
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const transaction = jest.fn();
+    const prisma = {
+      content: {
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'content-1', title: 'Title', body: 'Body', summary: null, canonicalUrl: null, status: 'DRAFT',
+        }),
+        updateMany,
+      },
+      platform: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'platform-1', slug: 'x', prompts: [{ systemPrompt: 'System', userTemplate: '{{body}}' }] },
+          { id: 'platform-2', slug: 'devto', prompts: [{ systemPrompt: 'System', userTemplate: '{{body}}' }] },
+        ]),
+      },
+      contentVariant: {
+        aggregate: jest.fn().mockResolvedValue({ _max: { version: null } }),
+        create: jest.fn(({ data }: { data: { platformId: string } }) => Promise.resolve({ id: `variant-${data.platformId}`, ...data })),
+      },
+      $transaction: transaction,
+    };
+    const configured = createService(prisma as unknown as PrismaService, isolatedConfig());
+    const valid = JSON.stringify({
+      platform: 'x', title: null, body: 'Hello', summary: null, hashtags: [], cta: null,
+      recommended: true, reason: 'Concise', media: { type: 'none', altText: '' },
+    });
+    const create = jest.fn()
+      .mockResolvedValueOnce({ output_text: valid })
+      .mockRejectedValueOnce(new Error('second platform failed'));
+    installClient(configured, 'openai', { responses: { create } });
+    const seen: string[] = [];
+
+    await expect(configured.generate('owner-1', 'content-1', ['x', 'devto'], 'openai', undefined, undefined, (variant) => { seen.push(variant.id); return Promise.resolve(); }))
+      .rejects.toThrow('OpenAI request failed');
+    expect(seen).toEqual(['variant-platform-1']);
+    expect(prisma.contentVariant.create).toHaveBeenCalledTimes(1);
+    expect(transaction).not.toHaveBeenCalled();
+    expect(updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'content-1', ownerId: 'owner-1', status: 'AI_GENERATING' },
+      data: { status: 'DRAFT' },
+    });
+  });
+
   it('does not call the model when another request wins the atomic generation claim', async () => {
     const transaction = jest.fn();
     const prisma = {
