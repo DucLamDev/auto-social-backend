@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { ContentStatus, Prisma, VariantStatus } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { isExtensionDelivery, parseExtensionDeliverySettings, type ExtensionEngine } from '../connectors/extension/extension-delivery';
+import { variantPreview } from './variant-preview';
 import { CreateContentVariantDto } from './dto/create-content-variant.dto';
 
 const variantInclude = {
@@ -88,6 +90,33 @@ export class ContentVariantsService {
       throw new ConflictException('A content variant is immutable after it has been added to a campaign');
     }
     return this.prisma.contentVariant.findUniqueOrThrow({ where: { id }, include: variantInclude });
+  }
+
+  /**
+   * The post as its destination will show it, for the review preview. Unsaved
+   * edits can be passed in; an account of the same platform picks its posting
+   * route (for example the Chrome extension flow) when it has one.
+   */
+  async preview(ownerId: string, id: string, input: { title?: string; body?: string; hashtags?: string[]; platformAccountId?: string }) {
+    const variant = await this.prisma.contentVariant.findFirstOrThrow({
+      where: { id, content: { ownerId } },
+      select: { title: true, body: true, hashtags: true, platformId: true, platform: { select: { slug: true } }, content: { select: { canonicalUrl: true } } },
+    });
+    let engine: ExtensionEngine | undefined;
+    if (input.platformAccountId) {
+      const account = await this.prisma.platformAccount.findFirst({
+        where: { id: input.platformAccountId, ownerId, platformId: variant.platformId },
+        select: { settings: true },
+      });
+      if (account && isExtensionDelivery(account.settings)) {
+        try { engine = parseExtensionDeliverySettings(account.settings).engine; } catch { /* invalid route: platform default */ }
+      }
+    }
+    return variantPreview({
+      title: input.title ?? variant.title,
+      body: input.body ?? variant.body,
+      hashtags: input.hashtags ? this.normalizeHashtags(input.hashtags) : variant.hashtags,
+    }, variant.platform.slug, engine, variant.content.canonicalUrl);
   }
 
   private normalizeHashtags(values: string[]): string[] {

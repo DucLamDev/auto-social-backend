@@ -1,6 +1,21 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.10.0 · 03/11/2026
+### Tính năng
+- Xem trước bài như khi đăng lên từng mạng xã hội
+  Lệnh mới `POST /content-variants/{id}/preview` trả tiêu đề, nội dung, tag và số ký tự đúng như kênh sẽ nhận (bỏ
+  Markdown với trình soạn chữ thường, đặt hashtag, cắt tiêu đề theo giới hạn, dòng Nguồn), theo đường đăng của tài khoản
+  đã chọn. Nhận cả nội dung đang sửa chưa lưu; chỉ đọc, không đổi gì.
+- Ảnh AI đúng sản phẩm và mang phong cách công nghệ
+  Lời dặn AI viết mô tả ảnh nay bắt vẽ đúng sản phẩm, dịch vụ và ý kỹ thuật của bài (máy chủ, hạ tầng cloud, proxy, luồng
+  mạng…), nhìn kiểu công nghệ hiện đại (nền xanh đậm, ánh sáng xanh / tím, 3D hoặc isometric), mô tả 60–150 từ như brief
+  cho designer; không dùng cảnh đời thường (cốc cà phê, cây cảnh) hay phong cảnh. Mọi ảnh, kể cả khi tạo lại với mô tả
+  sửa tay, được thêm phần dặn chất lượng (bố cục, ánh sáng, chi tiết, không chữ, không logo).
+- Tạo ảnh bằng GPT Image của OpenAI (tuỳ chọn)
+  `AI_IMAGE_PROVIDER=openai` tạo ảnh thẳng bằng OpenAI với `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL` (mặc định `gpt-image-1`)
+  và `OPENAI_IMAGE_QUALITY` (mặc định `high`); tính phí theo tài khoản OpenAI. Mặc định vẫn là VPSTTT AI (Codex).
+
 ## 1.9.0 · 03/11/2026
 ### Tính năng
 - Nội dung AI của từng kênh được lưu ngay khi viết xong, để review trong lúc AI viết tiếp
