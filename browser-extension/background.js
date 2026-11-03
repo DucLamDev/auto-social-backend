@@ -37,6 +37,9 @@ const MAX_UI_HINT_ROUNDS = 2;
 const UI_HINT_POLL_MS = 2_000;
 const UI_HINT_WAIT_MS = 90_000;
 const UI_HINT_FIELDS = ['title', 'body', 'submit', 'opener'];
+// A Google-login account on a page that only offers the site's own form: give a
+// late-rendered Google button this long before reporting it.
+const NO_GOOGLE_GRACE_MS = 6_000;
 const LOG_LIMIT = 20;
 const SUPPORTED_ENGINES = ['discourse', 'xenforo', 'phpbb', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone'];
 
@@ -249,18 +252,26 @@ async function tryFill(task) {
   } finally { probing.delete(task.job.jobId); }
 }
 
+/** A login check is a background test: its tab and any sign-in popup never stay open. */
+async function closeLoginCheckTabs(...tabIds) {
+  for (const id of new Set(tabIds.filter(id => id !== undefined && id !== null))) {
+    try { await chrome.tabs.remove(id); } catch { /* already closed */ }
+  }
+}
+
 async function authenticateTask(task) {
   if (authenticating.has(task.job.jobId)) return false;
   authenticating.add(task.job.jobId);
   let current = { ...task, phase: 'authenticating', authDeadline: task.authDeadline ?? Date.now() + (task.job.kind === 'LOGIN_CHECK' ? task.job.auth.provider === 'google' ? 75_000 : 40_000 : 180_000) };
   await setTask(task.tabId, current);
-  const stop = async (message, reason = 'AUTH_REQUIRED', closeOwnedTabs = false, googleBlocked = false, detectedUsername) => {
+  // The third argument (close tabs) is kept for call sites; login checks always close now.
+  const stop = async (message, reason = 'AUTH_REQUIRED', _closeOwnedTabs = false, googleBlocked = false, detectedUsername) => {
     await report(current, 'NEEDS_ACTION', { reason, message, detectedUsername, googleBlocked: task.job.auth.provider === 'google' && googleBlocked });
     if (task.job.kind === 'LOGIN_CHECK') {
       await setTask(task.tabId, null);
-      if (closeOwnedTabs) for (const id of new Set([task.tabId, current.authTabId].filter(id => id !== undefined && id !== null))) {
-        try { await chrome.tabs.remove(id); } catch { /* already closed */ }
-      }
+      // Whatever the outcome, the result is on the web ("Hướng dẫn kết nối" reopens
+      // the platform); a leftover test tab only piles up and is no longer tracked.
+      await closeLoginCheckTabs(task.tabId, current?.authTabId);
       return false;
     }
     await setTask(task.tabId, { ...current, phase: 'waitingAuth', deadline: Date.now() + WAIT_USER_MS });
@@ -299,7 +310,9 @@ async function authenticateTask(task) {
         current = { ...(await getTasks())[task.tabId], googleIdentityVerified: true };
         await setTask(task.tabId, current);
       }
-      if (task.job.kind === 'LOGIN_CHECK' && result?.state === 'unknown') {
+      // A step that crashed in the page returns nothing; treat it like an
+      // unrecognized page instead of waiting silently for the whole deadline.
+      if (task.job.kind === 'LOGIN_CHECK' && (result?.state === 'unknown' || !result?.state)) {
         if (!current.authActivated) {
           // Several SPAs defer account hydration until their tab becomes visible.
           // Activate this owned test tab once before deciding the form is absent.
@@ -312,11 +325,15 @@ async function authenticateTask(task) {
         if (current.authUnknownSince && Date.now() - current.authUnknownSince > 8_000) return stop('Trang đã tải nhưng chưa nhận diện được form đăng nhập hoặc đúng tài khoản. Cần cập nhật luồng của nền tảng này.');
         if (!current.authUnknownSince) { current = { ...current, authUnknownSince: Date.now() }; await setTask(task.tabId, current); }
       } else if (current.authUnknownSince) { current = { ...current, authUnknownSince: null }; await setTask(task.tabId, current); }
+      if (result?.state === 'noGoogle') {
+        if (!current.authNoGoogleSince) { current = { ...current, authNoGoogleSince: Date.now() }; await setTask(task.tabId, current); }
+        else if (Date.now() - current.authNoGoogleSince > NO_GOOGLE_GRACE_MS) return stop(result.message);
+      } else if (current.authNoGoogleSince) { current = { ...current, authNoGoogleSince: null }; await setTask(task.tabId, current); }
       if (result?.state === 'authenticated') {
         if (task.job.kind === 'LOGIN_CHECK') {
           await report(current, 'AUTHENTICATED', { message: 'Đã xác nhận phiên đăng nhập. Chưa kiểm tra quyền đăng bài.', detectedUsername: result.detectedUsername });
           await setTask(task.tabId, null);
-          try { await chrome.tabs.remove(task.tabId); } catch { /* already closed */ }
+          await closeLoginCheckTabs(task.tabId, current.authTabId);
           return false;
         }
         if (tabId !== task.tabId || !current.authReturning) {
@@ -335,7 +352,7 @@ async function authenticateTask(task) {
         return stop('Chrome đang đăng nhập tài khoản khác. Kiểm tra hồ sơ đã gán trên web; chưa điền hoặc đăng bài.', 'ACCOUNT_MISMATCH', false, false, result.detectedUsername);
       } else if (result?.state === 'challenge') {
         return stop(result.message, 'AUTH_REQUIRED', false, result.googleBlocked === true);
-      } else if (['identifier', 'password', 'totp', 'google', 'chooser', 'alternate', 'totpChoice', 'openLogin', 'sso', 'accountMenu'].includes(result?.state)) {
+      } else if (['identifier', 'password', 'totp', 'google', 'chooser', 'alternate', 'totpChoice', 'openLogin', 'sso', 'accountMenu', 'usePassword'].includes(result?.state)) {
         if (!task.job.auth.autoLogin && result.state !== 'accountMenu') return stop('Chưa nhận diện được phiên sẵn có và tài khoản này chưa bật tự đăng nhập hoặc còn thiếu thông tin xác thực.');
         const attempted = current.authSteps?.[result.state];
         if (attempted && Date.now() - attempted > 15_000) return stop(result.state === 'accountMenu'

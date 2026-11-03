@@ -1,5 +1,18 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.8.1: kiểm tra đăng nhập gọn và đúng hơn
+
+- **Kiểm tra đăng nhập xong là đóng tab**, kể cả popup đăng nhập Google, dù thành công hay cần thao tác. Kết quả xem
+  trên web; nút **Hướng dẫn kết nối → Mở nền tảng** mở lại trang khi cần đăng nhập tay.
+- **Nhận đúng tài khoản dù tên hiển thị khác chữ hoa / dấu / ký tự** ("VPSTTT Group" khớp `vpsttt_group`), và khi link hồ
+  sơ của tài khoản đang đăng nhập trùng URL hồ sơ đã khai (không phân biệt hoa thường). Tài khoản khác hẳn vẫn bị báo
+  "Chrome đang đăng nhập tài khoản khác".
+- **Trang chỉ hỏi email (Substack…)**: tài khoản đăng nhập bằng mật khẩu được tự bấm "Sign in with password" rồi điền
+  email + mật khẩu. Tài khoản đăng nhập bằng Google mà trang không có nút Google thì báo rõ sau vài giây (không đứng im
+  tới hết giờ); tiện ích không bao giờ điền mật khẩu Google vào form của nền tảng.
+- Link không có địa chỉ trên trang không còn làm bước đăng nhập dừng ngầm tới hết giờ.
+- Nạp lại extension trong `chrome://extensions` để dùng bản 1.8.1.
+
 ## Bản 1.8.0: AI tìm ô / nút khi giao diện mạng xã hội đổi
 
 Cần backend 1.5.0 trở lên và bật `EXTENSION_UI_RECOVERY_ENABLED=true`; tắt thì tiện ích chạy như bản 1.7.6.

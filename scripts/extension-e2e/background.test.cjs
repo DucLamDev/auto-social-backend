@@ -68,7 +68,8 @@ function setup({ nextJobDelay = 60_000 } = {}) {
   };
   const source = fs.readFileSync(path.join(__dirname, '../../browser-extension/background.js'), 'utf8')
     .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery)\.js';\r?\n/gm, '')
-    .replace(/const NEXT_JOB_DELAY_MS = [\d_]+;/, `const NEXT_JOB_DELAY_MS = ${nextJobDelay};`);
+    .replace(/const NEXT_JOB_DELAY_MS = [\d_]+;/, `const NEXT_JOB_DELAY_MS = ${nextJobDelay};`)
+    .replace(/const NO_GOOGLE_GRACE_MS = [\d_]+;/, 'const NO_GOOGLE_GRACE_MS = 0;');
   const context = vm.createContext({
     chrome, URL, Date, AbortSignal, setTimeout, clearTimeout,
     canFillPage: function canFillPage() {}, fillAndSubmit: function fillAndSubmit() {}, readErrors: function readErrors() {}, readModeration: function readModeration() {}, readPublishedPost: function readPublishedPost() {},
@@ -775,4 +776,54 @@ test('an opener hint may lead to one more hint for the fields, never a third', a
   assert.equal(state.fills, 3);
   assert.deepEqual(seen[2].recipe.openerSelectors, ['a.compose']);
   assert.equal(state.reports[0].reason, 'EDITOR_NOT_FOUND');
+});
+
+// ---- login checks never leave their tabs behind ---------------------------
+const loginCheck = (auth = {}) => ({ ...job, kind: 'LOGIN_CHECK', auth: { provider: 'password', autoLogin: true, ...auth } });
+
+for (const [label, authResult, outcome] of [
+  ['a confirmed login', { state: 'authenticated', url: 'https://forum.test/', detectedUsername: 'alice' }, 'AUTHENTICATED'],
+  ['another signed-in account', { state: 'mismatch', url: 'https://forum.test/', detectedUsername: 'bob' }, 'NEEDS_ACTION'],
+  ['a challenge', { state: 'challenge', url: 'https://forum.test/', message: 'CAPTCHA' }, 'NEEDS_ACTION'],
+]) test(`a login check that ends with ${label} closes its tab and sign-in popup`, async () => {
+  const { state, worker } = setup();
+  state.authResult = authResult;
+  await worker.authenticateTask({ tabId: 8, authTabId: 9, job: loginCheck() });
+  assert.equal(state.reports[0].outcome, outcome);
+  assert.deepEqual([...(state.closedTabs ?? [])].sort(), [8, 9]);
+  assert.equal(Object.keys(await worker.getTasks()).length, 0);
+});
+
+test('a Google account on a page with only the site form is reported quickly, not after the deadline', async () => {
+  const { state, worker } = setup();
+  state.authResult = { state: 'noGoogle', url: 'https://substack.com/sign-in', message: 'Trang đăng nhập không có nút đăng nhập bằng Google.' };
+  const started = Date.now();
+  await worker.authenticateTask({ tabId: 8, job: loginCheck({ provider: 'google' }) });
+  assert.ok(Date.now() - started < 5_000);
+  assert.equal(state.reports[0].outcome, 'NEEDS_ACTION');
+  assert.match(state.reports[0].message, /không có nút đăng nhập bằng Google/);
+  assert.deepEqual(state.closedTabs, [8]);
+  assert.ok(!state.injections.some(injection => ['identifier', 'password'].includes(injection.args?.[0]?.action)), 'no credential step is attempted');
+});
+
+test('a page step that returns nothing counts as an unrecognized page instead of a silent wait', async () => {
+  const { state, worker } = setup();
+  state.authResult = undefined;
+  await worker.authenticateTask({ tabId: 8, authActivated: true, authUnknownSince: Date.now() - 9_000, job: loginCheck() });
+  assert.equal(state.reports[0].outcome, 'NEEDS_ACTION');
+  assert.match(state.reports[0].message, /chưa nhận diện được form đăng nhập/);
+  assert.deepEqual(state.closedTabs, [8]);
+});
+
+test('"Sign in with password" is clicked before the password step, without asking for a secret first', async () => {
+  const { state, worker } = setup();
+  let switched = false;
+  state.authResult = ({ action }) => {
+    if (action === 'usePassword') { switched = true; return { state: 'submitted', url: 'https://substack.com/sign-in' }; }
+    return switched ? { state: 'authenticated', url: 'https://substack.com/' } : { state: 'usePassword', url: 'https://substack.com/sign-in' };
+  };
+  await worker.authenticateTask({ tabId: 8, job: loginCheck() });
+  assert.ok(state.injections.some(injection => injection.args?.[0]?.action === 'usePassword'));
+  assert.equal(state.injections.find(injection => injection.args?.[0]?.action === 'usePassword').args[0].payload, undefined);
+  assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
 });

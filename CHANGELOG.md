@@ -1,6 +1,16 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.6.1 · 03/11/2026
+### Sửa lỗi
+- Kiểm tra đăng nhập hàng loạt đóng tab, nhận đúng tài khoản và không đứng im (tiện ích 1.8.1)
+  Kiểm tra xong (thành công hay cần thao tác) là đóng tab và popup Google. Tài khoản đã đăng nhập không còn bị báo "Cần
+  thao tác" chỉ vì tên hiển thị khác chữ hoa, dấu hay ký tự so với handle trong URL hồ sơ. Trang chỉ hỏi email như
+  Substack: tài khoản mật khẩu được tự bấm "Sign in with password"; tài khoản Google mà trang không có nút Google được
+  báo rõ ngay thay vì để trống tới hết giờ.
+- Bỏ "Google dùng chung" khi nhập file tài khoản
+  Mỗi dòng giờ đăng nhập bằng đúng email, mật khẩu và mã 2FA của chính dòng đó, vì các social trong một file thường dùng
+  nhiều tài khoản Google khác nhau. API nhập file chỉ còn nhận file và Chrome đã chọn.
 ## 1.6.0 · 03/11/2026
 ### Tính năng
 - Tiện ích Chrome nhờ AI tìm ô / nút khi giao diện mạng xã hội đổi (bản 1.8.0)
