@@ -11,6 +11,6 @@ import { CampaignAutomationWorkerService } from './campaign-automation-worker.se
   imports: [AiModule, AuditModule],
   controllers: [CampaignsController],
   providers: [CampaignsService, CampaignStatusService, CampaignAutomationService, CampaignAutomationWorkerService],
-  exports: [CampaignStatusService],
+  exports: [CampaignStatusService, CampaignsService, CampaignAutomationService],
 })
 export class CampaignsModule {}

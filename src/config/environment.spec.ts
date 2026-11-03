@@ -115,6 +115,14 @@ describe('validateEnvironment', () => {
     expect(() => validateEnvironment({ ...productionEnvironment(), VPSTTT_AI_RPM: '0' })).toThrow('VPSTTT_AI_RPM');
   });
 
+  it('keeps the MCP endpoint and agent publishing off unless enabled', () => {
+    expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({ MCP_ENABLED: false, MCP_ALLOW_PUBLISH: false, MCP_RATE_LIMIT_PER_MINUTE: 60 });
+    expect(validateEnvironment({ ...productionEnvironment(), MCP_ENABLED: 'true', MCP_ALLOW_PUBLISH: 'false' }))
+      .toMatchObject({ MCP_ENABLED: true, MCP_ALLOW_PUBLISH: false });
+    expect(() => validateEnvironment({ ...productionEnvironment(), MCP_ENABLED: 'yes' })).toThrow('MCP_ENABLED');
+    expect(() => validateEnvironment({ ...productionEnvironment(), MCP_RATE_LIMIT_PER_MINUTE: '601' })).toThrow('MCP_RATE_LIMIT_PER_MINUTE');
+  });
+
   it('uses the legacy OpenAI timeout when AI_TIMEOUT_MS is absent', () => {
     const environment = productionEnvironment();
     delete environment.AI_TIMEOUT_MS;

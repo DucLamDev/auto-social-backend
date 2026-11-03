@@ -10,13 +10,14 @@ import { GlobalExceptionFilter } from './common/filters/global-exception.filter'
 import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor';
 import { RequestContextInterceptor } from './common/interceptors/request-context.interceptor';
 import { setupSwagger } from './swagger';
+import { GLOBAL_PREFIX, GLOBAL_PREFIX_OPTIONS } from './common/global-prefix';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
     logger: loggerLevels(),
   });
-  app.setGlobalPrefix('api/v1', { exclude: ['health', 'ready'] });
+  app.setGlobalPrefix(GLOBAL_PREFIX, GLOBAL_PREFIX_OPTIONS);
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cookieParser());
   app.enableCors({

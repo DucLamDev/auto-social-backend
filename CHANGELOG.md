@@ -1,6 +1,15 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.4.0 · 03/11/2026
+### Tính năng
+- Codex xem và điều phối hệ thống qua MCP
+  Backend có cổng MCP tại /mcp để Codex (hoặc agent khác) làm việc bằng chat: xem tài khoản, tiện ích Chrome đã ghép
+  nối, kết quả kiểm tra đăng nhập, việc đăng bài và chiến dịch; xếp kiểm tra đăng nhập, chạy lại việc lỗi, giao lại
+  việc cho tiện ích, và nhờ AI viết bản nháp chiến dịch (dừng ở chờ duyệt). Cổng tắt sẵn (MCP_ENABLED); token tạo bằng
+  lệnh pnpm mcp:token, chỉ lưu mã băm, có thể chỉ cho xem, đặt hạn và thu hồi. Quyền giống web của chủ token, không trả
+  mật khẩu hay cookie, mọi lệnh ghi được ghi nhật ký. Duyệt và đăng thật qua Codex chỉ có khi bật MCP_ALLOW_PUBLISH.
+  Cần chạy migration mới (mcp_tokens).
 ## 1.3.0 · 03/11/2026
 ### Tính năng
 - Viết bài bằng AI API của IDE công ty (VPSTTT AI)

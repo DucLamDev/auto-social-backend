@@ -14,7 +14,7 @@ export class AuditInterceptor implements NestInterceptor {
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest<AuditRequest>();
-    if (!AuditInterceptor.mutationMethods.has(request.method.toUpperCase())) return next.handle();
+    if (!AuditInterceptor.mutationMethods.has(request.method.toUpperCase()) || request.path === '/mcp') return next.handle();
     const segments = request.path.split('/').filter(Boolean);
     const apiIndex = segments.findIndex((segment) => segment === 'v1');
     const entityIndex = apiIndex >= 0 ? apiIndex + 1 : 0;

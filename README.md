@@ -161,6 +161,33 @@ RabbitMQ console: `http://localhost:15672`
 
 Tài khoản seed lấy từ `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`. Production bắt buộc password riêng dài tối thiểu 12 ký tự và từ chối mật khẩu development mặc định; đặt đúng ngay trước lần seed đầu.
 
+### Codex điều phối hệ thống qua MCP
+
+Backend có endpoint MCP (Model Context Protocol) tại `POST /mcp` (cùng host với API, ngoài tiền tố `api/v1`, không có
+trong Swagger) để Codex hoặc agent khác xem và điều phối hệ thống bằng chat. Mặc định tắt (`MCP_ENABLED=false`).
+
+1. Bật `MCP_ENABLED=true` trong `.env` backend, khởi động lại `api`.
+2. Tạo token trong container API (in ra một lần, chỉ lưu mã băm):
+   `pnpm mcp:token create --email <email ADMIN/EDITOR> --name codex` (thêm `--read-only` nếu chỉ cho xem,
+   `--expires-days 90` để hết hạn). Xem / thu hồi: `pnpm mcp:token list|revoke --email … [--id …]`.
+3. Trên máy chạy Codex, đặt token vào biến môi trường `AUTO_SOCIAL_MCP_TOKEN` và thêm vào `~/.codex/config.toml`:
+
+   ```toml
+   [mcp_servers.auto_social]
+   url = "https://api.example.com/mcp"
+   bearer_token_env_var = "AUTO_SOCIAL_MCP_TOKEN"
+   ```
+
+   hoặc `codex mcp add auto_social --url https://api.example.com/mcp --bearer-token-env-var AUTO_SOCIAL_MCP_TOKEN`.
+
+Công cụ (quyền giống API web của chủ token, chỉ trả dữ liệu không bí mật): `list_accounts`, `list_extension_devices`,
+`list_login_checks`, `queue_login_checks` (ADMIN), `list_publish_jobs`, `get_publish_job`, `retry_publish_job`,
+`requeue_extension_job`, `list_campaigns`, `get_campaign`, `ai_providers`, `create_ai_campaign_draft` (AI viết bài,
+dừng ở chờ duyệt, tối đa 10 lần/giờ). `approve_campaign` (duyệt và đăng thật) chỉ xuất hiện khi `MCP_ALLOW_PUBLISH=true`,
+bắt `confirm: true`, tối đa 5 lần/giờ. Lệnh ghi cần token có quyền `write` và vai trò ADMIN/EDITOR; mọi lệnh ghi, kể cả
+bị từ chối, được ghi `AuditLog` (`MCP_<TÊN_CÔNG_CỤ>`, không lưu tham số). Mỗi token tối đa `MCP_RATE_LIMIT_PER_MINUTE`
+lượt/phút; trình duyệt chỉ gọi được từ origin trong `FRONTEND_URL`.
+
 ## Lệnh chất lượng
 
 Browser publisher có luồng phục hồi CAPTCHA/2FA với người vận hành, persistent profile và OTP nhập ẩn:

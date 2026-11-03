@@ -31,6 +31,9 @@ export interface Environment {
   VPSTTT_AI_TIMEOUT_MS: number;
   VPSTTT_AI_MAX_CONCURRENCY: number;
   VPSTTT_AI_RPM: number;
+  MCP_ENABLED: boolean;
+  MCP_ALLOW_PUBLISH: boolean;
+  MCP_RATE_LIMIT_PER_MINUTE: number;
   S3_ENDPOINT: string;
   S3_PUBLIC_URL: string;
   S3_REGION: string;
@@ -202,6 +205,12 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   if (vpstttAiMaxConcurrency > 32) throw new Error('VPSTTT_AI_MAX_CONCURRENCY must not exceed 32');
   const vpstttAiRpm = parsePositiveInteger(raw.VPSTTT_AI_RPM, 'VPSTTT_AI_RPM', 10);
   if (vpstttAiRpm > 600) throw new Error('VPSTTT_AI_RPM must not exceed 600');
+  // The MCP endpoint for AI agents is off unless explicitly enabled; letting an
+  // agent approve (= really publish) campaigns is a separate opt-in.
+  const mcpEnabled = parseBoolean(raw.MCP_ENABLED, 'MCP_ENABLED', false);
+  const mcpAllowPublish = parseBoolean(raw.MCP_ALLOW_PUBLISH, 'MCP_ALLOW_PUBLISH', false);
+  const mcpRateLimitPerMinute = parsePositiveInteger(raw.MCP_RATE_LIMIT_PER_MINUTE, 'MCP_RATE_LIMIT_PER_MINUTE', 60);
+  if (mcpRateLimitPerMinute > 600) throw new Error('MCP_RATE_LIMIT_PER_MINUTE must not exceed 600');
   const logLevel = typeof raw.LOG_LEVEL === 'string' ? raw.LOG_LEVEL : 'info';
   if (!['error', 'warn', 'info', 'debug', 'verbose'].includes(logLevel)) {
     throw new Error('LOG_LEVEL must be error, warn, info, debug, or verbose');
@@ -269,6 +278,9 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
     VPSTTT_AI_TIMEOUT_MS: vpstttAiTimeoutMs,
     VPSTTT_AI_MAX_CONCURRENCY: vpstttAiMaxConcurrency,
     VPSTTT_AI_RPM: vpstttAiRpm,
+    MCP_ENABLED: mcpEnabled,
+    MCP_ALLOW_PUBLISH: mcpAllowPublish,
+    MCP_RATE_LIMIT_PER_MINUTE: mcpRateLimitPerMinute,
     OPENAI_TIMEOUT_MS: legacyOpenAiTimeoutMs,
   };
 }

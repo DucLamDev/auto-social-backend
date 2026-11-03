@@ -14,6 +14,6 @@ import { AccountImportService } from './account-import.service';
   imports: [CampaignsModule, StorageModule],
   controllers: [ExtensionController, ExtensionAgentController, ExtensionLoginCheckController, ExtensionLoginCheckAgentController, AccountImportController],
   providers: [ExtensionAgentService, ExtensionDeviceGuard, ExtensionAccountSessionService, ExtensionLoginCheckService, AccountImportService],
-  exports: [ExtensionAgentService],
+  exports: [ExtensionAgentService, ExtensionLoginCheckService],
 })
 export class ExtensionAgentModule {}

@@ -140,6 +140,7 @@ model User {
   auditLogs        AuditLog[]            @relation("AuditActor")
   oauthStates      OAuthState[]
   extensionDevices ExtensionDevice[]
+  mcpTokens        McpToken[]
 
   @@map("users")
 }
@@ -580,6 +581,25 @@ model ExtensionDevice {
 
   @@index([ownerId, revokedAt])
   @@map("extension_devices")
+}
+
+/// Bearer tokens for the MCP endpoint used by AI agents (Codex). Only the
+/// SHA-256 of the token is stored; scopes are "read" or "read" + "write".
+model McpToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  ownerId    String    @db.Uuid
+  name       String
+  tokenHash  String    @unique
+  scopes     String[]
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  owner      User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, revokedAt])
+  @@map("mcp_tokens")
 }
 
 /// Authentication-only work. These rows can never become publish jobs.
