@@ -38,11 +38,21 @@ export function movedUrl(url: string): string {
   } catch { return url; }
 }
 
+/**
+ * Sites whose sign-in page lives on another origin, for every account of that
+ * site. Sessions saved without it (an older import, or a form save that dropped
+ * it) still let the login check follow the redirect.
+ */
+export const SITE_LOGIN_ORIGINS: Readonly<Record<string, readonly string[]>> = { 'https://social.vivaldi.net': ['https://login.vivaldi.net'] };
+
 export function sessionOf(settings: unknown): ExtensionSession | undefined {
   const session = object(object(settings).extensionSession);
   if (typeof session.deviceId !== 'string' || typeof session.expectedUsername !== 'string') return undefined;
-  const stored = session as unknown as ExtensionSession;
-  return MOVED_ORIGINS[stored.origin] ? { ...stored, origin: MOVED_ORIGINS[stored.origin]!, loginUrl: movedUrl(stored.loginUrl) } : stored;
+  let stored = session as unknown as ExtensionSession;
+  if (MOVED_ORIGINS[stored.origin]) stored = { ...stored, origin: MOVED_ORIGINS[stored.origin]!, loginUrl: movedUrl(stored.loginUrl) };
+  const siteLogin = SITE_LOGIN_ORIGINS[stored.origin] ?? [];
+  const allowed = stored.allowedOrigins ?? [];
+  return siteLogin.some(origin => !allowed.includes(origin)) ? { ...stored, allowedOrigins: [...new Set([...allowed, ...siteLogin])] } : stored;
 }
 export function sessionScope(settings: unknown): string {
   const loginTarget = object(object(settings).extensionLoginTarget);
@@ -119,9 +129,16 @@ export class ExtensionAccountSessionService {
         if (typeof seed !== 'string' || !seed) throw new BadRequestException('Supply the TOTP setup key or otpauth URL, not a six-digit code');
         try { generateTotp(seed); } catch { throw new BadRequestException('Invalid TOTP setup key or otpauth URL'); }
       }
+      // The form does not edit these: the extra sign-in origins and e-mail identity
+      // matching set at import stay while the account keeps the same site.
+      const previousSession = sessionOf(settings);
+      const kept = previousSession?.origin === target.origin ? {
+        ...(previousSession.allowedOrigins?.length ? { allowedOrigins: previousSession.allowedOrigins } : {}),
+        ...(previousSession.allowIdentityByEmail ? { allowIdentityByEmail: true } : {}),
+      } : {};
       const session: ExtensionSession = { deviceId: dto.deviceId, origin: target.origin, expectedUsername: dto.expectedUsername.trim(),
         profileUrl, identitySelector: dto.identitySelector?.trim() ?? '', provider: dto.provider,
-        autoLogin: dto.autoLogin, autoTotp: dto.autoLogin && dto.autoTotp, loginUrl, loginUsername: dto.loginUsername?.trim() ?? '' };
+        autoLogin: dto.autoLogin, autoTotp: dto.autoLogin && dto.autoTotp, loginUrl, loginUsername: dto.loginUsername?.trim() ?? '', ...kept };
       // Explicitly configuring a fresh login must clear an older token expiry.
       const secret = dto.autoLogin ? { username: session.loginUsername, ...(typeof password === 'string' ? { password } : {}), ...(session.autoTotp ? { totpSecret: seed } : {}) } : null;
       const methods = { ...object(settings.extensionLoginMethods), [dto.provider]: { available: dto.autoLogin, username: session.loginUsername, loginUrl, autoTotp: session.autoTotp } };

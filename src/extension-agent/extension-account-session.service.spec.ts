@@ -48,6 +48,29 @@ describe('Chrome account sessions', () => {
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the extra sign-in origins and e-mail matching from the import when the form is saved', async () => {
+    const { service, tx } = setup();
+    const imported = { deviceId: 'chrome-old', origin: 'https://forum.test', expectedUsername: 'alice', profileUrl: '', identitySelector: '', provider: 'password',
+      autoLogin: true, autoTotp: false, loginUrl: 'https://forum.test/login', loginUsername: 'alice@example.test', allowedOrigins: ['https://sso.forum.test'], allowIdentityByEmail: true };
+    tx.platformAccount.findFirst.mockResolvedValueOnce({ id: 'account-a', settings: { ...base, extensionSession: imported } });
+    type Saved = [{ data: { settings: { extensionSession: Record<string, unknown> } } }];
+    const savedSession = (call: number) => (tx.platformAccount.update.mock.calls as unknown as Saved[])[call]![0].data.settings.extensionSession;
+    await service.configure(device.ownerId, 'account-a', input);
+    expect(savedSession(0)).toMatchObject({ deviceId: device.id, allowedOrigins: ['https://sso.forum.test'], allowIdentityByEmail: true });
+    // Another site never inherits them.
+    tx.platformAccount.findFirst.mockResolvedValueOnce({ id: 'account-a', settings: { ...base, extensionSession: { ...imported, origin: 'https://other.test' } } });
+    await service.configure(device.ownerId, 'account-a', input);
+    expect(savedSession(1).allowedOrigins).toBeUndefined();
+  });
+
+  it('lets every social.vivaldi.net session follow the sign-in redirect to login.vivaldi.net', () => {
+    const vivaldi = { deviceId: 'chrome-a', expectedUsername: 'vpsttt', origin: 'https://social.vivaldi.net', loginUrl: 'https://social.vivaldi.net/auth/sign_in' };
+    expect(sessionOf({ extensionSession: { ...vivaldi, allowedOrigins: [] } })?.allowedOrigins).toEqual(['https://login.vivaldi.net']);
+    expect(sessionOf({ extensionSession: vivaldi })?.allowedOrigins).toEqual(['https://login.vivaldi.net']);
+    expect(sessionOf({ extensionSession: { ...vivaldi, allowedOrigins: ['https://login.vivaldi.net'] } })?.allowedOrigins).toEqual(['https://login.vivaldi.net']);
+    expect(sessionOf({ extensionSession: { ...vivaldi, origin: 'https://mastodon.social' } })?.allowedOrigins).toBeUndefined();
+  });
+
   it('rejects a foreign device, a second identity in the same cookie scope, and reassignment during a claimed job', async () => {
     const { service, tx } = setup();
     tx.extensionDevice.findFirst.mockResolvedValueOnce(null);

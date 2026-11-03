@@ -1,6 +1,15 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.7.1 · 03/11/2026
+### Sửa lỗi
+- Lưu "Phiên Chrome / 2FA" không còn làm mất trang đăng nhập phụ của tài khoản
+  Trước đây sửa mật khẩu trong form làm mất tên miền đăng nhập phụ đã có từ lúc nhập file, nên kiểm tra đăng nhập
+  social.vivaldi.net báo "Trang đăng nhập chuyển sang https://login.vivaldi.net; tên miền này chưa được cấu hình".
+  Nay form giữ các tên miền này và cách nhận tài khoản theo email khi tài khoản vẫn ở cùng trang. Mọi tài khoản
+  social.vivaldi.net, kể cả tài khoản đã bị mất trước đây, tự nhận login.vivaldi.net, không cần nhập lại. Sau khi cập
+  nhật, mở Cài đặt tiện ích và cấp quyền thêm cho `https://login.vivaldi.net` nếu được hỏi.
+
 ## 1.7.0 · 03/11/2026
 ### Tính năng
 - AI tạo ảnh riêng cho từng kênh cần ảnh khi tạo nội dung (VPSTTT AI, tiện ích 1.9.0)
