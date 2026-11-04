@@ -53,6 +53,37 @@ type ConnectedAccount = {
   };
 };
 
+/** Why a selected account cannot receive a post right now. */
+type AccountBlocker = 'DISABLED' | 'NOT_CONNECTED' | 'PLATFORM_DISABLED' | 'UNSUPPORTED' | 'MANUAL_SUBMIT' | 'NO_BROWSER_SESSION';
+
+const ACCOUNT_BLOCKER_LABELS: Record<AccountBlocker, string> = {
+  DISABLED: 'tài khoản đang tắt',
+  NOT_CONNECTED: 'chưa kết nối, cần đăng nhập lại',
+  PLATFORM_DISABLED: 'nền tảng đang tắt',
+  UNSUPPORTED: 'nền tảng này chưa đăng tự động được',
+  MANUAL_SUBMIT: 'chưa bật "Tự bấm Đăng"',
+  NO_BROWSER_SESSION: 'chưa có phiên đăng nhập trình duyệt',
+};
+
+type ReviewAccount = ConnectedAccount & { name: string; platform: ConnectedAccount['platform'] & { name: string } };
+
+/** A campaign account left out of an approval, with the reason shown to the reviewer. */
+type SkippedAccount = { id: string; name: string; platform: string; reason: AccountBlocker; reasonLabel: string };
+
+type ReviewOutcome = { skippedAccounts: SkippedAccount[]; waitingVariantIds: string[] };
+
+function skippedAccount(account: ReviewAccount, reason: AccountBlocker): SkippedAccount {
+  return { id: account.id, name: account.name, platform: account.platform.name, reason, reasonLabel: ACCOUNT_BLOCKER_LABELS[reason] };
+}
+
+/** "Chưa có tài khoản nào sẵn sàng…" naming every account of the held platforms and why. */
+function noReadyAccountMessage(blocked: SkippedAccount[]): string {
+  if (!blocked.length) return 'Không còn tài khoản nào của nền tảng này trong chiến dịch. Thêm hoặc kết nối lại tài khoản rồi duyệt lại.';
+  const platforms = [...new Set(blocked.map((account) => account.platform))].join(', ');
+  const reasons = blocked.map((account) => `${account.name} (${account.reasonLabel})`).join('; ');
+  return `Chưa có tài khoản ${platforms} nào sẵn sàng để đăng: ${reasons}. Vào trang Tài khoản kết nối lại hoặc bật tài khoản rồi duyệt lại.`;
+}
+
 type DraftVariant = {
   id: string;
   platformId: string;
@@ -434,7 +465,9 @@ export class CampaignAutomationService {
     // Some platforms were already approved or rejected one by one: approve the rest.
     if (await this.hasDecidedVariants(campaign)) return this.decideVariants(ownerId, id, 'approve', dto);
     const request = campaign.automationRequest as unknown as AutomateCampaignDto;
-    const accounts = await this.loadConnectedAccounts(ownerId, request.platformAccountIds);
+    const { ready: accounts, blocked } = await this.reviewAccounts(ownerId, request.platformAccountIds);
+    // An account went offline since the run: post with the others, leave it out (or keep its draft waiting).
+    if (blocked.length || accounts.length !== new Set(request.platformAccountIds).size) return this.decideVariants(ownerId, id, 'approve', dto);
     await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.campaign.updateMany({
         where: { id, ownerId, status: CampaignStatus.DRAFT, automationState: 'WAITING_REVIEW' },
@@ -487,6 +520,10 @@ export class CampaignAutomationService {
    * Approves or rejects the drafts still waiting (only `variantId` when given).
    * The review stays open until every platform is decided; it then becomes
    * APPROVED, or REJECTED when nothing was approved.
+   *
+   * Approval posts to the platform's accounts that are ready now and reports
+   * the others. A platform with no ready account keeps its draft waiting
+   * ("approve all"), or fails with the accounts and reasons (one platform).
    */
   private async decideVariants(ownerId: string, id: string, action: 'approve' | 'reject', dto: ApproveAiCampaignDto = {}, variantId?: string, trigger: 'review' | 'auto' = 'review') {
     const scheduledAt = action === 'approve' ? reviewSchedule(dto) : new Date();
@@ -494,14 +531,19 @@ export class CampaignAutomationService {
     if (!REVIEWABLE_STATES.includes(campaign.automationState ?? '')) throw new ConflictException('Campaign is not waiting for review');
     if (variantId && !campaign.automationVariantIds.includes(variantId)) throw new NotFoundException('This draft is not part of the campaign');
     const request = campaign.automationRequest as unknown as AutomateCampaignDto;
-    const accounts = action === 'approve' ? await this.loadConnectedAccounts(ownerId, request.platformAccountIds) : [];
+    const { ready: accounts, blocked } = action === 'approve' ? await this.reviewAccounts(ownerId, request.platformAccountIds) : { ready: [], blocked: [] };
+    const outcome: ReviewOutcome = { skippedAccounts: [], waitingVariantIds: [] };
     let publishDraft = false;
     await this.prisma.$transaction(async (tx) => {
       // Serializes decisions on one campaign so a draft never gets two sets of jobs.
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 7311))::text`;
       const current = await tx.campaign.findFirst({ where: { id, ownerId, automationState: { in: REVIEWABLE_STATES } } });
       if (!current) throw new ConflictException('Campaign review has already changed');
+
       const undecidedDrafts = await tx.contentVariant.findMany({
+
+      let pending = await tx.contentVariant.findMany({
+
         where: { id: { in: variantId ? [variantId] : current.automationVariantIds }, contentId: current.contentId, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
       });
       if (!undecidedDrafts.length) throw new ConflictException(variantId ? 'This draft was already approved or rejected' : 'No draft is waiting for review');
@@ -509,12 +551,20 @@ export class CampaignAutomationService {
       const pending = action === 'approve' ? undecidedDrafts.filter((variant) => !imagePending(variant.mediaRecommendation)) : undecidedDrafts;
       if (!pending.length) throw new ConflictException(variantId ? 'Ảnh của bài này đang được tạo; duyệt khi ảnh xong.' : 'Chưa có bài nào sẵn sàng: các bài còn chờ đang được tạo ảnh.');
       if (action === 'approve') {
-        for (const variant of pending) {
-          if (!variant.body.trim()) throw new ConflictException('A draft is empty. Edit it before approving.');
-          if (!accounts.some((account) => account.platformId === variant.platformId)) {
-            throw new ConflictException('No connected account is left for this platform. Reconnect it before approving.');
-          }
+        const approvable = pending.filter((variant) => accounts.some((account) => account.platformId === variant.platformId));
+        const held = pending.filter((variant) => !approvable.includes(variant));
+        if (!approvable.length) {
+          const heldPlatforms = new Set(held.map((variant) => variant.platformId));
+          throw new ConflictException(noReadyAccountMessage(blocked.filter((account) => heldPlatforms.has(account.platformId))));
         }
+        for (const variant of approvable) {
+          if (!variant.body.trim()) throw new ConflictException('A draft is empty. Edit it before approving.');
+        }
+        const approvedPlatforms = new Set(approvable.map((variant) => variant.platformId));
+        outcome.skippedAccounts = blocked.filter((account) => approvedPlatforms.has(account.platformId))
+          .map(({ id: accountId, name, platform, reason, reasonLabel }) => ({ id: accountId, name, platform, reason, reasonLabel }));
+        outcome.waitingVariantIds = held.map((variant) => variant.id);
+        pending = approvable;
         await tx.contentVariant.updateMany({ where: { id: { in: pending.map((variant) => variant.id) } }, data: { status: VariantStatus.APPROVED } });
         for (const variant of pending) {
           for (const account of accounts.filter((item) => item.platformId === variant.platformId)) {
@@ -551,7 +601,14 @@ export class CampaignAutomationService {
     });
     await this.audit.recordBestEffort({
       actorId: ownerId, action: action === 'approve' ? 'CAMPAIGN_AI_APPROVED' : 'CAMPAIGN_AI_REJECTED', entityType: 'campaigns', entityId: id,
+
       after: { variantId: variantId ?? null, scope: variantId ? 'platform' : 'remaining', trigger },
+      after: {
+        variantId: variantId ?? null, scope: variantId ? 'platform' : 'remaining',
+        ...(outcome.skippedAccounts.length ? { skippedAccountIds: outcome.skippedAccounts.map((account) => account.id) } : {}),
+        ...(outcome.waitingVariantIds.length ? { waitingVariantIds: outcome.waitingVariantIds } : {}),
+      },
+
     });
     if (publishDraft) {
       try { await this.campaigns.publish(ownerId, id); }
@@ -560,7 +617,7 @@ export class CampaignAutomationService {
         if (!(error instanceof ConflictException)) throw error;
       }
     }
-    return this.result(ownerId, id);
+    return this.result(ownerId, id, outcome);
   }
 
   async retry(ownerId: string, id: string) {
@@ -643,40 +700,16 @@ export class CampaignAutomationService {
     if (found.length !== accountIds.length) {
       throw new BadRequestException('Every selected account must belong to you and be enabled, connected, and ready');
     }
-    // Extension delivery makes any forum automatic, including catalog MANUAL platforms.
-    const unsupported = found.filter((account) => !AUTOMATION_PLATFORM_MODES.has(account.platform.mode) && !isExtensionDelivery(account.settings));
+    const blockers = await Promise.all(found.map((account) => this.automationBlocker(account)));
+    const blockedSlugs = (reason: AccountBlocker) => found.filter((_, index) => blockers[index] === reason).map((account) => account.platform.slug);
+    const unsupported = blockedSlugs('UNSUPPORTED');
     if (unsupported.length) {
-      throw new BadRequestException(
-        `Automatic publishing is unavailable for: ${unsupported.map((account) => account.platform.slug).join(', ')}`,
-      );
+      throw new BadRequestException(`Automatic publishing is unavailable for: ${unsupported.join(', ')}`);
     }
-    const browserNotReady: string[] = [];
-    for (const account of found) {
-      if (isExtensionDelivery(account.settings) && (account.settings as Record<string, unknown>).extensionAutoSubmit === false) {
-        throw new BadRequestException('Enable automatic submission for every selected Chrome account before one-click publishing');
-      }
-      if (account.platform.mode !== PlatformMode.BROWSER_ASSISTED || isExtensionDelivery(account.settings)) continue;
-      const settings = account.settings !== null
-        && typeof account.settings === 'object'
-        && !Array.isArray(account.settings)
-        ? account.settings as Record<string, unknown>
-        : {};
-      const policyReady = settings.automationPermissionAttested === true
-        && settings.browserAutoSubmit === true;
-      const credentialActive = account.credential?.status === CredentialStatus.ACTIVE
-        && (!account.credential.expiresAt || account.credential.expiresAt.getTime() > Date.now());
-      let sessionReady = false;
-      if (policyReady && credentialActive && this.credentials) {
-        try {
-          sessionReady = hasUsableBrowserStorageState(await this.credentials.resolve(account.id));
-        } catch {
-          sessionReady = false;
-        }
-      }
-      if (!policyReady || !credentialActive || !sessionReady) {
-        browserNotReady.push(account.platform.slug);
-      }
+    if (blockedSlugs('MANUAL_SUBMIT').length) {
+      throw new BadRequestException('Enable automatic submission for every selected Chrome account before one-click publishing');
     }
+    const browserNotReady = blockedSlugs('NO_BROWSER_SESSION');
     if (browserNotReady.length) {
       throw new BadRequestException(
         `Browser automation requires a captured login session, permission attestation, and auto-submit for: ${browserNotReady.join(', ')}`,
@@ -684,6 +717,70 @@ export class CampaignAutomationService {
     }
     const byId = new Map(found.map((account) => [account.id, account]));
     return accountIds.map((id) => byId.get(id)!);
+  }
+
+  /**
+   * The campaign's accounts at review time, split into those that can take a
+   * post now and those left out (with the reason). Unlike loadConnectedAccounts
+   * this never throws: one account needing a new login must not block the rest.
+   * Accounts deleted since the campaign was created are simply gone.
+   */
+  private async reviewAccounts(ownerId: string, accountIds: string[]): Promise<{ ready: ReviewAccount[]; blocked: (SkippedAccount & { platformId: string })[] }> {
+    const ids = [...new Set(accountIds)];
+    const found = await this.prisma.platformAccount.findMany({
+      where: { id: { in: ids }, ownerId },
+      select: {
+        id: true,
+        name: true,
+        platformId: true,
+        settings: true,
+        enabled: true,
+        status: true,
+        credential: { select: { status: true, expiresAt: true } },
+        platform: true,
+      },
+    });
+    const byId = new Map(found.map((account) => [account.id, account]));
+    const ready: ReviewAccount[] = [];
+    const blocked: (SkippedAccount & { platformId: string })[] = [];
+    for (const id of ids) {
+      const account = byId.get(id);
+      if (!account) continue;
+      const reason: AccountBlocker | null = !account.enabled ? 'DISABLED'
+        : account.status !== AccountStatus.CONNECTED ? 'NOT_CONNECTED'
+          : !account.platform.enabled ? 'PLATFORM_DISABLED'
+            : await this.automationBlocker(account);
+      if (reason) blocked.push({ ...skippedAccount(account, reason), platformId: account.platformId });
+      else ready.push(account);
+    }
+    return { ready, blocked };
+  }
+
+  /** What still stops a connected, enabled account from posting automatically. */
+  private async automationBlocker(account: ConnectedAccount): Promise<AccountBlocker | null> {
+    const extension = isExtensionDelivery(account.settings);
+    // Extension delivery makes any forum automatic, including catalog MANUAL platforms.
+    if (!AUTOMATION_PLATFORM_MODES.has(account.platform.mode) && !extension) return 'UNSUPPORTED';
+    const settings = account.settings !== null
+      && typeof account.settings === 'object'
+      && !Array.isArray(account.settings)
+      ? account.settings as Record<string, unknown>
+      : {};
+    if (extension) return settings.extensionAutoSubmit === false ? 'MANUAL_SUBMIT' : null;
+    if (account.platform.mode !== PlatformMode.BROWSER_ASSISTED) return null;
+    const policyReady = settings.automationPermissionAttested === true
+      && settings.browserAutoSubmit === true;
+    const credentialActive = account.credential?.status === CredentialStatus.ACTIVE
+      && (!account.credential.expiresAt || account.credential.expiresAt.getTime() > Date.now());
+    let sessionReady = false;
+    if (policyReady && credentialActive && this.credentials) {
+      try {
+        sessionReady = hasUsableBrowserStorageState(await this.credentials.resolve(account.id));
+      } catch {
+        sessionReady = false;
+      }
+    }
+    return policyReady && credentialActive && sessionReady ? null : 'NO_BROWSER_SESSION';
   }
 
   /**
@@ -903,7 +1000,7 @@ export class CampaignAutomationService {
     return this.result(ownerId, campaign.id);
   }
 
-  private async result(ownerId: string, campaignId: string) {
+  private async result(ownerId: string, campaignId: string, review?: ReviewOutcome) {
     const [campaign, content] = await Promise.all([
       this.campaigns.get(ownerId, campaignId),
       this.prisma.content.findFirstOrThrow({ where: { ownerId, campaigns: { some: { id: campaignId } } } }),
@@ -915,6 +1012,7 @@ export class CampaignAutomationService {
       generatedVariants: campaign.automationVariantIds?.length || new Set(targetList.map((target) => target.contentVariantId)).size,
       jobsCreated: targetList.reduce((total, target) => total + target.publishJobs.length, 0),
       activated: campaign.status !== CampaignStatus.DRAFT,
+      ...review,
     };
   }
 
