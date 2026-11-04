@@ -2,6 +2,7 @@ import { Injectable, Optional } from '@nestjs/common';
 import { PlatformMode } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { ErrorCode } from '../../common/exceptions/application.exception';
+import { checkTextLength, postLengthMessage } from '../../platforms/post-length';
 import { StorageService } from '../../storage/storage.service';
 import { ConnectorError } from '../core/connector-error';
 import { HttpConnectorBase } from '../core/http-connector.base';
@@ -27,7 +28,10 @@ export class XConnector extends HttpConnectorBase implements SocialPublisher {
   }
 
   validate(post: PostPayload): Promise<void> {
-    if (!post.body.trim() || post.body.length > 280) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, 'X post must contain 1-280 characters', false);
+    if (!post.body.trim()) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, 'X post must contain 1-280 characters', false);
+    // X's weighted count: links are 23, letters with Vietnamese diacritics 2.
+    const length = checkTextLength(this.platform, post.body);
+    if (length.over) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, postLengthMessage('X', length), false);
     if (post.media?.some((media) => media.type !== 'image')) throw new ConnectorError(ErrorCode.PLATFORM_MEDIA_INVALID, 'X posts from this connector support images only', false);
     if ((post.media?.length ?? 0) > 1) throw new ConnectorError(ErrorCode.PLATFORM_MEDIA_INVALID, 'X posts from this connector support one image', false);
     return Promise.resolve();

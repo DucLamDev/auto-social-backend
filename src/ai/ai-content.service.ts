@@ -7,8 +7,9 @@ import { z } from 'zod';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
 import { repairEscapedNewlines } from '../common/utils/escaped-text';
-import { PlatformContract, platformContract } from '../platforms/platform-contract';
-import { markdownToPlain } from '../platforms/post-text';
+import { countChars, PlatformContract, platformContract } from '../platforms/platform-contract';
+import { markdownToPlain, publishedLength, sourceLine } from '../platforms/post-text';
+import { checkPostLength, contractFor, fitToLimit } from '../platforms/post-length';
 import { extensionFlowForPlatform } from '../connectors/extension/extension-flows';
 import { tagStyle } from '../connectors/extension/extension-tags';
 import { BrandProfile, brandProfileBlock, BrandProfileService } from './brand-profile.service';
@@ -185,6 +186,35 @@ function revisionBrief(revision: DraftRevision): string {
   ].filter(Boolean).join('\n\n');
 }
 
+/**
+ * The one "shorten only" request made when the best draft is still over the
+ * limit after the rewrites: the exact numbers, and nothing else to change.
+ */
+export function shortenBrief(draft: DraftForCheck, contract: PlatformContract, length: number, canonicalUrl?: string | null): string {
+  const maxChars = contract.maxChars ?? length;
+  const source = sourceLineCost(contract, canonicalUrl);
+  const budget = maxChars - (source?.length ?? 0);
+  return [
+    `Shorten your draft for ${contract.name}. As published it has ${length} characters; the limit is ${maxChars}. Cut at least ${length - maxChars} characters, aiming for about ${Math.floor(maxChars * 0.9)} in total.`,
+    source ? `The source line "${source.line}" (${source.length} characters) is added below the body automatically, so the body with its hashtags must stay within ${budget} characters; do not repeat that link in the body.` : '',
+    `Hashtags and links count toward the limit.${COUNTING_RULES[contract.counting]}${contract.hashtagMode === 'inline' ? ` Keep at most ${contract.maxHashtags} hashtags, fewer if needed.` : ''}`,
+    'Only shorten: keep the meaning, the key facts, the language and the tone. Remove filler, repetition and secondary details first; add nothing new. Return the complete shortened post.',
+    `Draft:\n${JSON.stringify({ title: draft.title, body: draft.body, hashtags: draft.hashtags })}`,
+  ].filter(Boolean).join('\n\n');
+}
+
+type Assessment = {
+  passed: boolean;
+  issues: string[];
+  review: ContentReview | null;
+  /** Characters the destination counts; 0 when it has no limit. */
+  length: number;
+  overLimit: boolean;
+};
+
+/** How an over-limit draft was brought within its limit: by the writer, or cut by the machine. */
+type Shortening = 'writer' | 'cut' | null;
+
 const LANGUAGE_NAMES = { vi: 'Vietnamese', en: 'English' } as const;
 
 const FORMAT_RULES = {
@@ -193,20 +223,43 @@ const FORMAT_RULES = {
   html: 'simple HTML: <h2>, <h3>, <p>, <ul>, <ol>, <li>, <a>, <strong>, <em>, <code>. No Markdown.',
 } as const;
 
+const COUNTING_RULES = {
+  graphemes: '',
+  x: ' On X, letters with Vietnamese diacritics count as two characters and every link, also a bare domain such as example.com, counts as 23.',
+  mastodon: ' On Mastodon every link counts as 23 characters, however long.',
+} as const;
+
+/** What the source line the system adds under the post costs: the line and the blank line before it. */
+function sourceLineCost(contract: PlatformContract, canonicalUrl?: string | null): { line: string; length: number } | null {
+  if (!canonicalUrl) return null;
+  const line = sourceLine(contract.language, canonicalUrl);
+  return { line, length: countChars(`\n\n${line}`, contract.counting) };
+}
+
 /** Rules derived from the destination; appended to the stored prompt so they always apply. */
-export function contractInstructions(contract: PlatformContract): string {
+export function contractInstructions(contract: PlatformContract, canonicalUrl?: string | null): string {
   const hashtags = {
     inline: `put at most ${contract.maxHashtags} relevant hashtags inside the body (at the end or naturally in a sentence) and list the same tags without # in "hashtags".`,
     appended: `do not put hashtags in the body; list at most ${contract.maxHashtags} in "hashtags" without #, they are appended automatically.`,
     tags: `do not put hashtags in the body; "hashtags" holds at most ${contract.maxHashtags} topic tags without #.`,
   }[contract.hashtagMode];
   const style = contract.hashtagMode === 'tags' ? tagStyle(extensionFlowForPlatform(contract.slug)?.engine) : undefined;
+  const source = sourceLineCost(contract, canonicalUrl);
+  // The body gets what the source line leaves of the limit.
+  const budget = contract.maxChars ? contract.maxChars - (source?.length ?? 0) : 0;
   return [
     `Destination contract for ${contract.name} (mandatory):`,
     `- Write every field in ${LANGUAGE_NAMES[contract.language]}. If the brief is in another language, convey its meaning naturally; never mix languages.`,
     `- Body format: ${FORMAT_RULES[contract.format]}`,
     contract.maxChars
-      ? `- Hard limit: the published body, including hashtags and links, must be at most ${contract.maxChars} characters; aim for about ${Math.floor(contract.maxChars * 0.85)}.${contract.counting === 'x' ? ' On X, letters with Vietnamese diacritics count as two characters and every link counts as 23.' : ''}`
+      ? [
+        `- Hard limit: the published post, including hashtags and links, must be at most ${contract.maxChars} characters.`,
+        source
+          ? ` The system adds the line "${source.line}" below the body (${source.length} characters with the blank line before it), so the body with its hashtags gets at most ${budget} characters; do not repeat that link in the body.`
+          : '',
+        ` Aim for about ${Math.floor(budget * 0.85)} characters in the body.`,
+        COUNTING_RULES[contract.counting],
+      ].join('')
       : '',
     `- Hashtags: ${hashtags}${style ? ` Tag format: ${style}.` : ''}`,
     contract.titleRequired
@@ -629,21 +682,24 @@ export class AiContentService {
       revision?.instruction ? `The operator's instructions still apply: ${revision.instruction}` : '',
       revision?.chosenNotes?.length ? `The fixes the operator chose still apply: ${revision.chosenNotes.join('; ')}` : '',
     ].filter(Boolean).map((line) => `\n- ${line}`).join('');
+    const rank = (candidate: Assessment) => draftRank(candidate.passed, candidate.review, candidate.issues, candidate.overLimit);
     for (let rewrite = 0; rewrite < QUALITY_MAX_REWRITES && !assessment.passed; rewrite += 1) {
       draft = await write(`${rewriteFeedback(assessment.issues, assessment.review)}${standing}`);
       assessment = await this.assess(provider, draft, contract, content, brand);
-      if (draftRank(assessment.passed, assessment.review, assessment.issues) >= draftRank(best.assessment.passed, best.assessment.review, best.assessment.issues)) {
-        best = { draft, assessment };
-      }
+      if (rank(assessment) >= rank(best.assessment)) best = { draft, assessment };
     }
-    ({ draft, assessment } = best);
+    const fitted = await this.fitDraft(write, platform, contract, best.draft, best.assessment, content.canonicalUrl);
+    ({ draft, assessment } = fitted);
+    const { shortened } = fitted;
     // A revision keeps the post's current image; only new drafts get one designed.
     if (image && !revision) draft = { ...draft, media: await this.directImage(provider, contract, draft, content, brand, image) };
     const hashtags = [...new Set(draft.hashtags.map((tag) => tag.trim().replace(/^#+/, '')).filter(Boolean))];
     const scoreText = assessment.review ? `AI chấm ${assessment.review.score}/10` : 'AI chưa chấm được';
-    const recommended = assessment.passed && draft.recommended;
+    // A machine cut may have dropped the post's ending: a person reads it first.
+    const recommended = assessment.passed && draft.recommended && shortened !== 'cut';
     const problems = [
       ...(!draft.recommended ? [`AI đánh giá không hợp nơi đăng: ${draft.reason}`] : []),
+      ...(shortened === 'cut' ? ['Máy đã cắt bớt phần cuối bài, đọc lại trước khi duyệt'] : []),
       ...assessment.issues,
       ...(assessment.review && !reviewPassed(assessment.review) ? assessment.review.unsupportedClaims.map((claim) => `Thông tin chưa có căn cứ: ${claim}`) : []),
       ...(assessment.review && !reviewPassed(assessment.review) ? assessment.review.issues : []),
@@ -651,6 +707,7 @@ export class AiContentService {
     const reason = recommended
       ? `${draft.reason} (${scoreText})`
       : `Cần xem lại (${scoreText}): ${[...new Set(problems)].join('; ') || `điểm dưới ${QUALITY_PASS_SCORE}/10`}`;
+    const note = shortened ? ` · đã rút gọn tự động để vừa ${contract.maxChars} ký tự` : '';
     return {
       ...draft,
       // A planned image is created after the post is saved: until then the
@@ -658,8 +715,57 @@ export class AiContentService {
       media: image && !revision ? { ...draft.media, status: 'pending' } : draft.media,
       hashtags: contract.hashtagMode === 'inline' ? hashtags : hashtags.slice(0, contract.maxHashtags),
       recommended,
-      reason: reason.slice(0, MAX_REASON_LENGTH),
+      // The shortening note is kept even when a long reason is cut.
+      reason: `${reason.slice(0, MAX_REASON_LENGTH - note.length)}${note}`,
     };
+  }
+
+  /**
+   * Never returns a draft over the destination's limit. When the best draft is
+   * still too long after the rewrites, the writer is asked once to only
+   * shorten it, with the exact numbers; if that is still over (or fails), the
+   * post is cut mechanically at the last sentence that fits (fitToLimit).
+   * The editor's score of the longer draft is kept; machine checks are redone.
+   */
+  private async fitDraft(
+    write: (feedback?: string, revisionText?: string) => Promise<GeneratedVariant>,
+    platform: string,
+    contract: PlatformContract,
+    best: GeneratedVariant,
+    assessment: Assessment,
+    canonicalUrl: string | null,
+  ): Promise<{ draft: GeneratedVariant; assessment: Assessment; shortened: Shortening }> {
+    let draft = best;
+    let shortened: Shortening = null;
+    if (assessment.overLimit) {
+      try {
+        const shorter = await write(undefined, shortenBrief(best, contract, assessment.length, canonicalUrl));
+        // Only the text changes; the writer's judgement of fit and the image stay.
+        const candidate = { ...best, title: shorter.title ?? best.title, body: shorter.body, hashtags: shorter.hashtags };
+        const length = publishedLength(candidate, contract, canonicalUrl);
+        if (length < assessment.length) { draft = candidate; shortened = 'writer'; }
+      } catch (error) {
+        this.logger.warn(`AI shortening unavailable for ${contract.slug}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (publishedLength(draft, contract, canonicalUrl) > contract.maxChars!) {
+        draft = { ...draft, ...fitToLimit(draft, contract, canonicalUrl) };
+        shortened = 'cut';
+      }
+    }
+    // Approval counts with the post's own language; a one-character difference
+    // in the source label must not let a post through here and fail there.
+    if (checkPostLength({ ...draft, platformSlug: platform, canonicalUrl }).over) {
+      draft = { ...draft, ...fitToLimit(draft, contractFor({ platformSlug: platform, body: draft.body }), canonicalUrl) };
+      shortened = 'cut';
+    }
+    return { draft, assessment: shortened ? this.recheck(draft, contract, assessment.review, canonicalUrl) : assessment, shortened };
+  }
+
+  /** Machine checks of a shortened draft, keeping the editor's review of the longer one. */
+  private recheck(draft: GeneratedVariant, contract: PlatformContract, review: ContentReview | null, canonicalUrl: string | null): Assessment {
+    const issues = deterministicIssues(draft, contract, canonicalUrl);
+    const length = contract.maxChars ? publishedLength(draft, contract, canonicalUrl) : 0;
+    return { passed: issues.length === 0 && reviewPassedOrMissing(review), issues, review, length, overLimit: Boolean(contract.maxChars) && length > contract.maxChars! };
   }
 
   /**
@@ -758,13 +864,14 @@ export class AiContentService {
     contract: PlatformContract,
     content: SourceContent,
     brand: BrandProfile | null,
-  ): Promise<{ passed: boolean; issues: string[]; review: ContentReview | null }> {
+  ): Promise<Assessment> {
     const issues = deterministicIssues(draft, contract, content.canonicalUrl);
+    const length = contract.maxChars ? publishedLength(draft, contract, content.canonicalUrl) : 0;
     let review: ContentReview | null = null;
     try {
       review = clampReview(await this.withGenerationRetry(() => this.requestStructured(
         provider,
-        reviewInstructions(contract),
+        reviewInstructions(contract, contract.maxChars ? length : undefined),
         [
           `Brief or source (${isBrief(content) ? 'short marketing brief' : 'source content'}):\n${content.body.slice(0, 20_000)}`,
           brandProfileBlock(brand),
@@ -778,7 +885,7 @@ export class AiContentService {
       this.logger.warn(`AI review unavailable for ${contract.slug}: ${error instanceof Error ? error.message : String(error)}`);
     }
     const passed = issues.length === 0 && reviewPassedOrMissing(review);
-    return { passed, issues, review };
+    return { passed, issues, review, length, overLimit: Boolean(contract.maxChars) && length > contract.maxChars! };
   }
 
   private async withGenerationRetry<T>(request: () => Promise<T>): Promise<T> {
@@ -815,7 +922,7 @@ export class AiContentService {
     ].filter(Boolean).join('\n\n');
     const instructions = [
       systemPrompt,
-      options.contract ? contractInstructions(options.contract) : '',
+      options.contract ? contractInstructions(options.contract, content.canonicalUrl) : '',
       options.contract ? qualityInstructions(options.contract, options.engine) : '',
       options.contract ? imageInstructions(options.contract.name, options.image) : '',
     ].filter(Boolean).join('\n\n');

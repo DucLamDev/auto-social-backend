@@ -3,11 +3,41 @@
 export async function fillSocialAndSubmit(job) {
   const { recipe, post, options = {} } = job;
   const engine = recipe.engine;
+  // Second run after the worker applied AI form-fill actions: the title/body and
+  // the configured choices are already in place, only verify and submit.
+  const resume = job.formFillResume === true;
   // Compatibility for already queued recipes on Mastodon's redesigned composer.
   const bodySelectors = engine === 'mastodon' ? ['textarea#composer-text', ...recipe.bodySelectors]
     : engine === 'quora' ? ['[role="dialog"] .doc[contenteditable="true"]', ...recipe.bodySelectors] : recipe.bodySelectors;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const normalize = value => String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+  // Rich editors render Markdown (headings, lists, links) and textareas keep it
+  // raw: compare word sequences, accepting either form of the approved text.
+  const words = text => String(text ?? '').normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const plainMarkdown = text => String(text ?? '')
+    .replace(/^\s*(?:```|~~~).*$/gm, ' ')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}\[[^\]]+\]:\s+\S.*$/gm, ' ')
+    .replace(/<((?:https?|mailto):[^>\s]+)>/gi, '$1')
+    .replace(/<\/?[a-z][^>]*>/gi, ' ')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s*(?:>\s*)+/gm, '')
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, '');
+  const similar = (expected, actual) => {
+    if (!expected.length) return !actual.length;
+    if (actual.length > Math.ceil(expected.length * 1.15)) return false;
+    if (expected.join(' ') === actual.join(' ')) return true;
+    // Longest common subsequence: words that appear in the same order.
+    let previous = new Uint32Array(actual.length + 1), current = new Uint32Array(actual.length + 1);
+    for (const word of expected) {
+      for (let j = 0; j < actual.length; j++) current[j + 1] = word === actual[j] ? previous[j] + 1 : Math.max(previous[j + 1], current[j]);
+      [previous, current] = [current, previous];
+    }
+    return previous[actual.length] >= Math.ceil(expected.length * 0.95);
+  };
+  const holds = (expected, actual) => [plainMarkdown(expected), expected].some(text => similar(words(text), words(actual)));
+  const bodyWords = words(post.body);
+  const startsWithTitle = words(post.title).every((word, index) => bodyWords[index] === word);
   const roots = () => {
     const result = [document];
     for (let i = 0; i < result.length; i++) for (const node of result[i].querySelectorAll('*')) if (node.shadowRoot) result.push(node.shadowRoot);
@@ -54,39 +84,89 @@ export async function fillSocialAndSubmit(job) {
     return null;
   };
   const value = node => normalize(node?.isContentEditable ? node.innerText : node?.value);
-  const write = (node, text) => {
+  const selectAll = node => {
+    // An empty heading/paragraph has no native caret position until it has
+    // a line break (real editors normally render this placeholder themselves).
+    if (!node.childNodes.length) node.append(document.createElement('br'));
+    node.closest('[contenteditable="true"]')?.focus();
+    const selection = window.getSelection(); const range = document.createRange();
+    range.selectNodeContents(node); selection.removeAllRanges(); selection.addRange(range);
+  };
+  // Types line by line so editors receive real paragraph / line-break inputs
+  // instead of one run-on string. The native input events are enough: an extra
+  // synthetic InputEvent made some editors (Lexical) insert the text twice.
+  const typeText = text => {
+    const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+    if (lines.length === 1 && !lines[0]) return document.execCommand('delete');
+    for (let i = 0; i < lines.length; i++) {
+      if (i && !document.execCommand(lines[i - 1] === '' || lines[i] === '' ? 'insertParagraph' : 'insertLineBreak')) return false;
+      if (lines[i] && !document.execCommand('insertText', false, lines[i])) return false;
+    }
+    return true;
+  };
+  const write = (node, text, mode) => {
     if (!enabled(node)) return false;
     node.focus();
     if (node.isContentEditable) {
-      // An empty heading/paragraph has no native caret position until it has
-      // a line break (real editors normally render this placeholder themselves).
-      if (!node.childNodes.length) node.append(document.createElement('br'));
-      node.closest('[contenteditable="true"]')?.focus();
-      const selection = window.getSelection(); const range = document.createRange();
-      range.selectNodeContents(node); selection.removeAllRanges(); selection.addRange(range);
-      if (node.matches('[data-slate-editor="true"], .ck-editor__editable')) {
+      selectAll(node);
+      if (mode !== 'insertText' && node.matches('[data-slate-editor="true"], .ck-editor__editable')) {
         const data = new DataTransfer(); data.setData('text/plain', text);
         const paste = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data });
         node.dispatchEvent(paste);
         if (paste.defaultPrevented) return true;
       }
-      if (!document.execCommand('insertText', false, text)) return false;
-      node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
-    } else {
-      const proto = node.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, 'value').set.call(node, text);
-      node.dispatchEvent(new Event('input', { bubbles: true })); node.dispatchEvent(new Event('change', { bubbles: true }));
+      return typeText(text);
     }
+    const proto = node.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(node, text);
+    node.dispatchEvent(new Event('input', { bubbles: true })); node.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
+  };
+  const escapeHtml = text => String(text ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+  // The body follows recipe.inputMode: `pasteHtml` hands rich editors (Lexical,
+  // ProseMirror…) the rendered HTML with the Markdown as text/plain, replacing
+  // what the editor holds; `insertText` and `value` type plain text.
+  const writeBody = async (node, text) => {
+    if (recipe.inputMode !== 'pasteHtml' || !node.isContentEditable || typeof post.bodyHtml !== 'string' || !post.bodyHtml.trim()) return write(node, text, recipe.inputMode);
+    if (!enabled(node)) return false;
+    const html = text === post.body ? post.bodyHtml : `<p>${escapeHtml(post.title)}</p>${post.bodyHtml}`;
+    node.focus(); selectAll(node);
+    // Editors pick up the DOM selection on the (asynchronous) selectionchange.
+    await sleep(60);
+    const data = new DataTransfer(); data.setData('text/html', html); data.setData('text/plain', text);
+    const paste = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data });
+    node.dispatchEvent(paste);
+    if (paste.defaultPrevented) { await sleep(200); return true; }
+    // No paste handler: a plain contenteditable takes the HTML as it is.
+    selectAll(node);
+    return document.execCommand('insertHTML', false, html) || write(node, text, 'insertText');
   };
   // `missing` names the composer controls that were not found, so the worker
   // can ask the backend AI which visible element to use instead.
   const fail = (message, missing) => ({ status: 'notReady', message, ...(missing ? { missing } : {}) });
   const needs = message => ({ status: 'filled', message });
+  // Another draft is in the composer: the operator saves or clears it first.
+  const draft = message => ({ status: 'draft', message });
+  // The editor was found but does not hold the approved text.
+  const mismatch = message => ({ status: 'contentMismatch', message });
   const captcha = () => (recipe.captchaSelectors ?? []).some(selector => all(selector).some(visible));
-  const expectedBody = engine === 'quora' && post.title ? `${post.title}\n\n${post.body}` : post.body;
+  const finalLabels = {
+    differ: ['Publish'], dzone: ['Submit to Moderation'],
+    stackexchange: ['Post your question', 'Submit to Staging Ground'], lemmy: ['Create', 'Tạo'], discuit: ['Submit', 'Post'], linkedin: ['Post', 'Đăng', 'Đăng bài'],
+    minds: ['Post'],
+    medium: ['Publish now', 'Xuất bản ngay'], substack: ['Publish', 'Publish now'], quora: ['Post', 'Đăng'],
+    reddit: ['Post', 'Đăng'], slideshare: ['Publish'], 'aws-builder': ['Publish', 'Publish article'],
+    tinhte: ['Đăng', 'Đăng bài', 'Đăng bài viết', 'Xuất bản'], pixelfed: ['Post', 'Share', 'Publish', 'Đăng'],
+    mastodon: ['Publish!', 'Publish', 'Post', 'Đăng', 'Đăng bài'], bluesky: ['Post', 'Đăng'], tumblr: ['Post', 'Post now', 'Đăng'], devto: ['Publish', 'Xuất bản'], dailydev: ['Post'],
+  }[engine];
+  // Quora has no title field: the title leads the post unless the body already starts with it.
+  const expectedBody = engine === 'quora' && normalize(post.title) && !startsWithTitle ? `${post.title}\n\n${post.body}` : post.body;
   const beforeUrls = [...new Set(all('a[href]').map(node => node.href))].slice(0, 2000);
   if (location.origin !== job.targetOrigin) return fail('Trang đã chuyển sang tên miền khác; chưa điền hay gửi bài.');
+  // The backend counts the body the way this destination does; never type a post it would cut or refuse.
+  if (post.maxChars != null && typeof post.length === 'number' && post.length > post.maxChars) {
+    return { status: 'tooLong', message: `Nội dung dài ${post.length}/${post.maxChars} ký tự, vượt giới hạn của kênh này. Cần rút gọn trên web.` };
+  }
   if (engine === 'devto' && /your account has been suspended/i.test(document.querySelector('main')?.innerText || document.body.innerText)) {
     return { status: 'restricted', message: 'DEV đã đình chỉ tài khoản này và hạn chế đăng bài. Cần giải quyết với DEV trước khi thử lại.' };
   }
@@ -147,9 +227,9 @@ export async function fillSocialAndSubmit(job) {
       postTab?.click();
     }
     if (!await wait(() => pick(bodySelectors), 10_000)) return fail('Chưa chuyển được Quora sang Create Post; chưa điền hoặc gửi bài.', ['body']);
-    if (!quoraAudienceMatches()) return fail('Bài cá nhân Quora chưa ở chế độ Everyone. Kiểm tra đối tượng xem bài; chưa gửi bài.');
+    if (!quoraAudienceMatches()) return needs('Bài cá nhân Quora chưa ở chế độ Everyone. Chọn Everyone trong tab rồi bấm Giao lại cho tiện ích trên web; chưa điền hay gửi bài.');
     const current = value(pick(bodySelectors)).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
-    if (current && current !== normalize(expectedBody)) return fail('Quora đang có bản nháp khác trong khung soạn. Lưu hoặc đóng bản nháp đó trước khi chạy bài mới.');
+    if (current && !holds(expectedBody, current)) return draft('Quora đang có bản nháp khác trong khung soạn. Lưu hoặc đóng bản nháp đó trong tab rồi bấm Giao lại cho tiện ích trên web; tiện ích không ghi đè bản nháp.');
   }
   // The modal composer names its audience ("My Channel"). The newsfeed's inline
   // "Speak your mind…" composer has no audience picker and posts to the signed-in channel.
@@ -164,9 +244,9 @@ export async function fillSocialAndSubmit(job) {
       open.click(); open.focus?.();
     }
     if (!await wait(() => pick(bodySelectors), 8000)) return fail('Chưa mở được Compose trên Minds.', ['body']);
-    if (!mindsChannelMatches()) return fail('Minds chưa chọn My Channel; chưa điền hoặc gửi bài.');
+    if (!mindsChannelMatches()) return needs('Minds chưa chọn My Channel. Chọn My Channel trong tab rồi bấm Giao lại cho tiện ích trên web; chưa điền hay gửi bài.');
     const current = value(pick(bodySelectors));
-    if (current && current !== normalize(expectedBody)) return fail('Minds đang có bản nháp khác. Chưa ghi đè bản nháp.');
+    if (current && !holds(expectedBody, current)) return draft('Minds đang có bản nháp khác trong khung soạn. Lưu hoặc xoá bản nháp đó trong tab rồi bấm Giao lại cho tiện ích trên web; chưa ghi đè bản nháp.');
   }
   if (engine === 'pixelfed' && !pick(['.compose-modal-component', '#composeModal', 'textarea[placeholder*="caption" i]'])) {
     const open = await wait(() => button(['New Post', 'Create new post', 'Compose', 'Create', 'New post', 'Đăng bài'])
@@ -177,7 +257,7 @@ export async function fillSocialAndSubmit(job) {
     photos?.click();
   }
 
-  if (recipe.requiredMedia) {
+  if (recipe.requiredMedia && !resume) {
     if (job.attachments?.length !== 1) return { status: 'mediaRequired', message: `Luồng này cần đúng một ${recipe.requiredMedia === 'image' ? 'ảnh' : 'file PDF'} đính kèm trên web.` };
     const fileInput = await wait(() => {
       const inputs = all('input[type="file"]').filter(node => !node.disabled);
@@ -216,35 +296,124 @@ export async function fillSocialAndSubmit(job) {
   let { title } = fields;
   const form = body.closest('form');
   if (form && (!title || contains(form, title))) composerForm = form;
+  // Medium's title and body share one contenteditable section.
+  const titleInBody = engine === 'medium' && title && body.contains(title);
   // Check every field before writing any of them, including short-post engines.
-  const bodyText = engine === 'medium' && title && body.contains(title)
+  const bodyText = titleInBody
     ? normalize([...body.children].filter(node => !node.contains(title)).map(node => node.innerText).join(' ')) : value(body);
-  if ((bodyText && bodyText !== normalize(expectedBody)) || (title && value(title) && value(title) !== normalize(post.title))) {
-    return fail('Trình soạn đang chứa bản nháp khác; chưa ghi đè tiêu đề hoặc nội dung.');
+  if ((bodyText && !holds(expectedBody, bodyText)) || (title && value(title) && value(title) !== normalize(post.title))) {
+    return draft('Trình soạn đang chứa bản nháp khác; chưa ghi đè tiêu đề hoặc nội dung. Lưu hoặc xoá bản nháp đó trong tab rồi bấm Giao lại cho tiện ích trên web.');
   }
-  if (title && !write(title, post.title)) return fail('Không điền được tiêu đề.');
-  if (engine === 'medium' && title && body.contains(title)) {
-    // Medium's title and body share a contenteditable section. Preserve the
-    // title block and write only the story paragraph below it.
-    const paragraph = [...body.querySelectorAll('p')].find(node => node !== title && !title.contains(node));
-    if (!paragraph || !write(paragraph, expectedBody)) return fail('Không tìm thấy đoạn nội dung riêng trong editor Medium.');
-  } else if (!write(body, expectedBody)) return fail('Không điền được nội dung.');
-  const summary = pick(['textarea[name="summary"]', 'input[name="summary"]', 'textarea[placeholder*="summary" i]']);
-  if (summary) write(summary, post.summary || post.body.split('\n').find(line => line.trim())?.slice(0, 240) || post.title);
-  if (engine === 'dzone') {
-    const subtitle = pick(['textarea[name="subtitle"]']); if (subtitle) write(subtitle, post.summary || post.title);
-    const meta = pick(['#meta-description-textarea']); if (meta) write(meta, (post.summary || post.title).slice(0, 160));
+
+  const choose = async (name, selectors, openLabels) => {
+    if (!name) return true;
+    let field = pick(selectors);
+    if (!field) { const open = button(openLabels); if (!open) return false; open.click(); field = await wait(() => pick(selectors), 3000); }
+    if (field?.tagName === 'SELECT') {
+      const option = [...field.options].find(item => normalize(item.textContent).toLowerCase() === name.toLowerCase() || item.value === name);
+      if (!option) return false;
+      field.value = option.value; field.dispatchEvent(new Event('change', { bubbles: true }));
+      return field.value === option.value;
+    }
+    if (field && ['INPUT', 'TEXTAREA'].includes(field.tagName)) write(field, name); else field?.click();
+    const row = await wait(() => {
+      const matches = all('[role="option"], [role="radio"], label, li, button').filter(enabled)
+        .filter(node => normalize(node.innerText).toLowerCase() === name.toLowerCase());
+      const deepest = matches.filter(node => !matches.some(other => other !== node && node.contains(other)));
+      return deepest.length === 1 ? deepest[0] : null;
+    }, 5000);
+    if (!row) return false;
+    row.click(); await sleep(300);
+    const apply = button(['Apply', 'Add', 'Save', 'Áp dụng', 'Thêm']); apply?.click();
+    await sleep(300);
+    return all('[aria-selected="true"], [aria-checked="true"], .selected, .tag, .chip, .rs__multi-value, [data-testid*="flair"], button, [role="combobox"]').some(node => visible(node) && normalize(node.innerText).toLowerCase().includes(name.toLowerCase()));
+  };
+  // The post language (Lemmy and similar forms). Not found: left to AI form-fill.
+  const chooseLanguage = async () => {
+    const names = { en: ['en', 'eng', 'english'], vi: ['vi', 'vie', 'vietnamese', 'tiếng việt'] }[post.language];
+    if (!names || !recipe.languageSelectors?.length) return;
+    const field = pick(recipe.languageSelectors);
+    if (!field || !enabled(field)) return;
+    const matches = text => names.includes(normalize(text).toLowerCase());
+    if (field.tagName === 'SELECT') {
+      const selected = field.selectedOptions?.[0];
+      if (selected && (matches(selected.value) || matches(selected.textContent))) return;
+      const option = [...field.options].find(item => !item.disabled && (matches(item.value) || matches(item.textContent)));
+      if (!option) return;
+      field.value = option.value;
+      field.dispatchEvent(new Event('input', { bubbles: true })); field.dispatchEvent(new Event('change', { bubbles: true }));
+      return;
+    }
+    if (matches(field.innerText || field.value)) return;
+    field.click();
+    const row = await wait(() => {
+      const rows = all('[role="option"], .dropdown-item').filter(enabled).filter(node => matches(node.innerText));
+      return rows.length === 1 ? rows[0] : null;
+    }, 3000);
+    if (row) { row.click(); await sleep(250); }
+    else field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+  };
+
+  // Where the post goes is chosen before any text is written: these pickers can
+  // re-render the form, and a missing destination must leave the composer untouched.
+  const formFillOn = job.formFill?.enabled === true && !['medium', 'substack'].includes(engine);
+  if (['lemmy', 'discuit'].includes(engine)) {
+    // Without a configured community, AI form-fill picks one after the text is in place.
+    if (!options.category && !formFillOn) return needs('Cần chọn community đích trong cấu hình tài khoản trên web.');
+    if (options.category && engine === 'discuit') {
+      const input = pick(['.page-new-select input']);
+      if (!input) return needs('Không mở được bộ chọn community.');
+      if (value(input).toLowerCase() !== options.category.toLowerCase()) {
+        if (!write(input, options.category)) return needs('Không mở được bộ chọn community.');
+        const choice = await wait(() => all('.page-new-select-suggest-item').filter(visible).find(n => normalize(n.querySelector('.page-new-select-suggest-name')?.innerText ?? n.innerText).toLowerCase() === options.category.toLowerCase()), 5000);
+        if (!choice) return needs('Community Discuit đã cấu hình không có trong danh sách.');
+        choice.click(); await sleep(250);
+      }
+      if (value(input).toLowerCase() !== options.category.toLowerCase()) return needs('Chưa xác nhận community Discuit.');
+    } else if (options.category) {
+      const open = pick(['#post-community']);
+      if (!open) return needs('Không thấy bộ chọn community Lemmy.');
+      if (!normalize(open.innerText).toLowerCase().includes(options.category.toLowerCase())) {
+        open.click();
+        const search = await wait(() => pick(['#post-community + div input', '.dropdown-menu input', '[role="combobox"] input', 'input[role="combobox"]']), 2000);
+        if (search) write(search, options.category);
+        const row = await wait(() => all('[role="option"], .dropdown-item').filter(visible).find(n => normalize(n.innerText).toLowerCase() === options.category.toLowerCase()), 5000);
+        if (!row) return needs('Không thấy community Lemmy đã chọn.');
+        row.click(); await sleep(250);
+      }
+      if (!normalize(open.innerText).toLowerCase().includes(options.category.toLowerCase())) return needs('Chưa xác nhận community Lemmy.');
+    }
+  }
+  await chooseLanguage();
+
+  if (!resume) {
+    if (title && !write(title, post.title)) return mismatch('Không điền được tiêu đề vào ô tiêu đề đã tìm thấy; chưa gửi bài.');
+    if (titleInBody) {
+      // Preserve the title block and write only the story paragraph below it.
+      const paragraph = [...body.querySelectorAll('p')].find(node => node !== title && !title.contains(node));
+      if (!paragraph) return fail('Không tìm thấy đoạn nội dung riêng trong editor Medium.');
+      if (!await writeBody(paragraph, expectedBody)) return mismatch('Không điền được nội dung vào editor Medium; chưa gửi bài.');
+    } else if (!await writeBody(body, expectedBody)) return mismatch('Không điền được nội dung vào khung soạn đã tìm thấy; chưa gửi bài.');
+    const summary = pick(['textarea[name="summary"]', 'input[name="summary"]', 'textarea[placeholder*="summary" i]']);
+    if (summary) write(summary, post.summary || post.body.split('\n').find(line => line.trim())?.slice(0, 240) || post.title);
+    if (engine === 'dzone') {
+      const subtitle = pick(['textarea[name="subtitle"]']); if (subtitle) write(subtitle, post.summary || post.title);
+      const meta = pick(['#meta-description-textarea']); if (meta) write(meta, (post.summary || post.title).slice(0, 160));
+    }
   }
   await sleep(500);
+  // Same words in the same order (Markdown rendered or raw), not byte-for-byte equality.
   const validContent = () => {
     title = pick(recipe.titleSelectors);
     const currentBody = pick(bodySelectors);
-    return (!recipe.titleSelectors.length || value(title) === normalize(post.title))
-      && (engine === 'medium' ? value(currentBody).includes(normalize(expectedBody)) : value(currentBody) === normalize(expectedBody));
+    if (!currentBody || (recipe.titleSelectors.length && value(title) !== normalize(post.title))) return false;
+    const shown = currentBody.isContentEditable ? currentBody.innerText : currentBody.value;
+    return holds(engine === 'medium' && title && currentBody.contains(title) ? `${post.title}\n\n${expectedBody}` : expectedBody, shown);
   };
-  if (!validContent()) return fail('Editor không giữ đúng tiêu đề/nội dung từ web; chưa gửi bài.');
-  const characterLimit = engine === 'bluesky' ? 300 : engine === 'mastodon' ? 500 : engine === 'linkedin' ? 3000 : null;
-  if (characterLimit && [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(expectedBody)].length > characterLimit) return needs(`Nội dung vượt ${characterLimit} ký tự của kênh này. Cần tạo lại bản ngắn hơn trên web.`);
+  if (!validContent()) {
+    return resume ? needs('Nội dung trong khung soạn đã thay đổi sau khi AI điền các mục bắt buộc; chưa bấm Đăng. Kiểm tra trong tab.')
+      : mismatch('Editor không giữ đúng tiêu đề/nội dung từ web (thiếu chữ, mất đoạn hoặc thừa nội dung); chưa gửi bài.');
+  }
 
   // One planned image, attached once the text is in place. A composer that does
   // not show the image is never submitted: the post would go out without it.
@@ -290,59 +459,14 @@ export async function fillSocialAndSubmit(job) {
     if (alt) write(alt, asset.altText);
     return true;
   };
-  if (recipe.optionalMedia && job.attachments?.length) {
+  if (recipe.optionalMedia && job.attachments?.length && !resume) {
     if (!await attachImage(job.attachments[0])) return needs('Đã điền bài nhưng chưa gắn được ảnh vào khung soạn, nên chưa bấm Đăng. Gắn ảnh rồi bấm Đăng, hoặc bỏ ảnh của kênh này trên web rồi chạy lại.');
     await sleep(300);
     if (!validContent()) return needs('Nội dung thay đổi khi gắn ảnh; chưa đăng.');
   }
 
-  const choose = async (name, selectors, openLabels) => {
-    if (!name) return true;
-    let field = pick(selectors);
-    if (!field) { const open = button(openLabels); if (!open) return false; open.click(); field = await wait(() => pick(selectors), 3000); }
-    if (field?.tagName === 'SELECT') {
-      const option = [...field.options].find(item => normalize(item.textContent).toLowerCase() === name.toLowerCase() || item.value === name);
-      if (!option) return false;
-      field.value = option.value; field.dispatchEvent(new Event('change', { bubbles: true }));
-      return field.value === option.value;
-    }
-    if (field && ['INPUT', 'TEXTAREA'].includes(field.tagName)) write(field, name); else field?.click();
-    const row = await wait(() => {
-      const matches = all('[role="option"], [role="radio"], label, li, button').filter(enabled)
-        .filter(node => normalize(node.innerText).toLowerCase() === name.toLowerCase());
-      const deepest = matches.filter(node => !matches.some(other => other !== node && node.contains(other)));
-      return deepest.length === 1 ? deepest[0] : null;
-    }, 5000);
-    if (!row) return false;
-    row.click(); await sleep(300);
-    const apply = button(['Apply', 'Add', 'Save', 'Áp dụng', 'Thêm']); apply?.click();
-    await sleep(300);
-    return all('[aria-selected="true"], [aria-checked="true"], .selected, .tag, .chip, .rs__multi-value, [data-testid*="flair"], button, [role="combobox"]').some(node => visible(node) && normalize(node.innerText).toLowerCase().includes(name.toLowerCase()));
-  };
-  if (['lemmy', 'discuit'].includes(engine)) {
-    if (!options.category) return needs('Cần chọn community đích trong cấu hình tài khoản trên web.');
-    if (engine === 'discuit') {
-      const input = pick(['.page-new-select input']);
-      if (!input || !write(input, options.category)) return needs('Không mở được bộ chọn community.');
-      const choice = await wait(() => all('.page-new-select-suggest-item').filter(visible).find(n => normalize(n.querySelector('.page-new-select-suggest-name')?.innerText ?? n.innerText).toLowerCase() === options.category.toLowerCase()), 5000);
-      if (!choice) return needs('Community Discuit đã cấu hình không có trong danh sách.');
-      choice.click(); await sleep(250);
-      if (value(input).toLowerCase() !== options.category.toLowerCase()) return needs('Chưa xác nhận community Discuit.');
-    } else {
-      const open = pick(['#post-community']);
-      if (!open) return needs('Không thấy bộ chọn community Lemmy.');
-      if (!normalize(open.innerText).toLowerCase().includes(options.category.toLowerCase())) {
-        open.click();
-        const search = await wait(() => pick(['#post-community + div input', '.dropdown-menu input', '[role="combobox"] input', 'input[role="combobox"]']), 2000);
-        if (search) write(search, options.category);
-        const row = await wait(() => all('[role="option"], .dropdown-item').filter(visible).find(n => normalize(n.innerText).toLowerCase() === options.category.toLowerCase()), 5000);
-        if (!row) return needs('Không thấy community Lemmy đã chọn.');
-        row.click(); await sleep(250);
-      }
-      if (!normalize(open.innerText).toLowerCase().includes(options.category.toLowerCase())) return needs('Chưa xác nhận community Lemmy.');
-    }
-  } else if (!await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
-  if (engine === 'stackexchange') {
+  if (!resume && !['lemmy', 'discuit'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
+  if (engine === 'stackexchange' && !resume) {
     // Tags configured on the account must all be applied; the AI's suggested tags
     // are used only when the site already has them (never created), up to 5 in total.
     const configured = options.tags ?? [];
@@ -387,10 +511,66 @@ export async function fillSocialAndSubmit(job) {
       }
     }
   }
-  if (engine === 'reddit' && !await choose(options.flair, ['[role="dialog"] input[placeholder*="Search" i]', '[role="dialog"] input[type="search"]'], ['Add flair and tags', 'Add tags and flair', 'Add tags and flairs', 'Flair', 'Thêm flair'])) return needs('Không chọn được flair của subreddit.');
+  if (engine === 'reddit' && !resume && !await choose(options.flair, ['[role="dialog"] input[placeholder*="Search" i]', '[role="dialog"] input[type="search"]'], ['Add flair and tags', 'Add tags and flair', 'Add tags and flairs', 'Flair', 'Thêm flair'])) return needs('Không chọn được flair của subreddit.');
+
+  // Required controls the recipe does not know about (a community, a rules
+  // checkbox…) keep Post disabled or the form invalid. The worker then asks the
+  // backend AI how to fill them and runs this function again with `resume`.
+  const submitTarget = () => {
+    const scope = activeScope();
+    if (!scope) return null;
+    for (const selector of recipe.submitSelectors ?? []) {
+      const found = all(selector).filter(node => visible(node) && contains(scope, node));
+      if (found.length) return found.length === 1 ? found[0] : null;
+    }
+    const labels = (finalLabels ?? []).map(label => label.toLowerCase());
+    const matches = all('button, [role="button"], input[type="submit"]').filter(node => visible(node) && contains(scope, node)
+      && [node.innerText, node.getAttribute('aria-label'), node.value].some(text => labels.includes(normalize(text).toLowerCase())));
+    return matches.length === 1 ? matches[0] : null;
+  };
+  const formProblems = () => {
+    const scope = activeScope();
+    if (!scope) return [];
+    const problems = [];
+    const target = submitTarget();
+    if (target && !enabled(target)) problems.push('submit');
+    const host = scope === document ? pick(bodySelectors)?.closest('form') : scope;
+    if (!host) return problems;
+    const editors = [pick(bodySelectors), pick(recipe.titleSelectors)].filter(Boolean);
+    const controls = all('select, input, textarea, [role="combobox"], [role="checkbox"], [role="switch"], [role="radio"]').filter(node => visible(node)
+      && contains(host, node) && !editors.includes(node) && !node.isContentEditable
+      && !['hidden', 'password', 'file', 'submit', 'button', 'reset', 'image'].includes((node.getAttribute('type') || '').toLowerCase()));
+    const filledControl = node => {
+      if (node.matches('input[type="radio"]')) return node.name ? controls.some(other => other.matches('input[type="radio"]') && other.name === node.name && other.checked) : node.checked;
+      if (node.matches('input[type="checkbox"]')) return node.checked;
+      if (node.matches('[role="checkbox"], [role="switch"], [role="radio"]')) return node.getAttribute('aria-checked') === 'true';
+      if (node.matches('select, input, textarea')) return Boolean(String(node.value ?? '').trim());
+      return Boolean(normalize(node.innerText));
+    };
+    if (controls.some(node => (node.required || node.getAttribute('aria-required') === 'true') && !filledControl(node))) problems.push('required');
+    const describedError = node => [node.getAttribute('aria-errormessage'), ...(node.getAttribute('aria-describedby') || '').split(/\s+/)].filter(Boolean)
+      .map(id => node.getRootNode().getElementById?.(id)).some(note => note && visible(note) && normalize(note.innerText) && /error|invalid|lỗi|không hợp lệ|bắt buộc|required/i.test(`${note.className} ${note.getAttribute('role')} ${note.innerText}`));
+    if (controls.some(node => node.getAttribute('aria-invalid') === 'true' || describedError(node))
+      || all('.invalid-feedback, .field-error').some(node => visible(node) && contains(host, node) && normalize(node.innerText))) problems.push('invalid');
+    return problems;
+  };
+  const forceForm = ['lemmy', 'discuit'].includes(engine) && !options.category && !resume;
+  const formFillNeeded = async () => {
+    if (!formFillOn) return null;
+    let problems = formProblems();
+    // Sites enable Post a moment after the last input, or once an image upload is processed:
+    // give it as long as the Post lookup below would.
+    if (problems.length) { await wait(() => (formProblems().length ? null : true), recipe.optionalMedia && job.attachments?.length ? 30_000 : 5000); problems = formProblems(); }
+    if (!problems.length && !forceForm) return null;
+    if ((job.formFillRounds ?? 0) >= 2) return needs('AI chưa điền chắc chắn các mục bắt buộc; mở tab để kiểm và bấm Đăng.');
+    return { status: 'needsForm', problems, beforeUrls, message: 'Còn mục bắt buộc chưa điền hoặc nút Đăng đang khoá. Điền các mục đó trong tab rồi bấm Đăng.' };
+  };
 
   // Stop before entering a publish confirmation if automatic submission is off.
-  if (!job.autoSubmit) return { status: 'filled', beforeUrls };
+  if (!job.autoSubmit) {
+    return await formFillNeeded() ?? { status: 'filled', beforeUrls,
+      ...(resume ? { message: 'AI đã điền các mục bắt buộc của form. Kiểm tra lại rồi bấm Đăng trong tab.' } : {}) };
+  }
   if (captcha()) return { status: 'captcha' };
   if (!validContent()) return needs('Nội dung thay đổi khi chọn chuyên mục/flair. Chưa bấm đăng.');
   if (engine === 'stackexchange') {
@@ -427,25 +607,18 @@ export async function fillSocialAndSubmit(job) {
     }
     if (engine === 'medium' && !emailControls.length && /send/i.test(normalize(final.innerText))) return needs('Medium vẫn đang yêu cầu gửi email; chưa xuất bản.');
   }
-  const plainTags = ['slideshare', 'devto'].includes(engine) ? pick(['#tag-input', 'input[name="tags"]:not([role="combobox"]):not([aria-autocomplete])']) : null;
+  const plainTags = ['slideshare', 'devto'].includes(engine) && !resume ? pick(['#tag-input', 'input[name="tags"]:not([role="combobox"]):not([aria-autocomplete])']) : null;
   if (plainTags && options.tags?.length && (!write(plainTags, options.tags.join(', ')) || value(plainTags) !== normalize(options.tags.join(', ')))) return needs(`Không điền được tags đã cấu hình trên ${location.hostname}; chưa xuất bản.`);
   // Without configured tags the AI's tags fill the field; a field that rejects them is left empty.
   const aiTags = (options.suggestedTags ?? []).join(', ');
   if (plainTags && !options.tags?.length && aiTags && !value(plainTags) && (!write(plainTags, aiTags) || value(plainTags) !== normalize(aiTags))) write(plainTags, '');
-  for (const tag of plainTags || engine === 'stackexchange' ? [] : options.tags ?? []) {
+  for (const tag of plainTags || resume || engine === 'stackexchange' ? [] : options.tags ?? []) {
     if (!await choose(tag, [...(engine === 'differ' ? ['input.rs__input[role="combobox"]'] : []), 'input[placeholder*="Add a topic" i]', 'input[placeholder*="Add tags" i]', 'input[placeholder*="Search tags" i]', 'input[name="tags"]'], ['Add tags', 'Topics', 'Tags'])) return needs(`Không chọn được tag “${tag}”; chưa bấm đăng.`);
   }
   if (captcha()) return { status: 'captcha' };
   if (!quoraAudienceMatches()) return needs('Đối tượng xem bài Quora đã thay đổi; chưa bấm Post.');
-  const finalLabels = {
-    differ: ['Publish'], dzone: ['Submit to Moderation'],
-    stackexchange: ['Post your question', 'Submit to Staging Ground'], lemmy: ['Create', 'Tạo'], discuit: ['Submit', 'Post'], linkedin: ['Post', 'Đăng', 'Đăng bài'],
-    minds: ['Post'],
-    medium: ['Publish now', 'Xuất bản ngay'], substack: ['Publish', 'Publish now'], quora: ['Post', 'Đăng'],
-    reddit: ['Post', 'Đăng'], slideshare: ['Publish'], 'aws-builder': ['Publish', 'Publish article'],
-    tinhte: ['Đăng', 'Đăng bài', 'Đăng bài viết', 'Xuất bản'], pixelfed: ['Post', 'Share', 'Publish', 'Đăng'],
-    mastodon: ['Publish!', 'Publish', 'Post', 'Đăng', 'Đăng bài'], bluesky: ['Post', 'Đăng'], tumblr: ['Post', 'Post now', 'Đăng'], devto: ['Publish', 'Xuất bản'], dailydev: ['Post'],
-  }[engine];
+  const unfilled = await formFillNeeded();
+  if (unfilled) return unfilled;
   const submit = await wait(() => {
     const target = pick(recipe.submitSelectors);
     if (target) return enabled(target) ? target : null;
@@ -480,7 +653,9 @@ export async function readSocialPublishedPost(task) {
   const visible = node => node && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
   const words = text => (String(text ?? '').normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(' ');
   const expectedTitle = words(job.post.title);
-  const body = job.recipe.engine === 'quora' && job.post.title ? `${job.post.title}\n\n${job.post.body}` : job.post.body;
+  const titleWords = words(job.post.title).split(' ').filter(Boolean);
+  const leadsWithTitle = titleWords.every((word, index) => words(job.post.body).split(' ')[index] === word);
+  const body = job.recipe.engine === 'quora' && titleWords.length && !leadsWithTitle ? `${job.post.title}\n\n${job.post.body}` : job.post.body;
   // Feeds truncate long posts ("(more)"), and Quora shows the title apart from
   // the text: match the first words of the body itself, not the whole post.
   const expectedLead = words(job.post.body.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')).split(' ').slice(0, 12).join(' ');

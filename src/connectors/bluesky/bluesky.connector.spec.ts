@@ -2,6 +2,10 @@ import { ErrorCode } from '../../common/exceptions/application.exception';
 import { ConnectorAccount, PostPayload } from '../core/connector.types';
 import { BlueskyConnector } from './bluesky.connector';
 
+/** validate() throws synchronously; run it as the publisher does, inside a promise. */
+const validated = (connector: { validate(post: PostPayload): Promise<void> }, post: PostPayload) => Promise.resolve().then(() => connector.validate(post));
+
+
 const post: PostPayload = { body: 'Xin chào Bluesky', idempotencyKey: 'job-1' };
 
 function account(credentials: Record<string, unknown>): ConnectorAccount {
@@ -44,5 +48,17 @@ describe('BlueskyConnector', () => {
 
   it('requires the handle when an App Password is given', async () => {
     await expect(connector.publish(account({ appPassword: 'x' }), post)).rejects.toMatchObject({ code: ErrorCode.PLATFORM_AUTH_FAILED });
+  });
+});
+
+describe('BlueskyConnector length check', () => {
+  it('counts graphemes, so emoji and accented letters are one character each', async () => {
+    const connector = new BlueskyConnector();
+    // 300 graphemes but 600+ UTF-16 units.
+    await expect(validated(connector, { body: '👍🏽'.repeat(150) + 'ệ'.repeat(150), idempotencyKey: 'k' })).resolves.toBeUndefined();
+    await expect(validated(connector, { body: 'ệ'.repeat(301), idempotencyKey: 'k' })).rejects.toMatchObject({
+      code: ErrorCode.PLATFORM_CONTENT_REJECTED,
+      message: 'Bài Bluesky dài 301/300 ký tự, vượt giới hạn của nền tảng. Rút gọn trước khi duyệt hoặc đăng.',
+    });
   });
 });

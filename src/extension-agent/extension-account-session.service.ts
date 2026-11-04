@@ -66,6 +66,24 @@ export function sessionScope(settings: unknown): string {
   return url.origin;
 }
 
+const REGISTRATION_SEGMENT = /^(?:sign[-_]?up|register|registration|join|create[-_]?account|new[-_]?account)(?:\.[a-z0-9]+)?$/i;
+
+/**
+ * Sign-up forms ask for the same e-mail and password as a login form; a login
+ * secret must never be typed into one (it would create an account, or leak the
+ * password to a registration flow). Matches a path segment such as Discourse
+ * `/signup`, `/users/sign_up`, `/register`, `/join`, `/create-account`, or the
+ * phpBB `ucp.php?mode=register` page.
+ */
+export function isRegistrationPage(page: URL): boolean {
+  if (page.pathname.split('/').some((segment) => REGISTRATION_SEGMENT.test(decodeSegment(segment)))) return true;
+  return /^register$/i.test(page.searchParams.get('mode') ?? '');
+}
+
+function decodeSegment(segment: string): string {
+  try { return decodeURIComponent(segment); } catch { return segment; }
+}
+
 /** Legacy unbound accounts work only when there is one device and one account
  * in their cookie scope. A second account never inherits the first one's login. */
 export function deviceCanRunAccount(account: { id: string; settings: unknown }, deviceId: string,
@@ -171,6 +189,8 @@ export class ExtensionAccountSessionService {
     try { page = new URL(dto.pageUrl); } catch { throw new BadRequestException('Invalid authentication URL'); }
     const allowed = session.provider === 'google' ? page.origin === 'https://accounts.google.com' : page.origin === session.origin;
     if (!allowed || page.username || page.password || (page.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(page.hostname))) throw new ForbiddenException('Authentication origin does not match this account');
+    // The extension stops the task as "sign-in required" on any refusal; nothing is released.
+    if (isRegistrationPage(page)) throw new ForbiddenException('This page is a sign-up form, not a login form; sign in manually in this Chrome profile');
     if (dto.step === 'totp' && !session.autoTotp) throw new ForbiddenException('TOTP is not configured for this account');
     const secret = object((await this.credentials.resolve(job.platformAccountId)).extensionLogin);
     if (dto.step === 'identifier') return { username: secret.username };

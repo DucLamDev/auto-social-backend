@@ -1,5 +1,5 @@
 import { platformContract } from '../platforms/platform-contract';
-import { clampReview, deterministicIssues, draftRank, qualityInstructions, reviewPassed, rewriteFeedback } from './content-quality';
+import { clampReview, deterministicIssues, draftRank, qualityInstructions, reviewInstructions, reviewPassed, rewriteFeedback } from './content-quality';
 
 const VI = 'Mình vừa chuyển website sang máy chủ mới và thời gian tải trang giảm hẳn, chia sẻ lại các bước đã làm.';
 const EN = 'We moved our website to a new server and page load time dropped a lot, here are the steps we followed.';
@@ -55,5 +55,27 @@ describe('content quality checks', () => {
     expect(draftRank(false, { ...review, score: 6 }, ['a'])).toBeGreaterThan(draftRank(false, { ...review, score: 5 }, []));
     expect(draftRank(false, { ...review, score: 6 }, [])).toBeGreaterThan(draftRank(false, { ...review, score: 6 }, ['a']));
     expect(draftRank(false, null, [])).toBeLessThan(draftRank(false, { ...review, score: 1 }, []));
+  });
+
+  it('ranks every draft that fits the limit above every draft over it', () => {
+    expect(draftRank(false, { ...review, score: 1 }, ['a', 'b', 'c'])).toBeGreaterThan(draftRank(false, { ...review, score: 10 }, ['Dài 545/500 ký tự'], true));
+    expect(draftRank(false, null, [])).toBeGreaterThan(draftRank(false, { ...review, score: 10 }, [], true));
+    expect(draftRank(false, { ...review, score: 8 }, ['x'], true)).toBeGreaterThan(draftRank(false, { ...review, score: 6 }, ['x'], true));
+  });
+
+  it('says how many characters to cut', () => {
+    const mastodon = platformContract('mastodon', { sourceText: VI });
+    const body = `${VI} ${'a'.repeat(400)}`;
+    const issues = deterministicIssues({ title: null, body, hashtags: [] }, mastodon, 'https://vpsttt.vn/x');
+    // The text, a blank line, "Nguồn: " and the link counted as 23.
+    const length = [...body].length + 2 + 7 + 23;
+    expect(issues[0]).toBe(`Dài ${length}/500 ký tự, cần bớt ít nhất ${length - 500} ký tự`);
+  });
+
+  it('tells the editor the limit and the draft length, and nothing about length where there is none', () => {
+    const bluesky = platformContract('bluesky');
+    expect(reviewInstructions(bluesky, 280)).toContain('the published post has at most 300 characters, counting hashtags, links and the source line the system adds; this draft has 280. Judge it within that limit and never ask for additions that would not fit.');
+    expect(reviewInstructions(bluesky, 320)).toContain('it is 20 characters over, so one issue must ask to cut at least 20 characters');
+    expect(reviewInstructions(platformContract('nginx-community'))).not.toContain('length limit');
   });
 });

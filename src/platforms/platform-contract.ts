@@ -11,8 +11,12 @@ export type TextFormat = 'markdown' | 'plain' | 'html';
  * tags: the list is sent as separate tags/labels and never printed in the body.
  */
 export type HashtagMode = 'inline' | 'appended' | 'tags';
-/** graphemes: user-perceived characters; x: X weighted length (URL = 23, non-Latin code points = 2). */
-export type CharCounting = 'graphemes' | 'x';
+/**
+ * graphemes: user-perceived characters; x: X weighted length (every link,
+ * also a bare domain X links, = 23; non-Latin code points = 2); mastodon:
+ * graphemes, with every http(s) link counted as 23 whatever its length.
+ */
+export type CharCounting = 'graphemes' | 'x' | 'mastodon';
 
 export interface PlatformContract {
   slug: string;
@@ -62,8 +66,10 @@ const INLINE_HASHTAG_LIMITS: Record<string, number> = {
   'pixelfed-social': 5,
 };
 const TAG_LIMITS: Record<string, number> = { devto: 4, instagram: 5 };
-const TITLE_LIMITS: Partial<Record<ExtensionEngine, number>> = { reddit: 300, stackexchange: 150, xenforo: 150, discourse: 150, phpbb: 150, dailydev: 250 };
+const TITLE_LIMITS: Partial<Record<ExtensionEngine, number>> = { reddit: 300, stackexchange: 150, xenforo: 150, discourse: 150, phpbb: 150, dailydev: 250, lemmy: 200 };
 const TITLE_REQUIRED_PLATFORMS = new Set(['wordpress', 'blogger', 'devto', 'discourse']);
+/** Mastodon servers (API or Chrome extension): links count as 23 characters. */
+const MASTODON_PLATFORMS = new Set(['mastodon', 'mastodon-social', 'vivaldi-social']);
 
 const GROUP_DEFAULT_FORMAT: Record<PlatformGroupKey, TextFormat> = {
   SOCIAL: 'plain',
@@ -106,7 +112,7 @@ export function platformContract(slug: string, options: ContractOptions = {}): P
     language: resolveLanguage(options.platformLanguages?.[slug] ?? entry?.audienceLanguage ?? 'auto', options),
     format,
     ...(limits.length ? { maxChars: Math.min(...limits) } : {}),
-    counting: slug === 'x' ? 'x' : 'graphemes',
+    counting: slug === 'x' ? 'x' : MASTODON_PLATFORMS.has(slug) || engine === 'mastodon' ? 'mastodon' : 'graphemes',
     hashtagMode,
     maxHashtags: hashtagMode === 'inline' ? INLINE_HASHTAG_LIMITS[slug]! : TAG_LIMITS[slug] ?? 5,
     titleRequired,
@@ -139,15 +145,73 @@ export function detectLanguage(text: string): AudienceLanguage | 'unknown' {
 }
 
 const URL_PATTERN = /https?:\/\/[^\s<>()]+/g;
+/** Sentence punctuation right after a link is text, not part of the link. */
+const LINK_TRAILING_PUNCTUATION = /[.,;:!?'"…»”’]+$/u;
+/** Stands for one shortened link while the rest of the text is counted. */
+const LINK_PLACEHOLDER = '\u0000';
+const SHORT_LINK_LENGTH = 23;
+
+/**
+ * A domain written without http(s), as twitter-text finds it: not glued to a
+ * word, an e-mail address, a mention or a path, optionally with port and path.
+ */
+const BARE_DOMAIN = /(?<![A-Za-z0-9@＠$#＃_./-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+)([a-z]{2,24})(?![a-z0-9@+-])(?::\d{1,5})?([/?][^\s<>()]*)?/gi;
+// Generic TLDs X links without a protocol. Kept to common ones on purpose: an
+// unknown suffix (Node.js, config.yml) stays plain text, as on X.
+const X_GENERIC_TLDS = new Set([
+  'com', 'net', 'org', 'info', 'biz', 'edu', 'gov', 'mil', 'int', 'app', 'dev', 'xyz', 'tech', 'cloud', 'online', 'site',
+  'website', 'store', 'shop', 'blog', 'news', 'page', 'live', 'pro', 'top', 'vip', 'link', 'club', 'space', 'digital',
+  'email', 'host', 'hosting', 'network', 'software', 'solutions', 'systems', 'tools', 'works', 'world', 'academy',
+  'agency', 'asia', 'mobi', 'name', 'travel', 'jobs', 'tel', 'aero', 'coop', 'art', 'design', 'media', 'studio',
+  'today', 'center', 'company', 'group', 'team', 'social', 'chat', 'run', 'one', 'plus', 'zone', 'life', 'fun',
+  'guru', 'ninja', 'codes', 'engineering', 'services', 'support', 'technology', 'education', 'consulting', 'marketing',
+]);
+
+/**
+ * Whether X turns a bare domain into a link: any domain under a known generic
+ * TLD; under a country code (vpsttt.vn, socket.io) only with a subdomain or a
+ * path, exactly like twitter-text, so "README.md" stays text.
+ */
+function xLinksBareDomain(labels: string, tld: string, path: string | undefined): boolean {
+  const suffix = tld.toLowerCase();
+  if (X_GENERIC_TLDS.has(suffix)) return true;
+  if (suffix.length !== 2) return false;
+  return Boolean(path) || labels.split('.').filter(Boolean).length >= 2 || `${labels}${suffix}`.toLowerCase() === 't.co';
+}
+
+/** The text with every link the destination shortens replaced by one placeholder each. */
+function replaceLinks(text: string, bareDomains: boolean): { text: string; links: number } {
+  let links = 0;
+  const shorten = (match: string) => {
+    links += 1;
+    return LINK_PLACEHOLDER + (LINK_TRAILING_PUNCTUATION.exec(match)?.[0] ?? '');
+  };
+  let replaced = text.replace(URL_PATTERN, shorten);
+  if (bareDomains) {
+    replaced = replaced.replace(BARE_DOMAIN, (match: string, labels: string, tld: string, path: string | undefined) => (
+      xLinksBareDomain(labels, tld, path) ? shorten(match) : match
+    ));
+  }
+  return { text: replaced, links };
+}
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+const graphemeCount = (text: string) => [...graphemes.segment(text)].length;
 
 export function countChars(text: string, counting: CharCounting): number {
-  if (counting === 'graphemes') return [...graphemes.segment(text)].length;
+  if (counting === 'graphemes') return graphemeCount(text);
+  if (counting === 'mastodon') {
+    // Mastodon counts graphemes and every http(s) link as 23, however long;
+    // a domain without the protocol counts as typed.
+    const { text: rest, links } = replaceLinks(text, false);
+    // Each placeholder is a grapheme of its own (a control character).
+    return graphemeCount(rest) - links + links * SHORT_LINK_LENGTH;
+  }
   // https://docs.x.com/resources/fundamentals/counting-characters
-  const urls = text.match(URL_PATTERN) ?? [];
-  let total = urls.length * 23;
-  for (const char of text.replace(URL_PATTERN, '').normalize('NFC')) {
+  const { text: rest, links } = replaceLinks(text, true);
+  let total = links * SHORT_LINK_LENGTH;
+  for (const char of rest.normalize('NFC')) {
+    if (char === LINK_PLACEHOLDER) continue;
     const code = char.codePointAt(0)!;
     const light = code <= 4351 || (code >= 8192 && code <= 8205) || (code >= 8208 && code <= 8223) || (code >= 8242 && code <= 8247);
     total += light ? 1 : 2;

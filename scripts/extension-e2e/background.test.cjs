@@ -30,7 +30,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     tabs: {
       create: async ({ url }) => { state.openedUrls.push(url); return { id: ++state.nextTabId, windowId: 2, status: 'loading' }; },
       update: async (id, options) => { if (options?.active) state.activated = id; if (options?.url) state.openedUrls.push(options.url); return { id, windowId: 2 }; }, remove: async id => { (state.closedTabs ??= []).push(id); },
-      get: async id => ({ id, url: state.currentUrl ?? job.openUrl }),
+      get: async id => ({ id, url: state.tabUrls?.[id] ?? state.currentUrl ?? job.openUrl }),
       onUpdated: event(), onRemoved: event(), onCreated: event(),
     },
     windows: { update: async () => {} },
@@ -55,6 +55,11 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
       if (injection.func.name === 'submitDiscoursePost') return [{ result: state.directResult ?? { status: 'fallback' } }];
       if (injection.func.name === 'collectUiCandidates') return [{ result: state.candidates ?? null }];
       if (injection.func.name === 'verifyUiSelectors') return [{ result: state.verified ?? injection.args[0].selectors }];
+      if (injection.func.name === 'collectFormControls') return [{ result: state.formControls ?? null }];
+      if (injection.func.name === 'applyFormActions') {
+        (state.appliedActions ??= []).push(injection.args[0].actions);
+        return [{ result: state.applyResult ?? { results: injection.args[0].actions.map(action => ({ index: action.index, ok: true })) } }];
+      }
       if (injection.func.name === 'readModeration') return [{ result: state.moderation ?? null }];
       if (injection.func.name === 'readPublishedPost' || injection.func.name === 'readSocialPublishedPost') return [{ result: state.publishedUrl ?? null }];
       if (injection.func.name === 'readErrors') return [{ result: state.errorText ?? null }];
@@ -67,10 +72,11 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     } },
   };
   const source = fs.readFileSync(path.join(__dirname, '../../browser-extension/background.js'), 'utf8')
-    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery|proxy)\.js';\r?\n/gm, '')
+    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery|form-fill|proxy)\.js';\r?\n/gm, '')
     .replace(/const NEXT_JOB_DELAY_MS = [\d_]+;/, `const NEXT_JOB_DELAY_MS = ${nextJobDelay};`)
     .replace(/const NO_GOOGLE_GRACE_MS = [\d_]+;/, 'const NO_GOOGLE_GRACE_MS = 0;')
-    .replace(/const CLOUDFLARE_WAIT_MS = [\d_]+;/, `const CLOUDFLARE_WAIT_MS = ${cloudflareWait};`);
+    .replace(/const CLOUDFLARE_WAIT_MS = [\d_]+;/, `const CLOUDFLARE_WAIT_MS = ${cloudflareWait};`)
+    .replace(/const FORM_FILL_POLL_MS = [\d_]+;/, 'const FORM_FILL_POLL_MS = 5;');
   const context = vm.createContext({
     chrome, URL, Date, AbortSignal, setTimeout, clearTimeout,
     canFillPage: function canFillPage() {}, fillAndSubmit: function fillAndSubmit() {}, readErrors: function readErrors() {}, readModeration: function readModeration() {}, readPublishedPost: function readPublishedPost() {},
@@ -79,6 +85,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     submitDiscoursePost: function submitDiscoursePost() {},
     showPublishNotice: function showPublishNotice() {},
     collectUiCandidates: function collectUiCandidates() {}, verifyUiSelectors: function verifyUiSelectors() {},
+    collectFormControls: function collectFormControls() {}, applyFormActions: function applyFormActions() {},
     PROXY_STORAGE_KEY: 'proxy',
     registerProxyAuth: () => { state.proxyAuthRegistered = (state.proxyAuthRegistered ?? 0) + 1; },
     applyProxy: async () => { state.proxyApplied = (state.proxyApplied ?? 0) + 1; },
@@ -89,6 +96,12 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
         state.reports.push(JSON.parse(options.body));
       }
       let data = {};
+      if (url.includes('/form-fill')) {
+        (state.formFillRequests ??= []).push({ url, method: options.method, body: options.body ? JSON.parse(options.body) : null });
+        const answer = typeof state.formFill === 'function' ? state.formFill(state.formFillRequests.length) : state.formFill;
+        if (answer instanceof Error) return { ok: false, status: 404, json: async () => ({ success: false, error: { message: answer.message } }) };
+        return { ok: true, json: async () => ({ success: true, data: answer }) };
+      }
       if (url.includes('/ui-hint')) {
         (state.hintRequests ??= []).push({ url, method: options.method, body: options.body ? JSON.parse(options.body) : null });
         const answer = typeof state.hint === 'function' ? state.hint(state.hintRequests.length) : state.hint;
@@ -293,28 +306,30 @@ test('work arriving during a poll runs immediately instead of waiting for the ne
   assert.equal(state.fills, 1);
 });
 
-test('publishes one forum at a time and closes the completed tab before starting the next', async () => {
+test('two flows run at once on different sites, never two on one site, and a finished flow frees its slot', async () => {
   const { state, worker, chrome } = setup();
   const makeJob = (id, host) => ({ ...job, jobId: id, targetOrigin: `http://${host}.test`, openUrl: `http://${host}.test/new-topic` });
   state.jobs = [makeJob('a1', 'a'), makeJob('a2', 'a'), makeJob('b1', 'b'), makeJob('c1', 'c'), makeJob('d1', 'd')];
   const release = new Map();
   state.fillResult = pending => new Promise(resolve => release.set(pending.jobId, resolve));
   await worker.tick();
-  await settleUntil(() => state.fills === 1);
-  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['a1']);
-  assert.deepEqual(state.jobs.map(t => t.jobId), ['a2', 'b1', 'c1', 'd1']);
+  await settleUntil(() => state.fills === 2);
+  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['a1', 'b1']);
+  assert.deepEqual(state.claimRequests[1].excludeOrigins, ['http://a.test'], 'the second flow is claimed on another site');
+  assert.deepEqual(state.jobs.map(t => t.jobId), ['a2', 'c1', 'd1']);
   await worker.tick();
-  assert.equal(state.fills, 1);
+  assert.equal(state.fills, 2, 'never a third flow');
   release.get('a1')({ status: 'submitted' });
   await settleUntil(async () => (await worker.getTasks())[1]?.phase === 'submitted');
   await new Promise(setImmediate);
   state.publishedUrl = 'http://a.test/t/post/1';
   await Promise.all(chrome.tabs.onUpdated.listeners.map(listener => listener(1, { url: 'http://a.test/t/post/1' }, { url: 'http://a.test/t/post/1' })));
   await worker.tick();
-  await settleUntil(() => state.fills === 2);
+  await settleUntil(() => state.fills === 3);
   assert.deepEqual(state.closedTabs, [1]);
-  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['a2']);
-  assert.deepEqual(state.jobs.map(t => t.jobId), ['b1', 'c1', 'd1']);
+  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['b1', 'a2'], 'the next post on the freed site starts beside the running one');
+  assert.ok(state.claimRequests.slice(2).every(request => request.excludeOrigins.includes('http://b.test')), 'b stays excluded while it runs');
+  assert.deepEqual(state.jobs.map(t => t.jobId), ['c1', 'd1']);
   for (const resolve of release.values()) resolve({ status: 'filled' });
 });
 
@@ -322,8 +337,6 @@ test('one failed forum leaves the other flows running and concurrent result logs
   const { state, worker, chrome } = setup();
   state.jobs = ['a', 'b', 'c'].map(id => ({ ...job, jobId: id, targetOrigin: `http://${id}.test`, openUrl: `http://${id}.test/new-topic` }));
   state.fillResult = async pending => pending.jobId === 'a' ? { status: 'login', message: 'Sign in' } : { status: 'filled' };
-  await worker.tick();
-  await settleUntil(() => state.reports.length === 1);
   await worker.tick();
   await settleUntil(() => state.reports.length === 2);
   await worker.tick();
@@ -529,11 +542,11 @@ async function patchTask(chrome, tabId, patch) {
   await chrome.storage.session.set({ tasks });
 }
 
-test('waiting tabs stay tracked and prevent additional tabs once the budget is reached', async () => {
+test('waiting tabs do not hold a flow: the next post still starts, and only the owned-tab safety cap stops claiming', async () => {
   const { state, worker, chrome } = setup();
   const now = Date.now();
   const waiting = (id, index, postSubmit) => ({
-    job: socialJob(id, `http://${id}.test`), tabId: 100 + index, phase: 'waitingUser', waitingSince: now - (10 - index) * 60_000,
+    job: socialJob(id, `http://${id}.test`), tabId: 100 + index, phase: 'waitingUser', waitingSince: now - (10 - index) * 30_000,
     deadline: now + 60_000, ...(postSubmit ? { submittedAt: now - 300_000, waitingReason: 'SUBMIT_UNCONFIRMED' } : { waitingReason: 'WAITING_USER' }),
   });
   await seedTasks(chrome, [waiting('tinhte', 0, true), waiting('dzone', 1, true), waiting('quora', 2, true), waiting('serverfault', 3, false), waiting('unix', 4, false)]);
@@ -541,13 +554,18 @@ test('waiting tabs stay tracked and prevent additional tabs once the budget is r
   state.result = { status: 'filled' };
 
   await worker.tick();
+  await settleUntil(() => state.fills === 1);
   const tracked = Object.values(await worker.getTasks()).map(task => task.job.jobId);
-  assert.equal(state.claims, 0);
-  assert.equal(state.fills, 0);
-  assert.ok(!tracked.includes('next'));
-  assert.ok(tracked.includes('tinhte'), 'waiting tabs remain tracked');
-  assert.ok(tracked.includes('serverfault') && tracked.includes('unix'), 'composers waiting before submission stay tracked');
-  assert.equal(tracked.length, 5);
+  assert.ok(tracked.includes('next'), 'five waiting tabs no longer stop the queue');
+  assert.ok(tracked.includes('tinhte') && tracked.includes('serverfault') && tracked.includes('unix'), 'waiting tabs remain tracked until they expire');
+  assert.equal(tracked.length, 6);
+  assert.deepEqual(state.claimRequests[0].excludeOrigins.sort(), ['http://serverfault.test', 'http://unix.test'], 'only composers waiting before submission reserve their site');
+
+  const full = setup();
+  await seedTasks(full.chrome, Array.from({ length: 8 }, (_, index) => waiting(`site${index}`, index, false)));
+  full.state.jobs = [socialJob('next', 'http://next.test')];
+  await full.worker.tick();
+  assert.equal(full.state.claims, 0, 'eight owned tabs is the safety bound');
 });
 
 test('a progress notice after submit is not a rejection and the post is confirmed later', async () => {
@@ -652,30 +670,32 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 test('a published post starts the next queued post without waiting for the alarm', async () => {
   const { state, worker } = setup({ nextJobDelay: 0 });
-  state.jobs = [forumJob('a'), forumJob('b')];
+  state.jobs = [forumJob('a'), forumJob('b'), forumJob('c')];
   state.fillResult = async pending => ({ status: 'published', url: `${pending.targetOrigin}/t/post/1` });
   await worker.tick();
-  for (let i = 0; i < 20 && state.fills < 2; i++) await pause(5);
-  assert.equal(state.claims, 2, 'the second post was claimed without a manual poll');
-  assert.equal(state.fills, 2);
-  assert.deepEqual(state.reports.map(report => report.outcome), ['PUBLISHED', 'PUBLISHED']);
+  for (let i = 0; i < 20 && state.fills < 3; i++) await pause(5);
+  assert.ok(state.claims >= 3, 'the third post was claimed without a manual poll');
+  assert.equal(state.fills, 3);
+  assert.deepEqual(state.reports.map(report => report.outcome), ['PUBLISHED', 'PUBLISHED', 'PUBLISHED']);
 });
 
 test('a draft handed to the operator lets the next forum start right away', async () => {
   const { state, worker } = setup({ nextJobDelay: 0 });
-  state.jobs = [forumJob('a'), forumJob('b')];
+  state.jobs = [forumJob('a'), forumJob('b'), forumJob('c')];
   state.result = { status: 'filled' };
   await worker.tick();
-  for (let i = 0; i < 20 && state.fills < 2; i++) await pause(5);
-  assert.equal(state.fills, 2);
+  for (let i = 0; i < 20 && state.fills < 3; i++) await pause(5);
+  assert.equal(state.fills, 3);
   const tasks = Object.values(await worker.getTasks());
-  assert.deepEqual(tasks.map(task => task.phase), ['waitingUser', 'waitingUser'], 'both drafts stay tracked for the operator');
+  assert.deepEqual(tasks.map(task => task.phase), ['waitingUser', 'waitingUser', 'waitingUser'], 'the drafts stay tracked for the operator');
 });
 
 test('a paused extension does not claim the next post after one finishes', async () => {
   const { state, worker, chrome } = setup({ nextJobDelay: 0 });
-  state.jobs = [forumJob('a'), forumJob('b')];
+  state.jobs = [forumJob('a')];
   state.fillResult = async pending => {
+    // A second post arrives while the first runs; the extension is paused meanwhile.
+    state.jobs.push(forumJob('b'));
     await chrome.storage.local.set({ paused: true });
     return { status: 'published', url: `${pending.targetOrigin}/t/post/1` };
   };
@@ -686,19 +706,19 @@ test('a paused extension does not claim the next post after one finishes', async
   assert.deepEqual(state.jobs.map(item => item.jobId), ['b']);
 });
 
-test('the early poll never starts a second flow while one is still filling', async () => {
+test('the early poll never starts a third flow while two are still filling', async () => {
   const { state, worker } = setup({ nextJobDelay: 0 });
   state.jobs = [forumJob('a'), forumJob('b'), forumJob('c')];
-  let release;
-  state.fillResult = () => new Promise(resolve => { release = resolve; });
+  const releases = [];
+  state.fillResult = () => new Promise(resolve => { releases.push(resolve); });
   await worker.tick();
-  await settleUntil(() => state.fills === 1);
+  await settleUntil(() => state.fills === 2);
   worker.tickSoon();
   worker.tickSoon();
   await pause(30);
-  assert.equal(state.claims, 1, 'MAX_ACTIVE_FLOWS still holds');
-  assert.equal(state.fills, 1);
-  release({ status: 'filled' });
+  assert.equal(state.fills, 2, 'MAX_ACTIVE_FLOWS still holds');
+  assert.deepEqual(state.jobs.map(item => item.jobId), ['c']);
+  for (const release of releases) release({ status: 'filled' });
 });
 
 // ---- AI-assisted recovery when a composer control is not found -------------
@@ -901,3 +921,164 @@ test('a Cloudflare check that does not pass is reported after the wait, without 
   assert.ok(!state.injections.some(injection => ['identifier', 'password'].includes(injection.args?.[0]?.action)));
 });
 
+
+// ---- 1.12.0: the queue never blocks, robust reports, AI form-fill ----------
+test('a tab waiting for 10 minutes is closed and forgotten, so its site is claimed again', async () => {
+  const { state, worker, chrome } = setup();
+  const now = Date.now();
+  const site = origin => ({ ...socialJob(origin.replace(/\W/g, ''), origin) });
+  await seedTasks(chrome, [
+    { job: site('http://draft.test'), tabId: 21, phase: 'waitingUser', waitingReason: 'WAITING_USER', waitingSince: now - 11 * 60_000, deadline: now - 60_000 },
+    { job: { ...site('http://login.test'), auth: { provider: 'google', autoLogin: true } }, tabId: 22, authTabId: 23, phase: 'waitingAuth', waitingSince: now - 11 * 60_000, deadline: now - 60_000 },
+    { job: site('http://moved.test'), tabId: 24, phase: 'waitingUser', reportedOutcome: 'FAILED', waitingReason: 'CONTENT_MISMATCH', waitingSince: now - 11 * 60_000, deadline: now - 1 },
+    { job: site('http://fresh.test'), tabId: 25, phase: 'waitingUser', waitingReason: 'WAITING_USER', waitingSince: now - 60_000, deadline: now + 9 * 60_000 },
+  ]);
+  // The operator reused tab 24 for something else: it is forgotten but never closed.
+  state.tabUrls = { 21: 'http://draft.test/compose', 22: 'http://login.test/login', 23: 'https://accounts.google.com/signin', 24: 'https://mail.example.test/', 25: 'http://fresh.test/compose' };
+  state.jobs = [{ ...socialJob('next-draft', 'http://draft.test') }];
+  state.result = { status: 'filled' };
+
+  await worker.tick();
+  await settleUntil(() => state.fills === 1);
+  assert.deepEqual([...state.closedTabs].sort(), [21, 22, 23]);
+  assert.equal(state.reports.filter(report => report.outcome !== 'NEEDS_ACTION').length, 0, 'expiry reports nothing new');
+  assert.ok(!state.claimRequests[0].excludeOrigins.includes('http://draft.test'), 'the released site is no longer excluded');
+  assert.ok(state.claimRequests[0].excludeOrigins.includes('http://fresh.test'), 'a draft still inside its window keeps its site');
+  const tracked = Object.values(await worker.getTasks()).map(task => task.job.jobId).sort();
+  assert.deepEqual(tracked, ['httpfreshtest', 'next-draft']);
+  const { history } = await chrome.storage.local.get('history');
+  assert.equal(history.filter(entry => entry.outcome === 'RELEASED').length, 3);
+});
+
+test('a FAILED post frees its flow at once; the kept tab expires like any waiting tab', async () => {
+  const { state, worker } = setup();
+  state.jobs = [forumJob('a'), forumJob('b'), forumJob('c')];
+  const results = { a: { status: 'contentMismatch', message: 'Editor không giữ đúng nội dung' }, b: { status: 'notReady', missing: ['body'], message: 'Không thấy form' } };
+  let resolveC;
+  state.fillResult = pending => results[pending.jobId] ?? new Promise(resolve => { resolveC = resolve; });
+  await worker.tick();
+  await settleUntil(() => state.reports.length === 2);
+  assert.deepEqual(state.reports.map(report => [report.outcome, report.reason]).sort(), [['FAILED', 'CONTENT_MISMATCH'], ['FAILED', 'EDITOR_NOT_FOUND']]);
+  const held = Object.values(await worker.getTasks());
+  assert.ok(held.every(task => task.phase === 'waitingUser' && task.reportedOutcome === 'FAILED'));
+  assert.ok(held.every(task => task.deadline - Date.now() <= 10 * 60_000));
+  await worker.tick();
+  await settleUntil(() => state.fills === 3);
+  assert.deepEqual(state.jobs, [], 'the failed posts do not hold the two flows');
+  resolveC({ status: 'filled' });
+});
+
+for (const [status, outcome, reason] of [['draft', 'NEEDS_ACTION', 'WAITING_USER'], ['contentMismatch', 'FAILED', 'CONTENT_MISMATCH'], ['somethingNew', 'NEEDS_ACTION', 'SUBMIT_UNCONFIRMED'], [undefined, 'NEEDS_ACTION', 'SUBMIT_UNCONFIRMED']]) {
+  test(`a runner result "${status}" is reported as ${outcome} ${reason}, never as a missing editor`, async () => {
+    const { state, worker } = setup();
+    state.result = status ? { status, message: 'Fixture' } : null;
+    await worker.start(job);
+    assert.deepEqual([state.reports[0].outcome, state.reports[0].reason], [outcome, reason]);
+    assert.equal((await worker.getTasks())[1].phase, 'waitingUser');
+  });
+}
+
+test('a post over the destination limit is reported before any tab opens', async () => {
+  const { state, worker } = setup();
+  await worker.start({ ...job, post: { title: 'Short', body: 'x'.repeat(320), maxChars: 300, length: 320, language: 'en' } });
+  assert.equal(state.nextTabId, 0, 'no tab, nothing typed');
+  assert.equal(state.fills, 0);
+  assert.deepEqual(state.reports, [{ outcome: 'NEEDS_ACTION', reason: 'WAITING_USER', message: 'Nội dung dài 320/300 ký tự, vượt giới hạn của kênh này. Cần rút gọn trên web.' }]);
+  await worker.start({ ...job, post: { title: 'Short', body: 'ok', maxChars: 300, length: 2, language: 'en' } });
+  assert.equal(state.fills, 1, 'a post within the limit runs normally');
+});
+
+test('a runner that finds the post too long closes the tab and asks for a shorter version', async () => {
+  const { state, worker } = setup();
+  state.result = { status: 'tooLong', message: 'Nội dung dài 600/500 ký tự, vượt giới hạn của kênh này. Cần rút gọn trên web.' };
+  await worker.start(job);
+  assert.deepEqual([state.reports[0].outcome, state.reports[0].reason], ['NEEDS_ACTION', 'WAITING_USER']);
+  assert.deepEqual(state.closedTabs, [1]);
+  assert.equal(Object.keys(await worker.getTasks()).length, 0);
+});
+
+const RESULT_FIELDS = ['outcome', 'url', 'reason', 'message', 'detectedUsername', 'googleBlocked'];
+test('a sign-in stop of a publish job reports only fields the backend accepts', async () => {
+  for (const [provider, authResult, expected] of [
+    ['password', { state: 'challenge', url: 'https://forum.test/login', message: 'CAPTCHA' }, { outcome: 'NEEDS_ACTION', reason: 'AUTH_REQUIRED', message: 'CAPTCHA' }],
+    ['google', { state: 'challenge', url: 'https://accounts.google.com/', message: 'Google chặn', googleBlocked: true }, { outcome: 'NEEDS_ACTION', reason: 'AUTH_REQUIRED', message: 'Google chặn', googleBlocked: true }],
+    ['google', { state: 'challenge', url: 'https://accounts.google.com/', message: 'Google hỏi', googleBlocked: false }, { outcome: 'NEEDS_ACTION', reason: 'AUTH_REQUIRED', message: 'Google hỏi' }],
+  ]) {
+    const { state, worker } = setup();
+    state.authResult = authResult;
+    await worker.authenticateTask({ tabId: 8, job: { ...job, auth: { provider, autoLogin: true } } });
+    assert.deepEqual(state.reports[0], expected);
+  }
+  const { state, worker } = setup();
+  state.authResult = { state: 'mismatch', url: 'https://forum.test/', detectedUsername: '  other-profile  ' };
+  await worker.authenticateTask({ tabId: 8, job: { ...job, auth: { provider: 'password', autoLogin: false, expectedUsername: 'alice' } } });
+  assert.ok(Object.keys(state.reports[0]).every(key => RESULT_FIELDS.includes(key)), JSON.stringify(state.reports[0]));
+  assert.equal(state.reports[0].reason, 'ACCOUNT_MISMATCH');
+  assert.equal(state.reports[0].detectedUsername, 'other-profile');
+  assert.equal('googleBlocked' in state.reports[0], false);
+});
+
+const formJob = (extra = {}) => ({ ...socialJob('job-form', 'https://lemmy.test'), autoSubmit: true, formFill: { enabled: true },
+  post: { title: 'Title', body: 'Body', maxChars: null, length: 4, language: 'en' }, ...extra });
+const formControls = { url: 'https://lemmy.test/create_post', controls: [
+  { index: 0, kind: 'select', tag: 'select', label: 'Language', required: false, invalid: false, selected: 'Undetermined', options: [{ value: '0', label: 'Undetermined' }, { value: '37', label: 'English' }], selector: '#post-language' },
+  { index: 1, kind: 'checkbox', tag: 'input', type: 'checkbox', label: 'I have read the community rules', required: true, invalid: false, checked: false, selector: '#rules' },
+] };
+
+test('AI form-fill: required controls are filled from the backend answer, verified, and posted automatically', async () => {
+  const { state, worker } = setup();
+  state.formControls = formControls;
+  state.formFill = count => count === 1 ? { hintId: 'f-1', status: 'RUNNING' }
+    : { hintId: 'f-1', status: 'READY', confidence: 0.92, actions: [{ index: 1, selector: '#rules', action: 'check' }] };
+  const seen = [];
+  state.fillResult = async pending => { seen.push(pending); return seen.length === 1 ? { status: 'needsForm', problems: ['submit'], beforeUrls: [] } : { status: 'submitted', beforeUrls: [] }; };
+  await worker.start(formJob());
+  await settleUntil(async () => (await worker.getTasks())[1]?.phase === 'submitted');
+  assert.equal(state.formFillRequests[0].method, 'POST');
+  assert.deepEqual(state.formFillRequests[0].body, { url: formControls.url, controls: formControls.controls });
+  assert.ok(state.formFillRequests[1].url.endsWith('/tasks/job-form/form-fill/f-1') && state.formFillRequests[1].method === 'GET');
+  assert.deepEqual(JSON.parse(JSON.stringify(state.appliedActions)), [[{ index: 1, selector: '#rules', action: 'check' }]]);
+  assert.equal(seen[1].formFillResume, true);
+  assert.equal(seen[1].formFillRounds, 1);
+  assert.equal(seen[1].autoSubmit, true, 'form-fill actions do not turn automatic submit off');
+  assert.equal(state.reports.length, 0);
+});
+
+for (const [label, answer, message] of [
+  ['low confidence (no actions)', { hintId: 'f-2', status: 'READY', actions: [], errorCode: 'LOW_CONFIDENCE' }, /AI chưa điền chắc chắn các mục bắt buộc; mở tab để kiểm và bấm Đăng\./],
+  ['an action on a control that was not described', { hintId: 'f-3', status: 'READY', actions: [{ index: 1, selector: 'button[type="submit"]', action: 'check' }] }, /AI chưa điền chắc chắn/],
+  ['a failed AI request', { hintId: 'f-4', status: 'FAILED', errorCode: 'AI_FAILED' }, /AI chưa điền chắc chắn/],
+  ['the feature turned off (404)', new Error('Form-fill is disabled'), /Còn mục bắt buộc chưa điền/],
+]) test(`AI form-fill stops for the operator on ${label}, without touching the form`, async () => {
+  const { state, worker } = setup();
+  state.formControls = formControls;
+  state.formFill = answer;
+  state.result = { status: 'needsForm', problems: ['required'], beforeUrls: [], message: 'Còn mục bắt buộc chưa điền hoặc nút Đăng đang khoá. Điền các mục đó trong tab rồi bấm Đăng.' };
+  await worker.start(formJob());
+  assert.equal(state.fills, 1);
+  assert.equal(state.appliedActions, undefined);
+  assert.deepEqual([state.reports[0].outcome, state.reports[0].reason], ['NEEDS_ACTION', 'WAITING_USER']);
+  assert.match(state.reports[0].message, message);
+  assert.equal((await worker.getTasks())[1].phase, 'waitingUser');
+});
+
+test('AI form-fill asks at most twice per post', async () => {
+  const { state, worker } = setup();
+  state.formControls = formControls;
+  state.formFill = { hintId: 'f-5', status: 'READY', actions: [{ index: 0, selector: '#post-language', action: 'select', value: 'English' }] };
+  state.fillResult = async pending => (pending.formFillRounds >= 2 ? { status: 'filled', message: 'AI chưa điền chắc chắn các mục bắt buộc; mở tab để kiểm và bấm Đăng.' } : { status: 'needsForm', problems: ['invalid'], beforeUrls: [] });
+  await worker.start(formJob());
+  assert.equal(state.formFillRequests.filter(request => request.method === 'POST').length, 2);
+  assert.equal(state.fills, 3);
+  assert.match(state.reports[0].message, /AI chưa điền chắc chắn/);
+  assert.equal((await worker.getTasks())[1].formFillRounds, 2);
+});
+
+test('AI form-fill stays off unless the backend enables it', async () => {
+  const { state, worker } = setup();
+  state.formControls = formControls;
+  state.result = { status: 'needsForm', problems: ['submit'], beforeUrls: [], message: 'Còn mục bắt buộc chưa điền hoặc nút Đăng đang khoá. Điền các mục đó trong tab rồi bấm Đăng.' };
+  await worker.start(formJob({ formFill: { enabled: false } }));
+  assert.equal(state.formFillRequests, undefined);
+  assert.match(state.reports[0].message, /Còn mục bắt buộc/);
+});

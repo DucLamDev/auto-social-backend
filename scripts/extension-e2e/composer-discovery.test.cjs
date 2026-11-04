@@ -107,7 +107,7 @@ for (const [engine, html, selector] of [
   ['devto', '<form id="article-form"><textarea id="article-form-title">Existing draft</textarea><textarea id="article_body_markdown"></textarea><button>Publish</button></form>', '#article-form-title'],
 ]) test(`${engine} preserves existing drafts before writing any field`, async t => {
   const { page, job } = await fixture(t, engine, html);
-  assert.equal((await page.evaluate(fill, job)).status, 'notReady');
+  assert.equal((await page.evaluate(fill, job)).status, 'draft');
   assert.equal(await page.locator(selector).evaluate(node => node.value ?? node.innerText), 'Existing draft');
   assert.deepEqual(await page.evaluate(() => window.sent), []);
 });

@@ -23,7 +23,8 @@ export class ClaimExtensionTaskDto {
 
 export const EXTENSION_NEEDS_ACTION_REASONS = ['CAPTCHA_REQUIRED', 'WAITING_USER', 'SUBMIT_UNCONFIRMED', 'SUBMIT_REJECTED', 'MODERATION_PENDING', 'AUTH_REQUIRED', 'ACCOUNT_MISMATCH'] as const;
 /** Reasons the extension reports only when nothing was submitted, so a retry cannot duplicate the post. */
-export const EXTENSION_FAILED_REASONS = ['LOGIN_REQUIRED', 'EDITOR_NOT_FOUND', 'PERMISSION_REQUIRED', 'PAGE_LOAD_FAILED', 'CANCELLED', 'MEDIA_REQUIRED', 'PLATFORM_UNAVAILABLE'] as const;
+// CONTENT_MISMATCH: the editor did not keep the text that was put in, so nothing was submitted.
+export const EXTENSION_FAILED_REASONS = ['LOGIN_REQUIRED', 'EDITOR_NOT_FOUND', 'PERMISSION_REQUIRED', 'PAGE_LOAD_FAILED', 'CANCELLED', 'MEDIA_REQUIRED', 'PLATFORM_UNAVAILABLE', 'CONTENT_MISMATCH'] as const;
 
 export class CreateExtensionDeviceDto {
   @ApiProperty({ example: 'Chrome văn phòng' })
@@ -53,6 +54,17 @@ export class ExtensionTaskResultDto {
   @IsString()
   @MaxLength(500)
   message?: string;
+
+  @ApiPropertyOptional({ description: 'Username the sign-in check found in Chrome (account mismatch); kept in the attempt details only' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  detectedUsername?: string;
+
+  @ApiPropertyOptional({ description: 'Google asked for a verification the extension cannot complete; kept in the attempt details only' })
+  @IsOptional()
+  @IsBoolean()
+  googleBlocked?: boolean;
 }
 
 export class ExtensionDeliveryDto {

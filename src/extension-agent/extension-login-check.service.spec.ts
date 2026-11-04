@@ -12,6 +12,15 @@ describe('separate login methods', () => {
     const service = new ExtensionLoginCheckService(prisma as never, { resolve: jest.fn().mockResolvedValue({ extensionLogin: { username: 'google@example.test', password: 'not-a-social-password' } }) } as never);
     await expect(service.authStep({ id: 'device' } as never, 'check', { step: 'password', pageUrl: 'https://social.test/login' })).rejects.toThrow('no matching credential');
   });
+  it('refuses credentials to a sign-up page during a login check', async () => {
+    const passwordSettings = { ...settings, extensionSession: { ...settings.extensionSession, provider: 'password', loginUsername: 'social-user' } };
+    const prisma = { extensionLoginCheck: { findFirst: jest.fn().mockResolvedValue({ id: 'check', platformAccountId: 'account', method: 'configured', account: { settings: passwordSettings } }), updateMany: jest.fn() } };
+    const resolve = jest.fn().mockResolvedValue({ extensionLogin: { username: 'social-user', password: 'secret' } });
+    const service = new ExtensionLoginCheckService(prisma as never, { resolve } as never);
+    await expect(service.authStep({ id: 'device' } as never, 'check', { step: 'password', pageUrl: 'https://social.test/signup' })).rejects.toThrow('sign-up form');
+    expect(resolve).not.toHaveBeenCalled();
+    expect(prisma.extensionLoginCheck.updateMany).not.toHaveBeenCalled();
+  });
   it('queues Google only after a failed password attempt and keeps the first result', async () => {
     const check = { id: 'check', deviceId: 'device', platformAccountId: 'account', batchId: 'batch', method: 'password', tryFallback: true, account: { settings } };
     const tx = { extensionLoginCheck: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), create: jest.fn() } };
@@ -155,5 +164,19 @@ describe('bulk login checks', () => {
     const { service, tx } = setup([{ platformAccountId: 'signed-in', status: 'AUTHENTICATED' }]);
     await expect(service.queue('owner', undefined, false, true)).resolves.toMatchObject({ queued: 3, skipped: 0 });
     expect(queuedIds(tx)).toContain('signed-in');
+  });
+});
+
+describe('posting readiness in the login check list', () => {
+  it('keeps a Lemmy account without a community ready while AI form filling can choose one', async () => {
+    const lemmy = { id: 'lemmy', name: 'Lemmy', platform: { name: 'Lemmy.world', slug: 'lemmy-world' }, extensionLoginChecks: [],
+      settings: { extensionImport: {}, delivery: 'extension', extensionEngine: 'lemmy', extensionTargetUrl: 'https://lemmy.world/create_post', extensionAutoSubmit: true } };
+    const prisma = { platformAccount: { findMany: jest.fn().mockResolvedValue([lemmy]) } };
+    const config = (enabled: boolean) => ({ get: (key: string) => (key === 'EXTENSION_AI_FORM_FILL_ENABLED' ? enabled : undefined) });
+    const [withAi] = await new ExtensionLoginCheckService(prisma as never, {} as never, config(true) as never).list('owner');
+    expect(withAi?.posting).toMatchObject({ status: 'CONFIGURED', engine: 'lemmy' });
+    expect(withAi?.posting.message).toContain('AI sẽ chọn community');
+    const [withoutAi] = await new ExtensionLoginCheckService(prisma as never, {} as never, config(false) as never).list('owner');
+    expect(withoutAi?.posting).toMatchObject({ status: 'DESTINATION_REQUIRED' });
   });
 });

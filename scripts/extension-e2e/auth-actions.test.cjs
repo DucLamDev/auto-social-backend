@@ -488,3 +488,40 @@ test('a Cloudflare "Just a moment" page waits for the check; a CAPTCHA in the fo
   } finally { await page.close(); }
 });
 
+
+// A Discourse /signup page was once filled with the account's credentials.
+const discourseSignup = '<div class="d-modal"><form id="signup"><input type="email" id="new-account-email" name="email" placeholder="Email">'
+  + '<input id="new-account-username" name="username" placeholder="Username"><input id="new-account-name" name="name" placeholder="Name">'
+  + '<input type="password" id="new-account-password" name="password" placeholder="Password"><button type="submit">Sign Up</button></form><a href="/login">Log In</a></div>';
+for (const [label, url, html] of [
+  ['a Discourse /signup page', 'https://forum.test/signup', discourseSignup],
+  ['a sign-up form with email, username and password on another path', 'https://forum.test/', discourseSignup],
+  ['a registration form with a confirm-password field', 'https://forum.test/account', '<form><input name="login" placeholder="Username"><input type="password" name="password"><input type="password" name="password_confirm" placeholder="Confirm password"><button type="submit">Create</button></form>'],
+  ['a registration path that only asks for an email first', 'https://forum.test/register/', '<form><input type="email" name="email"><button type="submit">Continue</button></form>'],
+]) test(`${label} is never filled or submitted; it is reported as not signed in`, async () => {
+  const page = await pageAt(url, html);
+  try {
+    await page.evaluate(() => { window.submits = 0; for (const form of document.querySelectorAll('form')) form.onsubmit = event => { event.preventDefault(); window.submits++; }; });
+    const probe = await page.evaluate(accountAuthStep, { job });
+    assert.equal(probe.state, 'challenge');
+    assert.match(probe.message, /trang đăng ký tài khoản mới/);
+    // Even a step already started for this page fills nothing.
+    for (const action of ['identifier', 'password']) {
+      const applied = await page.evaluate(accountAuthStep, { job, action, expectedPageUrl: page.url(), payload: { username: 'alice@example.test', password: 'fixture-password' } }); // vpsttt-secretscan: ignore (test fixture, not a real password)
+      assert.equal(applied.state, 'challenge');
+    }
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('input')].map(input => input.value).filter(Boolean)), []);
+    assert.equal(await page.evaluate(() => window.submits), 0);
+  } finally { await page.close(); }
+});
+
+test('an ordinary login form (email or username + one password) is still filled', async () => {
+  const page = await pageAt('https://forum.test/login', '<form><input name="login" placeholder="Email or username"><input type="password" name="password"><button type="submit">Log in</button></form>');
+  try {
+    await page.evaluate(() => { window.submits = 0; document.querySelector('form').onsubmit = event => { event.preventDefault(); window.submits++; }; });
+    assert.equal((await page.evaluate(accountAuthStep, { job })).state, 'password');
+    const applied = await page.evaluate(accountAuthStep, { job, action: 'password', expectedPageUrl: page.url(), payload: { username: 'alice@example.test', password: 'fixture-password' } }); // vpsttt-secretscan: ignore (test fixture, not a real password)
+    assert.equal(applied.state, 'submitted');
+    assert.equal(await page.evaluate(() => window.submits), 1);
+  } finally { await page.close(); }
+});

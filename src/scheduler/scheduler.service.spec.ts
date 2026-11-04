@@ -170,4 +170,28 @@ describe('SchedulerService worker crash recovery', () => {
       data: { status: PublishJobStatus.RETRY },
     });
   });
+
+  it('marks extension claims silent for 10 minutes as result unknown, for every owner, once per row', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-11-04T10:00:00Z'));
+    try {
+      const updateMany = jest.fn().mockResolvedValue({ count: 2 });
+      const prisma = { publishJob: { updateMany } } as unknown as PrismaService;
+      await new SchedulerService(prisma, { enqueue: jest.fn() } as unknown as PublishQueueService, campaignStatus()).expireExtensionClaims();
+      expect(updateMany).toHaveBeenCalledWith({
+        where: {
+          status: PublishJobStatus.NEEDS_ACTION,
+          // Conditional on the row still being silent: a second replica running at once changes nothing.
+          lastErrorCode: null,
+          lockedAt: { lt: new Date('2026-11-04T09:50:00Z') },
+          platformAccount: { settings: { path: ['delivery'], equals: 'extension' } },
+        },
+        data: { lastErrorCode: 'EXTENSION_RESULT_UNKNOWN', lastErrorMessage: expect.stringContaining('10 phút') as string },
+      });
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('keeps the scheduler running when the claim sweep fails', async () => {
+    const prisma = { publishJob: { updateMany: jest.fn().mockRejectedValue(new Error('database down')) } } as unknown as PrismaService;
+    await expect(new SchedulerService(prisma, { enqueue: jest.fn() } as unknown as PublishQueueService, campaignStatus()).expireExtensionClaims()).resolves.toBeUndefined();
+  });
 });

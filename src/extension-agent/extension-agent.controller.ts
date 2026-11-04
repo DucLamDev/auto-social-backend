@@ -12,6 +12,8 @@ import { CurrentDevice, ExtensionDeviceGuard } from './extension-device.guard';
 import { ListSelectorSuggestionsQueryDto, UiHintRequestDto } from './ui-recovery/ui-hint.dto';
 import { ExtensionUiRecoveryService } from './ui-recovery/ui-recovery.service';
 import { ExtensionSelectorSuggestionService } from './ui-recovery/selector-suggestion.service';
+import { FormFillRequestDto } from './ui-recovery/form-fill.dto';
+import { ExtensionFormFillService } from './ui-recovery/form-fill.service';
 
 /** Operator side: pair Chrome extensions and switch accounts to extension delivery. */
 @ApiTags('extension')
@@ -95,6 +97,7 @@ export class ExtensionAgentController {
     private readonly agent: ExtensionAgentService,
     private readonly sessions: ExtensionAccountSessionService,
     private readonly uiRecovery: ExtensionUiRecoveryService,
+    private readonly formFill: ExtensionFormFillService,
   ) {}
 
   @Post('tasks/:id/ui-hint')
@@ -107,6 +110,19 @@ export class ExtensionAgentController {
   @Get('tasks/:id/ui-hint/:hintId')
   uiHintStatus(@CurrentDevice() device: AuthenticatedDevice, @Param('id', ParseUUIDPipe) id: string, @Param('hintId', ParseUUIDPipe) hintId: string) {
     return this.uiRecovery.get(device, id, hintId);
+  }
+
+  @Post('tasks/:id/form-fill')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Ask the AI which values the extra controls of the post form need (language, community…); answers within ~8 s or poll' })
+  formFillRequest(@CurrentDevice() device: AuthenticatedDevice, @Param('id', ParseUUIDPipe) id: string, @Body() dto: FormFillRequestDto) {
+    return this.formFill.request(device, id, dto);
+  }
+
+  @Get('tasks/:id/form-fill/:hintId')
+  @ApiOperation({ summary: 'Poll an AI form fill: actions the backend checked against the controls the extension sent' })
+  formFillStatus(@CurrentDevice() device: AuthenticatedDevice, @Param('id', ParseUUIDPipe) id: string, @Param('hintId', ParseUUIDPipe) hintId: string) {
+    return this.formFill.get(device, id, hintId);
   }
 
   @Post('tasks/:id/auth')

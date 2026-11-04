@@ -9,6 +9,7 @@ import {
   WORKER_CRASH_UNCERTAIN_RESULT_MESSAGE,
   STALE_DELIVERY_AFTER_MS,
 } from '../publishing/publishing.constants';
+import { expireStaleExtensionClaims } from '../extension-agent/stale-claims';
 
 @Injectable()
 export class SchedulerService {
@@ -108,5 +109,22 @@ export class SchedulerService {
       });
     }
     await this.campaignStatus.reconcileTerminal();
+  }
+
+  /**
+   * A Chrome extension that claimed a post and then went silent (closed,
+   * crashed, lost its network) never calls claim() again, so the job would
+   * show "Chờ tiện ích" forever. Marking it "result unknown" every minute asks
+   * the operator to check the site. The update is conditional on the row still
+   * being silent, so every API replica can run it at the same time.
+   */
+  @Cron(CronExpression.EVERY_MINUTE, { name: 'expire-extension-claims', waitForCompletion: true })
+  async expireExtensionClaims(): Promise<void> {
+    try {
+      const expired = await expireStaleExtensionClaims(this.prisma);
+      if (expired) this.logger.warn(`Marked ${expired} silent extension claim(s) as result unknown`);
+    } catch (error) {
+      this.logger.error(`Failed to expire extension claims: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
   }
 }

@@ -14,7 +14,15 @@ const gaps: Record<string, { message: string; url?: string }> = {
   'linux-foundation-forum': { message: 'Chưa nhận diện được phiên và form tạo thảo luận. Cần xác định chuyên mục đích sau đăng nhập.' },
   disqus: { message: 'Disqus đã dừng Channels thông thường; chỉ còn Discuss Disqus cho hỗ trợ sản phẩm. Không có luồng đăng bài lên hồ sơ như mạng xã hội.', url: 'https://help.disqus.com/en/articles/1717095-channel-help' },
 };
-export function extensionFlowAudit(slug: string, value: unknown) {
+/** Shown instead of "community required" while AI form filling can pick one per post. */
+export const AI_COMMUNITY_NOTE = 'AI sẽ chọn community nếu chưa cấu hình.';
+
+/**
+ * `formFill`: the extension may ask the AI to fill the post form's extra
+ * controls (EXTENSION_AI_FORM_FILL_ENABLED), so a missing Lemmy / Discuit
+ * community no longer blocks posting.
+ */
+export function extensionFlowAudit(slug: string, value: unknown, options: { formFill?: boolean } = {}) {
   const settings = record(value), setup = record(settings.extensionSetup);
   const flow = extensionFlowForPlatform(slug);
   if (setup.status === 'ACCESS_RESTRICTED') return { status: 'ACCESS_RESTRICTED', message: String(setup.message || 'Nền tảng hạn chế quyền đăng; đăng nhập lại không khôi phục quyền.'), implemented: Boolean(flow) };
@@ -22,12 +30,17 @@ export function extensionFlowAudit(slug: string, value: unknown) {
   // Disqus has no post destination; Warrior Forum's terms forbid automated access.
   if (!flow) return { status: slug === 'disqus' ? 'UNAVAILABLE' : slug === 'warrior-forum' ? 'MANUAL_ONLY' : 'FLOW_REQUIRED', implemented: false, ...(gaps[slug] || { message: 'Chưa có luồng đăng đã kiểm thử cho nền tảng này.' }) };
   const required: string[] = [];
+  const notes: string[] = [];
   // Stack Exchange tags come from the approved post's AI tags; configured tags are optional.
-  if (['lemmy', 'discuit'].includes(flow.engine) && !settings.extensionCategory) required.push('community đích');
+  if (['lemmy', 'discuit'].includes(flow.engine) && !settings.extensionCategory) {
+    if (options.formFill) notes.push(AI_COMMUNITY_NOTE);
+    else required.push('community đích');
+  }
+  const withNotes = (message: string) => [message, ...notes].join(' ');
   if (!settings.extensionTargetUrl && !flow.targetUrl) required.push('trang tạo bài đích');
   if (required.length) return { status: 'DESTINATION_REQUIRED', implemented: true, engine: flow.engine, message: `Đã có luồng; cần cấu hình ${required.join(', ')}. ${flow.setupHint}` };
-  if (settings.delivery !== 'extension') return { status: 'CONFIGURATION_REQUIRED', implemented: true, engine: flow.engine, message: `Đã có luồng, chưa bật cấu hình đăng cho tài khoản. ${flow.setupHint}` };
+  if (settings.delivery !== 'extension') return { status: 'CONFIGURATION_REQUIRED', implemented: true, engine: flow.engine, message: withNotes(`Đã có luồng, chưa bật cấu hình đăng cho tài khoản. ${flow.setupHint}`) };
   try { validateExtensionFlow(slug, parseExtensionDeliverySettings(settings)); }
   catch { return { status: 'DESTINATION_REQUIRED', implemented: true, engine: flow.engine, message: `Cấu hình đích chưa hợp lệ. ${flow.setupHint}` }; }
-  return { status: 'CONFIGURED', implemented: true, engine: flow.engine, message: flow.setupHint };
+  return { status: 'CONFIGURED', implemented: true, engine: flow.engine, message: withNotes(flow.setupHint) };
 }

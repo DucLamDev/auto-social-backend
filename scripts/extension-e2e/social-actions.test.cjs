@@ -188,7 +188,8 @@ for (const tweaks of [{ wrongAudience: true }, { existingDraft: true }]) {
   test(`Quora does not overwrite a draft or use a different audience: ${Object.keys(tweaks)[0]}`, async () => {
     const { page, job } = await fixture('quora', { personal: true, ...tweaks });
     try {
-      assert.equal((await page.evaluate(fillSocialAndSubmit, job)).status, 'notReady');
+      // A draft waits for the operator (NEEDS_ACTION), and so does a wrong audience: neither is a missing editor.
+      assert.equal((await page.evaluate(fillSocialAndSubmit, job)).status, tweaks.existingDraft ? 'draft' : 'filled');
       assert.equal(await page.evaluate(() => window.records.length), 0);
       assert.equal(await page.locator('.doc').innerText(), tweaks.existingDraft ? 'My unrelated draft' : '');
     } finally { await page.close(); }

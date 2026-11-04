@@ -41,7 +41,7 @@ export function deterministicIssues(draft: DraftForCheck, contract: PlatformCont
   if (!draft.body.trim()) return ['Nội dung trống'];
   if (contract.maxChars) {
     const length = publishedLength(draft, contract, canonicalUrl);
-    if (length > contract.maxChars) issues.push(`Dài ${length}/${contract.maxChars} ký tự, cần rút ngắn`);
+    if (length > contract.maxChars) issues.push(`Dài ${length}/${contract.maxChars} ký tự, cần bớt ít nhất ${length - contract.maxChars} ký tự`);
   }
   if (contract.titleRequired && !draft.title?.trim()) issues.push('Thiếu tiêu đề');
   if (draft.title && countChars(draft.title.trim(), 'graphemes') > contract.titleMaxChars) {
@@ -113,7 +113,13 @@ export const reviewJsonSchema = {
   },
 } as const;
 
-export function reviewInstructions(contract: PlatformContract): string {
+/**
+ * The editor's instructions. With the draft's published length, the editor
+ * knows the hard limit too, so it never asks for additions the post has no
+ * room for.
+ */
+export function reviewInstructions(contract: PlatformContract, publishedLength?: number): string {
+  const over = contract.maxChars && publishedLength !== undefined ? publishedLength - contract.maxChars : 0;
   return [
     `You are a strict senior editor for ${contract.name}. Judge the draft as a real member of its audience would.`,
     'Score each criterion from 1 to 10:',
@@ -121,11 +127,14 @@ export function reviewInstructions(contract: PlatformContract): string {
     '- specificity: concrete details, steps, numbers and examples instead of generic claims.',
     '- platformFit: format, length, tone and community norms of this destination; promotional posts in forums and communities score low.',
     '- naturalness: reads like a knowledgeable human, no filler or AI cliches.',
+    contract.maxChars
+      ? `Hard length limit: the published post has at most ${contract.maxChars} characters, counting hashtags, links and the source line the system adds${publishedLength !== undefined ? `; this draft has ${publishedLength}` : ''}. Judge it within that limit and never ask for additions that would not fit${over > 0 ? `; it is ${over} characters over, so one issue must ask to cut at least ${over} characters` : ''}.`
+      : '',
     'score is the overall quality from 1 to 10; 7 means ready to publish without edits.',
     `languageOk is true only when the draft is written in ${LANGUAGE_NAMES[contract.language]}.`,
     'unsupportedClaims lists statements about the brand, its products, prices, customers, performance or offers that are not supported by the brief or the brand facts. General, widely known technical knowledge is not an unsupported claim.',
     'issues lists at most five short, actionable fixes written in Vietnamese for the operator. Do not rewrite the post.',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 /**
@@ -145,9 +154,13 @@ export function qualityInstructions(contract: PlatformContract, engine?: string)
   ].filter(Boolean).join('\n');
 }
 
-/** Higher is better: a passing draft beats any failing one, then the editor's score, then fewer machine issues. */
-export function draftRank(passed: boolean, review: ContentReview | null, issues: readonly string[]): number {
-  return (passed ? 1_000 : 0) + (review?.score ?? 0) * 10 - issues.length;
+/**
+ * Higher is better: any draft that fits the character limit beats every draft
+ * over it (the destination would refuse those), then a passing draft beats a
+ * failing one, then the editor's score, then fewer machine issues.
+ */
+export function draftRank(passed: boolean, review: ContentReview | null, issues: readonly string[], overLimit = false): number {
+  return (overLimit ? 0 : 10_000) + (passed ? 1_000 : 0) + (review?.score ?? 0) * 10 - issues.length;
 }
 
 export function reviewPassed(review: ContentReview): boolean {

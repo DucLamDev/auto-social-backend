@@ -15,21 +15,25 @@ function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>)
 
 // Selectors are declarative data. All executable workflow steps ship in the
 // extension, and require a visible, unambiguous composer before any write.
+// inputMode: rich editors that render formatting get `pasteHtml` (post.bodyHtml,
+// post.body as text/plain); Markdown textareas get `value`. Plain-text composers
+// (Mastodon, Bluesky, Minds, LinkedIn feed…) and mixed lists of editors (Reddit,
+// Stack Exchange, Tinhte) keep the runner's choice by element type.
 export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRecipe> = {
   // daily.dev /squads/create opens its composer dialog (form#smart_composer) with the
   // signed-in user's own profile as audience; a new post opens /posts/<slug>.
   dailydev: recipe('dailydev', {
     readySelectors: ['form#smart_composer'], titleSelectors: ['form#smart_composer textarea[name="title"]'],
-    bodySelectors: ['form#smart_composer .ProseMirror[contenteditable="true"]'],
+    bodySelectors: ['form#smart_composer .ProseMirror[contenteditable="true"]'], inputMode: 'pasteHtml',
     submitSelectors: ['button[type="submit"][form="smart_composer"]'], successUrlPattern: '/posts/[^/?#]+(?:[?#].*)?$',
     publishedTitleSelectors: ['h1'], publishedBodySelectors: ['[class*="markdown"]'],
   }),
   differ: recipe('differ', {
-    readySelectors: ['textarea[name="title"]'], titleSelectors: ['textarea[name="title"]'], bodySelectors: ['[contenteditable][aria-label="editable markdown"]'],
+    readySelectors: ['textarea[name="title"]'], titleSelectors: ['textarea[name="title"]'], bodySelectors: ['[contenteditable][aria-label="editable markdown"]'], inputMode: 'pasteHtml',
     submitSelectors: ['button#post-submit-button'], successUrlPattern: '/p/[^/?#]+(?:[?#].*)?$', publishedTitleSelectors: ['h1'], publishedBodySelectors: ['article', '.prose'],
   }),
   dzone: recipe('dzone', {
-    readySelectors: ['textarea.article-title[name="title"]'], titleSelectors: ['textarea.article-title[name="title"]'], bodySelectors: ['.fr-element.fr-view[contenteditable]'],
+    readySelectors: ['textarea.article-title[name="title"]'], titleSelectors: ['textarea.article-title[name="title"]'], bodySelectors: ['.fr-element.fr-view[contenteditable]'], inputMode: 'pasteHtml',
     submitSelectors: ['.dropdown-menu li[ng-click="s.save(true, false, false, true)"]'], successUrlPattern: '/articles/[^/?#]+(?:[?#].*)?$', publishedTitleSelectors: ['h1'], publishedBodySelectors: ['.article-content', '.content-body', 'article'],
   }),
   stackexchange: recipe('stackexchange', {
@@ -39,12 +43,14 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
     successUrlPattern: '/questions/\\d+/[^/?#]+(?:[?#].*)?$', publishedTitleSelectors: ['#question-header h1 a'], publishedBodySelectors: ['#question .s-prose'],
   }),
   lemmy: recipe('lemmy', {
-    readySelectors: ['textarea#post-title'], titleSelectors: ['textarea#post-title'], bodySelectors: ['textarea[id^="markdown-textarea-"]'],
+    readySelectors: ['textarea#post-title'], titleSelectors: ['textarea#post-title'], bodySelectors: ['textarea[id^="markdown-textarea-"]'], inputMode: 'value',
+    // lemmy-ui post form: one language <select> (ids differ between versions).
+    languageSelectors: ['#post-language', 'select[id^="post-language"]', 'form select[id^="language-select-"]'],
     submitSelectors: ['form button[type="submit"]'], successUrlPattern: '/post/\\d+(?:[?#].*)?$',
     publishedTitleSelectors: ['.post-title'], publishedBodySelectors: ['.post-listing .md-div', '.post-listing .md'],
   }),
   discuit: recipe('discuit', {
-    readySelectors: ['textarea.page-new-post-title'], titleSelectors: ['textarea.page-new-post-title'], bodySelectors: ['textarea.page-new-post-body', '.page-new-post-body textarea'],
+    readySelectors: ['textarea.page-new-post-title'], titleSelectors: ['textarea.page-new-post-title'], bodySelectors: ['textarea.page-new-post-body', '.page-new-post-body textarea'], inputMode: 'value',
     submitSelectors: ['.page-new-form button[type="submit"]'], successUrlPattern: '/[^/]+/post/[a-zA-Z0-9_-]+(?:[?#].*)?$',
     publishedTitleSelectors: ['.post-title', '.post-page-title'], publishedBodySelectors: ['.post-body', '.post-page-body'],
   }),
@@ -89,7 +95,7 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
   tumblr: recipe('tumblr', {
     readySelectors: ['[contenteditable="true"][role="textbox"]', '[contenteditable="true"][data-placeholder]'],
     titleSelectors: ['[contenteditable="true"][data-placeholder="Title"]', 'input[placeholder="Title"]'],
-    bodySelectors: ['[contenteditable="true"][data-placeholder="Your text here"]', '[contenteditable="true"][aria-label="Post body"]', '[contenteditable="true"][role="textbox"]'],
+    bodySelectors: ['[contenteditable="true"][data-placeholder="Your text here"]', '[contenteditable="true"][aria-label="Post body"]', '[contenteditable="true"][role="textbox"]'], inputMode: 'pasteHtml',
     submitSelectors: ['button[aria-label="Post"]'], successUrlPattern: '/(?:blog/view/)?[^/]+/\\d+(?:/[^?#]*)?(?:[?#].*)?$',
     // The text editor accepts a pasted image or a file from its photo block.
     optionalMedia: 'image', mediaInputSelectors: ['input[type="file"][accept*="image"]'], mediaOpenerLabels: ['Photo', 'Add photo', 'Add an image', 'Ảnh'],
@@ -99,14 +105,14 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
   }),
   devto: recipe('devto', {
     readySelectors: ['#article-form'], titleSelectors: ['#article-form-title', 'textarea[name="article[title]"]'],
-    bodySelectors: ['#article_body_markdown', 'textarea[name="article[body_markdown]"]'],
+    bodySelectors: ['#article_body_markdown', 'textarea[name="article[body_markdown]"]'], inputMode: 'value',
     submitSelectors: ['button[data-testid="publish-button"]', '#article-form button[type="submit"]'],
     successUrlPattern: '/[^/]+/[^/?#]+-[a-z0-9]+(?:[?#].*)?$', publishedTitleSelectors: ['#main-title', 'h1'], publishedBodySelectors: ['#article-body'],
   }),
   medium: recipe('medium', {
     readySelectors: ['.postArticle-content [contenteditable="true"]', 'article [contenteditable="true"]'],
     titleSelectors: ['h3[data-placeholder="Title"]', 'h1[data-placeholder="Title"]', '[data-testid="editor-title"]'],
-    bodySelectors: ['.section-inner[contenteditable="true"]', '[data-testid="editor-content"][contenteditable="true"]'],
+    bodySelectors: ['.section-inner[contenteditable="true"]', '[data-testid="editor-content"][contenteditable="true"]'], inputMode: 'pasteHtml',
     submitSelectors: ['button[data-action="publish"]'],
     successUrlPattern: '/(?:@[^/]+|[^/]+)/[^/?#]+-[a-f0-9]{12}(?:[?#].*)?$',
     publishedTitleSelectors: ['article h1'], publishedBodySelectors: ['article .section-inner', 'article'],
@@ -114,13 +120,13 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
   substack: recipe('substack', {
     readySelectors: ['.tiptap[contenteditable="true"]', '.ProseMirror[contenteditable="true"]'],
     titleSelectors: ['textarea[placeholder="Title"]', 'input[placeholder="Title"]', '[data-placeholder="Title"][contenteditable="true"]'],
-    bodySelectors: ['.tiptap[contenteditable="true"]', '.ProseMirror[contenteditable="true"]'],
+    bodySelectors: ['.tiptap[contenteditable="true"]', '.ProseMirror[contenteditable="true"]'], inputMode: 'pasteHtml',
     successUrlPattern: '/p/[^/?#]+(?:[?#].*)?$',
     publishedTitleSelectors: ['h1.post-title', 'article h1'], publishedBodySelectors: ['.available-content .body', '.body.markup', 'article'],
   }),
   quora: recipe('quora', {
     readySelectors: ['[role="dialog"] .doc[contenteditable="true"]', '[role="dialog"] .ql-editor[contenteditable="true"]', '.q-box .ql-editor[contenteditable="true"]'],
-    bodySelectors: ['[role="dialog"] .doc[contenteditable="true"]', '[role="dialog"] .ql-editor[contenteditable="true"]', '.q-box .ql-editor[contenteditable="true"]'],
+    bodySelectors: ['[role="dialog"] .doc[contenteditable="true"]', '[role="dialog"] .ql-editor[contenteditable="true"]', '.q-box .ql-editor[contenteditable="true"]'], inputMode: 'pasteHtml',
     submitSelectors: ['[role="dialog"] button.puppeteer_test_modal_submit'],
     successUrlPattern: '^https://[^/]+\\.quora\\.com/(?:profile/[^/?#]+/(?!(?:posts|answers|questions|followers|following|about)(?:[/?#]|$))[^/?#]+|(?!profile|about|followers|following)[^/?#]+)(?:[?#].*)?$',
     publishedBodySelectors: ['.q-box .q-text.qu-display--block', '.q-text'], publishedLinkSelectors: ['a[href*="/posts/"]', 'a[href*="/profile/"]', 'a.q-box[href]'],
@@ -145,6 +151,7 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
     readySelectors: ['input[placeholder*="title" i]', 'textarea[placeholder*="title" i]', '[data-slate-editor="true"][contenteditable="true"]'],
     titleSelectors: ['input[placeholder*="title" i]', 'textarea[placeholder*="title" i]', 'input[name="title"]', 'input[aria-label="Title"]'],
     bodySelectors: ['[data-slate-editor="true"][contenteditable="true"]', '.tiptap[contenteditable="true"]', '.ProseMirror[contenteditable="true"]', 'textarea[aria-label*="content" i]', 'textarea[name="content"]'],
+    inputMode: 'pasteHtml',
     successUrlPattern: '/content/[a-zA-Z0-9]+/[^/?#]+(?:[?#].*)?$',
     publishedTitleSelectors: ['h1'], publishedBodySelectors: ['article', '[data-testid="article-content"]', '.prose'],
   }),

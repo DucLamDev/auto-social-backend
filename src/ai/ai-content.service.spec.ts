@@ -5,6 +5,7 @@ import { PrismaService } from '../database/prisma.service';
 import { AiProvider } from './ai-provider';
 import { AiContentService, contractInstructions, extractJsonObject } from './ai-content.service';
 import { platformContract } from '../platforms/platform-contract';
+import { checkPostLength } from '../platforms/post-length';
 import { BrandProfileService } from './brand-profile.service';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
 
@@ -582,7 +583,7 @@ describe('AiContentService quality-checked generation', () => {
   });
   const reviewed = (review: Record<string, unknown> = passingReview) => ({ output_text: JSON.stringify(review) });
 
-  function setup(create: jest.Mock) {
+  function setup(create: jest.Mock, { slug = 'bluesky', canonicalUrl = null as string | null } = {}) {
     const created: Array<Record<string, unknown>> = [];
     const transaction = {
       contentVariant: {
@@ -597,18 +598,18 @@ describe('AiContentService quality-checked generation', () => {
     const prisma = {
       content: {
         findFirstOrThrow: jest.fn().mockResolvedValue({
-          id: 'content-1', title: 'Chiến dịch nội bộ T11', body: brief, summary: brief, canonicalUrl: null,
+          id: 'content-1', title: 'Chiến dịch nội bộ T11', body: brief, summary: brief, canonicalUrl,
           status: 'DRAFT', aiAnalysis: { kind: 'brief' },
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       platform: {
         findMany: jest.fn().mockResolvedValue([{
-          id: 'platform-1', slug: 'bluesky',
+          id: 'platform-1', slug,
           prompts: [{ systemPrompt: 'System', userTemplate: 'Title or brief: {{title}}\nSummary: {{summary}}\n{{body}}' }],
         }]),
         findFirst: jest.fn().mockResolvedValue({
-          id: 'platform-1', slug: 'bluesky',
+          id: 'platform-1', slug,
           prompts: [{ systemPrompt: 'System', userTemplate: 'Title or brief: {{title}}\nSummary: {{summary}}\n{{body}}' }],
         }),
       },
@@ -757,7 +758,7 @@ describe('AiContentService quality-checked generation', () => {
     const create = jest.fn()
       .mockResolvedValueOnce(variant(tooLong))
       .mockResolvedValueOnce(reviewed({ ...passingReview, score: 5, issues: ['Mở bài chung chung'] }))
-      .mockResolvedValueOnce(variant(tooLong))
+      .mockResolvedValueOnce(variant(shortBody))
       .mockResolvedValueOnce(reviewed({ ...passingReview, score: 6, unsupportedClaims: ['Rẻ nhất thị trường'] }))
       .mockResolvedValueOnce(variant('Ngắn nhưng nhạt.'))
       .mockResolvedValueOnce(reviewed({ ...passingReview, score: 4, issues: ['Thiếu chi tiết'] }));
@@ -767,14 +768,122 @@ describe('AiContentService quality-checked generation', () => {
 
     expect(create).toHaveBeenCalledTimes(6);
     expect(request(create, 2).input).toContain('Your previous draft was rejected');
-    expect(request(create, 2).input).toMatch(/- Dài \d+\/300 ký tự/);
+    // The length feedback says how much to cut.
+    expect(request(create, 2).input).toMatch(/- Dài (\d+)\/300 ký tự, cần bớt ít nhất \d+ ký tự/);
+    const [, length, cut] = /Dài (\d+)\/300 ký tự, cần bớt ít nhất (\d+) ký tự/.exec(request(create, 2).input)!;
+    expect(Number(cut)).toBe(Number(length) - 300);
     expect(request(create, 2).input).toContain('- Mở bài chung chung');
     expect(request(create, 2).input).toContain('Editor scores (1-10): overall 5');
     expect(request(create, 4).input).toContain('Remove or ground this claim: Rẻ nhất thị trường');
     // The second attempt (6/10) beats the last one (4/10).
-    expect(created[0]).toMatchObject({ recommended: false, body: tooLong.trim() });
-    expect(created[0]!.reason).toMatch(/^Cần xem lại \(AI chấm 6\/10\): Dài \d+\/300 ký tự/);
-    expect(created[0]!.reason).toContain('Thông tin chưa có căn cứ: Rẻ nhất thị trường');
+    expect(created[0]).toMatchObject({ recommended: false, body: shortBody });
+    expect(created[0]!.reason).toBe('Cần xem lại (AI chấm 6/10): Thông tin chưa có căn cứ: Rẻ nhất thị trường');
+  });
+
+  it('keeps a draft that fits over a higher-scoring one the destination would refuse as too long', async () => {
+    const tooLong = `${shortBody} ${'Thêm chi tiết dài dòng. '.repeat(20)}`;
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant(tooLong))
+      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 9 }))
+      .mockResolvedValueOnce(variant(shortBody))
+      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 6 }))
+      .mockResolvedValueOnce(variant(tooLong))
+      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 10 }));
+    const { service, created } = setup(create);
+
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+    // No shortening call: the kept draft already fits.
+    expect(create).toHaveBeenCalledTimes(6);
+    expect(created[0]).toMatchObject({ body: shortBody, recommended: false });
+    expect(created[0]!.reason).toMatch(/^Cần xem lại \(AI chấm 6\/10\)/);
+    // The editor knew the limit and the length of the draft it judged.
+    expect(request(create, 1).instructions).toMatch(/Hard length limit: the published post has at most 300 characters.*; this draft has \d+\..*it is \d+ characters over/);
+    expect(request(create, 3).instructions).not.toContain('characters over');
+  });
+
+  it('asks the writer once to only shorten a draft still over the limit, and keeps its review when it then fits', async () => {
+    const tooLong = `${shortBody} ${'Thêm chi tiết dài dòng. '.repeat(20)}`;
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant(tooLong)).mockResolvedValueOnce(reviewed())
+      .mockResolvedValueOnce(variant(tooLong)).mockResolvedValueOnce(reviewed())
+      .mockResolvedValueOnce(variant(tooLong)).mockResolvedValueOnce(reviewed())
+      .mockResolvedValueOnce(variant(shortBody, { reason: 'Bản rút gọn' }));
+    const { service, created } = setup(create);
+
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+    expect(create).toHaveBeenCalledTimes(7);
+    const shorten = request(create, 6);
+    expect(shorten.text.format.name).toBe('content_variant');
+    expect(shorten.input).toMatch(/Shorten your draft for Bluesky\. As published it has (\d+) characters; the limit is 300\. Cut at least \d+ characters/);
+    expect(shorten.input).toContain('Only shorten: keep the meaning');
+    expect(shorten.input).toContain(JSON.stringify(tooLong.trim()));
+    // The writer's own judgement of the post stays; the note says it was shortened.
+    expect(created[0]).toMatchObject({ body: shortBody, recommended: true, reason: 'Hợp người đọc (AI chấm 8/10) · đã rút gọn tự động để vừa 300 ký tự' });
+  });
+
+  describe('a Mastodon post that stays over 500 characters', () => {
+    const source = 'https://vpsttt.vn/blog/vps-nvme-cho-lap-trinh-vien-viet-nam';
+    const sentences = [
+      'Triển khai VPS NVMe chỉ trong 60 giây, có người hỗ trợ bằng tiếng Việt khi bạn cần.',
+      'Ổ NVMe đọc ghi nhanh gấp nhiều lần SSD thường, nên cơ sở dữ liệu và build CI chạy mượt hơn hẳn.',
+      'Bạn chọn hệ điều hành, gói cấu hình và vùng đặt máy chủ ngay trên bảng điều khiển.',
+      'Sao lưu tự động mỗi ngày giúp bạn yên tâm thử nghiệm mà không sợ mất dữ liệu.',
+      'Đội kỹ thuật trực cả cuối tuần, trả lời bằng tiếng Việt trong vài phút qua chat.',
+      'Mình đã chuyển ba dự án sang đây.',
+    ];
+    // With the source line the system adds, 545/500 as published.
+    const long = `${[...sentences, 'Bạn đang chạy dự án của mình trên đâu?'].join(' ')}\n\n#vps #nvme #linux`;
+    const stillLong = `${[...sentences, 'Bạn chạy dự án ở đâu?'].join(' ')}\n\n#vps #nvme #linux`;
+    const mastodonDraft = (body: string) => variant(body, { hashtags: ['vps', 'nvme', 'linux'] });
+
+    it('cuts it to fit when the writer cannot, and leaves it for a person to read', async () => {
+      const create = jest.fn()
+        .mockResolvedValueOnce(mastodonDraft(long)).mockResolvedValueOnce(reviewed())
+        .mockResolvedValueOnce(mastodonDraft(long)).mockResolvedValueOnce(reviewed())
+        .mockResolvedValueOnce(mastodonDraft(long)).mockResolvedValueOnce(reviewed())
+        .mockResolvedValueOnce(mastodonDraft(stillLong));
+      const { service, created } = setup(create, { slug: 'mastodon', canonicalUrl: source });
+
+      await service.generate('owner-1', 'content-1', ['mastodon'], 'openai');
+
+      const writer = request(create, 0);
+      expect(writer.instructions).toContain('must be at most 500 characters');
+      expect(writer.instructions).toContain(`The system adds the line "Nguồn: ${source}" below the body (32 characters with the blank line before it), so the body with its hashtags gets at most 468 characters`);
+      expect(writer.instructions).toContain('On Mastodon every link counts as 23 characters');
+      expect(request(create, 1).instructions).toContain('this draft has 545');
+      expect(request(create, 2).input).toContain('Dài 545/500 ký tự, cần bớt ít nhất 45 ký tự');
+      expect(request(create, 6).input).toContain('As published it has 545 characters; the limit is 500. Cut at least 45 characters');
+      expect(request(create, 6).input).toContain('the body with its hashtags must stay within 468 characters');
+      expect(create).toHaveBeenCalledTimes(7);
+
+      const stored = created[0] as { title: string | null; body: string; hashtags: string[]; recommended: boolean; reason: string };
+      const published = checkPostLength({ ...stored, platformSlug: 'mastodon', canonicalUrl: source });
+      expect(published.over).toBe(false);
+      expect(published.length).toBeLessThanOrEqual(500);
+      // Whole sentences of the writer's shorter draft, one closing hashtag kept.
+      expect(stored.body).toMatch(/[.?]\n\n#vps$/);
+      expect(stillLong.startsWith(stored.body.replace(/\n\n#vps$/, ''))).toBe(true);
+      expect(stored.recommended).toBe(false);
+      expect(stored.reason).toMatch(/^Cần xem lại \(AI chấm 8\/10\): Máy đã cắt bớt phần cuối bài, đọc lại trước khi duyệt · đã rút gọn tự động để vừa 500 ký tự$/);
+    });
+
+    it('still fits the post when the shortening request fails', async () => {
+      const create = jest.fn()
+        .mockResolvedValueOnce(mastodonDraft(long)).mockResolvedValueOnce(reviewed())
+        .mockResolvedValueOnce(mastodonDraft(long)).mockResolvedValueOnce(reviewed())
+        .mockResolvedValueOnce(mastodonDraft(long)).mockResolvedValueOnce(reviewed())
+        .mockRejectedValueOnce(Object.assign(new Error('bad request'), { status: 400 }));
+      const { service, created } = setup(create, { slug: 'mastodon', canonicalUrl: source });
+
+      await service.generate('owner-1', 'content-1', ['mastodon'], 'openai');
+
+      const stored = created[0] as { title: string | null; body: string; hashtags: string[]; reason: string };
+      expect(checkPostLength({ ...stored, platformSlug: 'mastodon', canonicalUrl: source }).over).toBe(false);
+      expect(long.startsWith(stored.body.replace(/\n\n#vps$/, ''))).toBe(true);
+      expect(stored.reason).toContain('đã rút gọn tự động để vừa 500 ký tự');
+    });
   });
 
   it('stops rewriting as soon as a rewrite passes', async () => {
@@ -957,5 +1066,12 @@ describe('contractInstructions tag format', () => {
     expect(contractInstructions(platformContract('unix-linux-stackexchange'))).toContain('Tag format: English tags that already exist on this Stack Exchange site');
     expect(contractInstructions(platformContract('devto'))).toContain('Tag format: lowercase letters and digits only');
     expect(contractInstructions(platformContract('bluesky'))).not.toContain('Tag format');
+  });
+
+  it('gives the body budget left by the source line and how links count', () => {
+    const x = contractInstructions(platformContract('x', { defaultLanguage: 'en' }), 'https://vpsttt.vn/a');
+    expect(x).toContain('The system adds the line "Source: https://vpsttt.vn/a" below the body (33 characters with the blank line before it), so the body with its hashtags gets at most 247 characters');
+    expect(x).toContain('every link, also a bare domain such as example.com, counts as 23');
+    expect(contractInstructions(platformContract('bluesky'))).toMatch(/must be at most 300 characters\. Aim for about 255 characters in the body\.$/m);
   });
 });

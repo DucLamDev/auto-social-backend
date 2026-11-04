@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const OUTCOME = { RECEIVED: ['Đã nhận tác vụ từ web', 'ok'], AUTHENTICATED: ['Đăng nhập thành công', 'ok'], PUBLISHED: ['Đã đăng', 'ok'], NEEDS_ACTION: ['Cần xử lý', 'warn'], FAILED: ['Chưa hoàn tất', 'bad'], REPORT_FAILED: ['Không báo được về hệ thống', 'bad'] };
+const OUTCOME = { RECEIVED: ['Đã nhận tác vụ từ web', 'ok'], AUTHENTICATED: ['Đăng nhập thành công', 'ok'], PUBLISHED: ['Đã đăng', 'ok'], NEEDS_ACTION: ['Cần xử lý', 'warn'], FAILED: ['Chưa hoàn tất', 'bad'], REPORT_FAILED: ['Không báo được về hệ thống', 'bad'], RELEASED: ['Đã đóng tab chờ quá lâu', 'muted'] };
 $('version').textContent = `Phiên bản ${chrome.runtime.getManifest().version}`;
 
 function render(state) {

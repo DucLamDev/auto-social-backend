@@ -45,6 +45,36 @@ describe('platform contract', () => {
     expect(countChars('xem https://example.com/a/very/long/path', 'x')).toBe(4 + 23);
     expect(countChars('👍🏽ạ', 'graphemes')).toBe(2);
   });
+
+  it('counts the links X makes from bare domains as 23, and leaves look-alikes as text', () => {
+    expect(countChars('xem github.com/vpsttt/auto-social-backend', 'x')).toBe(4 + 23);
+    expect(countChars('github.com', 'x')).toBe(23);
+    expect(countChars('www.vpsttt.vn', 'x')).toBe(23);
+    expect(countChars('vpsttt.vn/blog/bai-viet-rat-dai-ve-vps', 'x')).toBe(23);
+    // Country-code domains without a subdomain or path are not linked by X.
+    expect(countChars('vpsttt.vn', 'x')).toBe(9);
+    expect(countChars('Node.js, socket.io, README.md, config.yml', 'x')).toBe('Node.js, socket.io, README.md, config.yml'.length);
+    expect(countChars('hi@vpsttt.com', 'x')).toBe(13);
+    // Punctuation after a link is text.
+    expect(countChars('Xem https://vpsttt.vn/a.', 'x')).toBe(4 + 23 + 1);
+  });
+
+  it('counts Mastodon links as 23 whatever their length, and everything else as graphemes', () => {
+    const long = 'https://vpsttt.vn/blog/huong-dan-chuyen-website-sang-vps-nvme-tung-buoc';
+    expect(countChars(`Đọc 👍🏽 ${long}`, 'mastodon')).toBe(4 + 2 + 23);
+    expect(countChars('https://a.vn', 'mastodon')).toBe(23);
+    expect(countChars(`(${long}).`, 'mastodon')).toBe(1 + 23 + 2);
+    // Mastodon only shortens links with a protocol.
+    expect(countChars('vpsttt.vn/blog', 'mastodon')).toBe(14);
+    expect(platformContract('mastodon')).toMatchObject({ counting: 'mastodon', maxChars: 500 });
+    expect(platformContract('vivaldi-social')).toMatchObject({ counting: 'mastodon', maxChars: 500 });
+    expect(platformContract('mastodon-social')).toMatchObject({ counting: 'mastodon', maxChars: 500 });
+    expect(platformContract('bluesky').counting).toBe('graphemes');
+  });
+
+  it('knows the Lemmy title limit', () => {
+    expect(platformContract('lemmy-world')).toMatchObject({ titleRequired: true, titleMaxChars: 200, titleHardLimit: 200 });
+  });
 });
 
 describe('post text rendering', () => {
@@ -68,6 +98,27 @@ describe('post text rendering', () => {
       .toBe(`${VI} #vps\n\n#linux`);
     const full = 'a'.repeat(295);
     expect(renderPostText({ title: null, body: full, hashtags: ['linux'] }, bluesky).body).toBe(full);
+  });
+
+  it('does not repeat the source line when the post already links to its source', () => {
+    const mastodon = platformContract('mastodon', { sourceText: VI });
+    for (const body of [`${VI} Chi tiết: https://vpsttt.vn/x`, `${VI} Chi tiết: https://www.vpsttt.vn/x/.`, `${VI} (vpsttt.vn/x)`]) {
+      expect(renderPostText({ title: null, body, hashtags: [] }, mastodon, 'https://vpsttt.vn/x').body).toBe(body);
+    }
+    // Another page of the same site is not the source.
+    expect(renderPostText({ title: null, body: `${VI} https://vpsttt.vn/x-2`, hashtags: [] }, mastodon, 'https://vpsttt.vn/x').body)
+      .toBe(`${VI} https://vpsttt.vn/x-2\n\nNguồn: https://vpsttt.vn/x`);
+  });
+
+  it('gives no title to a destination without a title field unless one was written (Quora prints it above the body)', () => {
+    const quora = platformContract('quora', { engine: 'quora' });
+    expect(quora.titleRequired).toBe(false);
+    expect(renderPostText({ title: null, body: `First line\n\n${EN}`, hashtags: [] }, quora).title).toBe('');
+    expect(renderForExtension({ title: null, body: `First line\n\n${EN}`, hashtags: [] }, 'quora', 'quora', null))
+      .toEqual({ title: '', body: `First line\n\n${EN}` });
+    expect(renderPostText({ title: 'A real question?', body: EN, hashtags: [] }, quora).title).toBe('A real question?');
+    // Forums and articles still fall back to the first line.
+    expect(renderPostText({ title: null, body: `First line\n${EN}`, hashtags: [] }, platformContract('nginx-community')).title).toBe('First line');
   });
 
   it('cuts titles only where the destination has a known limit', () => {
