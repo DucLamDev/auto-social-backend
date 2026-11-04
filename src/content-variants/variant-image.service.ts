@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { MediaType, Prisma } from '@prisma/client';
+import { AiContentService } from '../ai/ai-content.service';
 import { AI_IMAGE_SIZES, AiImageService, AiImageSize } from '../ai/ai-image.service';
-import { imageSizeFor } from '../campaigns/image-plan';
+import { imagePlanFor, imageSizeFor } from '../campaigns/image-plan';
 import { ApplicationException } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
 import { MediaService } from '../media/media.service';
@@ -26,6 +27,7 @@ export class VariantImageService {
     private readonly prisma: PrismaService,
     private readonly media: MediaService,
     @Optional() private readonly images?: AiImageService,
+    @Optional() private readonly ai?: AiContentService,
   ) {}
 
   async regenerate(ownerId: string, variantId: string, input: { prompt?: string }) {
@@ -38,7 +40,8 @@ export class VariantImageService {
       throw new ConflictException('Ảnh của kênh này đang được tạo.');
     }
     const prompt = input.prompt?.trim() || (typeof current.prompt === 'string' ? current.prompt.trim() : '');
-    if (!prompt) throw new BadRequestException('Chưa có mô tả ảnh. Nhập mô tả rồi tạo lại.');
+    // A post without an image description gets one designed from its text by the AI art director.
+    if (!prompt && !this.ai) throw new BadRequestException('Chưa có mô tả ảnh. Nhập mô tả rồi tạo lại.');
     if (prompt.length > 4_000) throw new BadRequestException('Mô tả ảnh tối đa 4.000 ký tự.');
     const size: AiImageSize = (AI_IMAGE_SIZES as readonly string[]).includes(String(current.size)) ? current.size as AiImageSize : imageSizeFor(variant.platform.slug);
     const altText = typeof current.altText === 'string' ? current.altText : '';
@@ -59,8 +62,16 @@ export class VariantImageService {
   }
 
   private async run(ownerId: string, variantId: string, images: AiImageService, request: Record<string, unknown>) {
-    const prompt = String(request.prompt);
+    let prompt = typeof request.prompt === 'string' ? request.prompt : '';
     try {
+      if (!prompt) {
+        const designed = await this.design(ownerId, variantId);
+        request = { ...request, ...designed };
+        prompt = designed.prompt;
+        // The designed description is shown (and editable) while the image is drawn.
+        if (!await this.isLatest(variantId, request.startedAt)) return;
+        await this.finish(variantId, request);
+      }
       const generated = await images.generate(prompt, request.size as AiImageSize);
       // A newer "Tạo lại ảnh" started meanwhile: its image wins, this one is dropped.
       if (!await this.isLatest(variantId, request.startedAt)) return;
@@ -76,6 +87,21 @@ export class VariantImageService {
         this.logger.error(`Could not record the image failure for variant ${variantId}: ${recordError instanceof Error ? recordError.message : String(recordError)}`);
       });
     }
+  }
+
+  /** Image description and alt text designed from the post's current text. */
+  private async design(ownerId: string, variantId: string): Promise<{ prompt: string; altText: string }> {
+    const variant = await this.prisma.contentVariant.findFirst({
+      where: { id: variantId, content: { ownerId } },
+      select: { contentId: true, title: true, body: true, platform: { select: { slug: true } } },
+    });
+    if (!variant || !this.ai) throw new NotFoundException('Content variant not found');
+    return this.ai.designImage(ownerId, {
+      contentId: variant.contentId,
+      platformSlug: variant.platform.slug,
+      post: { title: variant.title, body: variant.body },
+      image: imagePlanFor(variant.platform.slug),
+    });
   }
 
   private async isLatest(variantId: string, startedAt: unknown) {

@@ -607,6 +607,10 @@ describe('AiContentService quality-checked generation', () => {
           id: 'platform-1', slug: 'bluesky',
           prompts: [{ systemPrompt: 'System', userTemplate: 'Title or brief: {{title}}\nSummary: {{summary}}\n{{body}}' }],
         }]),
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'platform-1', slug: 'bluesky',
+          prompts: [{ systemPrompt: 'System', userTemplate: 'Title or brief: {{title}}\nSummary: {{summary}}\n{{body}}' }],
+        }),
       },
       $transaction: jest.fn((callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
     };
@@ -636,6 +640,8 @@ describe('AiContentService quality-checked generation', () => {
     expect(writer.instructions).toContain('Destination contract for Bluesky');
     expect(writer.instructions).toContain('at most 300 characters');
     expect(writer.instructions).toContain('Write every field in Vietnamese');
+    // The writer aims at the editor's rubric from the first draft.
+    expect(writer.instructions).toContain('Quality bar: an editor scores this Bluesky draft');
     expect(writer.input).toContain('<brand_facts>');
     expect(writer.input).toContain('Input type: a short marketing brief');
     expect(writer.input).not.toContain('Chiến dịch nội bộ T11');
@@ -746,24 +752,79 @@ describe('AiContentService quality-checked generation', () => {
     expect(request(create, 1).input).not.toContain('**');
   });
 
-  it('rewrites once with the editor feedback and holds a draft that still fails', async () => {
+  it('rewrites up to twice with the editor feedback and keeps the best-scoring draft when none passes', async () => {
     const tooLong = `${shortBody} ${'Thêm chi tiết dài dòng. '.repeat(20)}`;
     const create = jest.fn()
       .mockResolvedValueOnce(variant(tooLong))
       .mockResolvedValueOnce(reviewed({ ...passingReview, score: 5, issues: ['Mở bài chung chung'] }))
       .mockResolvedValueOnce(variant(tooLong))
-      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 6, unsupportedClaims: ['Rẻ nhất thị trường'] }));
+      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 6, unsupportedClaims: ['Rẻ nhất thị trường'] }))
+      .mockResolvedValueOnce(variant('Ngắn nhưng nhạt.'))
+      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 4, issues: ['Thiếu chi tiết'] }));
     const { service, created } = setup(create);
 
     await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
 
-    expect(create).toHaveBeenCalledTimes(4);
+    expect(create).toHaveBeenCalledTimes(6);
     expect(request(create, 2).input).toContain('Your previous draft was rejected');
     expect(request(create, 2).input).toMatch(/- Dài \d+\/300 ký tự/);
     expect(request(create, 2).input).toContain('- Mở bài chung chung');
-    expect(created[0]).toMatchObject({ recommended: false });
+    expect(request(create, 2).input).toContain('Editor scores (1-10): overall 5');
+    expect(request(create, 4).input).toContain('Remove or ground this claim: Rẻ nhất thị trường');
+    // The second attempt (6/10) beats the last one (4/10).
+    expect(created[0]).toMatchObject({ recommended: false, body: tooLong.trim() });
     expect(created[0]!.reason).toMatch(/^Cần xem lại \(AI chấm 6\/10\): Dài \d+\/300 ký tự/);
     expect(created[0]!.reason).toContain('Thông tin chưa có căn cứ: Rẻ nhất thị trường');
+  });
+
+  it('stops rewriting as soon as a rewrite passes', async () => {
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant(shortBody))
+      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 5 }))
+      .mockResolvedValueOnce(variant(shortBody))
+      .mockResolvedValueOnce(reviewed());
+    const { service, created } = setup(create);
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+    expect(create).toHaveBeenCalledTimes(4);
+    expect(created[0]).toMatchObject({ recommended: true, reason: 'Hợp người đọc (AI chấm 8/10)' });
+  });
+
+  it('revises a stored draft from the operator instruction and review notes, keeping the instruction through rewrites and the current image', async () => {
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant(shortBody))
+      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 6, issues: ['Thiếu số liệu'] }))
+      .mockResolvedValueOnce(variant(shortBody))
+      .mockResolvedValueOnce(reviewed());
+    const { service, created } = setup(create);
+    const result = await service.reviseDraft('owner-1', {
+      contentId: 'content-1', platformSlug: 'bluesky', image: { need: 'optional', size: '1536x1024', style: 'a simple illustration' },
+      revision: { previous: { title: null, body: 'Bản cũ nhạt', hashtags: ['vps'] }, instruction: 'Mở bài bằng số liệu cụ thể', notes: 'Cần xem lại (AI chấm 5/10): Mở bài chung chung' },
+    }, 'openai');
+
+    const writer = request(create, 0);
+    expect(writer.input).toContain('Revise your previous draft');
+    expect(writer.input).toContain('"body":"Bản cũ nhạt"');
+    expect(writer.input).toContain("Operator's instructions (highest priority, within the destination contract):\nMở bài bằng số liệu cụ thể");
+    expect(writer.input).toContain("Editor's notes from the last review:\nCần xem lại (AI chấm 5/10): Mở bài chung chung");
+    expect(request(create, 2).input).toContain("The operator's instructions still apply: Mở bài bằng số liệu cụ thể");
+    // No art director call: the post keeps its image; nothing is stored here.
+    expect(create).toHaveBeenCalledTimes(4);
+    expect(created).toHaveLength(0);
+    expect(result).toMatchObject({ body: shortBody, recommended: true, reason: 'Hợp người đọc (AI chấm 8/10)' });
+    expect(result.media.status).toBeUndefined();
+  });
+
+  it('designs an image for an existing post from its text, and reports a failure instead of inventing one', async () => {
+    const create = jest.fn().mockResolvedValueOnce(artDirected());
+    const { service } = setup(create);
+    const plan = { need: 'optional' as const, size: '1536x1024' as const, style: 'a simple editorial technology illustration' };
+    const designed = await service.designImage('owner-1', { contentId: 'content-1', platformSlug: 'bluesky', post: { title: null, body: shortBody }, image: plan }, 'openai');
+    expect(request(create, 0).text.format.name).toBe('image_brief');
+    expect(request(create, 0).input).toContain(shortBody);
+    expect(designed.prompt.split('\n')[0]).toBe('Premium 3D render for a Bluesky post, landscape 3:2 frame.');
+    expect(designed.altText).toBe(artBrief.altText);
+    create.mockRejectedValueOnce(Object.assign(new Error('bad request'), { status: 400 }));
+    await expect(service.designImage('owner-1', { contentId: 'content-1', platformSlug: 'bluesky', post: { title: null, body: shortBody }, image: plan }, 'openai')).rejects.toBeDefined();
   });
 
   it('does not rewrite a draft the writer marks as unsuitable, and never auto-approves it', async () => {

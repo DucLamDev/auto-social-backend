@@ -8,7 +8,7 @@ const draft = (extra: Record<string, unknown> = {}) => ({
   mediaRecommendation: { type: 'image', prompt: 'Old prompt', altText: 'Mô tả', size: '1536x1024', status: 'failed' }, ...extra,
 });
 
-function setup(variant: unknown = draft(), generate = jest.fn().mockResolvedValue(png)) {
+function setup(variant: unknown = draft(), generate = jest.fn().mockResolvedValue(png), ai?: unknown) {
   const prisma = {
     contentVariant: { findFirst: jest.fn().mockResolvedValue(variant), update: jest.fn((args: { data: { mediaRecommendation: unknown } }) => {
       // The stored request is what the background run compares against.
@@ -19,7 +19,7 @@ function setup(variant: unknown = draft(), generate = jest.fn().mockResolvedValu
   };
   const media = { storeGeneratedImage: jest.fn().mockResolvedValue({ id: 'media-new' }), removeVariantImage: jest.fn().mockResolvedValue({ removed: true }) };
   const images = { status: () => ({ configured: true, model: 'vpsttt-image' }), generate };
-  const service = new VariantImageService(prisma as never, media as never, images as never);
+  const service = new VariantImageService(prisma as never, media as never, images as never, ai as never);
   return { service, prisma, media, generate };
 }
 const settle = () => new Promise((resolve) => { setImmediate(resolve); });
@@ -61,6 +61,26 @@ describe('review-time image actions', () => {
     await expect(setup(generatingNow).service.regenerate('owner-1', 'variant-1', {})).rejects.toThrow('đang được tạo');
     await expect(setup(draft({ _count: { targets: 1 } })).service.regenerate('owner-1', 'variant-1', {})).rejects.toThrow('đã vào chiến dịch');
     await expect(setup(null).service.remove('owner-2', 'variant-1', 'media-1')).rejects.toThrow('not found');
+  });
+
+  it('designs the image from the post when it has no description, then draws it', async () => {
+    const post = draft({ mediaRecommendation: null, contentId: 'content-1', title: null, body: 'Bài về VPS NVMe' });
+    const designImage = jest.fn().mockResolvedValue({ prompt: 'Premium 3D render of an NVMe server', altText: 'Máy chủ NVMe' });
+    const { service, prisma, generate, media } = setup(post, jest.fn().mockResolvedValue(png), { designImage });
+    await expect(service.regenerate('owner-1', 'variant-1', {})).resolves.toEqual({ status: 'generating' });
+    await settle(); await settle(); await settle();
+    expect(designImage).toHaveBeenCalledWith('owner-1', {
+      contentId: 'content-1', platformSlug: 'bluesky', post: { title: null, body: 'Bài về VPS NVMe' },
+      image: { need: 'optional', size: '1536x1024', style: expect.stringContaining('editorial') as unknown },
+    });
+    expect(generate).toHaveBeenCalledWith('Premium 3D render of an NVMe server', '1536x1024');
+    expect(media.storeGeneratedImage).toHaveBeenCalledWith('owner-1', 'variant-1', png, { altText: 'Máy chủ NVMe', prompt: 'Premium 3D render of an NVMe server' });
+    // The designed description is recorded before drawing, so the screen can show it.
+    expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { mediaRecommendation: expect.objectContaining({ status: 'generating', prompt: 'Premium 3D render of an NVMe server' }) as unknown } }));
+  });
+
+  it('still asks for a description when no AI writer is available', async () => {
+    await expect(setup(draft({ mediaRecommendation: null })).service.regenerate('owner-1', 'variant-1', {})).rejects.toThrow('Chưa có mô tả ảnh');
   });
 
   it('marks the variant text-only once its last image is removed', async () => {

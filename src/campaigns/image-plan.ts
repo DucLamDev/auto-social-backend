@@ -48,6 +48,11 @@ export function imageSizeFor(slug: string): AiImageSize {
   return SQUARE.has(slug) ? '1024x1024' : '1536x1024';
 }
 
+/** Image plan for one destination when no account decides it (an image added to an existing post). */
+export function imagePlanFor(slug: string, need: Exclude<ImageNeed, 'none'> = 'optional'): PlatformImagePlan {
+  return { need, size: imageSizeFor(slug), style: STYLE[slug] ?? 'a clear, on-topic landscape illustration' };
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -85,11 +90,7 @@ export function planImages(
     if (need === 'none') continue;
     const slug = account.platform.slug;
     const current = plan.get(slug);
-    plan.set(slug, {
-      need: current?.need === 'required' || need === 'required' ? 'required' : 'optional',
-      size: imageSizeFor(slug),
-      style: STYLE[slug] ?? 'a clear, on-topic landscape illustration',
-    });
+    plan.set(slug, imagePlanFor(slug, current?.need === 'required' || need === 'required' ? 'required' : 'optional'));
   }
   return plan;
 }

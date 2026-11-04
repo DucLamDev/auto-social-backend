@@ -1,6 +1,27 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.13.0 · 04/11/2026
+### Tính năng
+- Viết lại từng bài bằng AI theo hướng dẫn của bạn
+  - API mới `POST /content-variants/{id}/rewrite`, nhận `instruction` và `aiProvider` (tuỳ chọn).
+  - AI viết lại bài từ bản cũ, theo hướng dẫn và ghi chú lần chấm trước, rồi chấm lại. Chưa đạt thì AI tự viết lại thêm.
+  - Bài mới thay bài cũ tại chỗ nên vẫn nằm trong lượt duyệt. Bài đã duyệt nhưng chưa vào chiến dịch thì quay về chờ
+    duyệt.
+  - Việc chạy nền 1–3 phút, trạng thái ở trường mới `aiRevision` (migration
+    `20261104160000_content_variant_ai_revision`, chỉ thêm cột).
+  - Bạn sửa tay trong lúc AI đang viết thì giữ bản bạn sửa. Bài đã vào chiến dịch hoặc bị từ chối thì không viết lại.
+  - Bài đang được AI viết lại không duyệt được, kể cả bằng nút duyệt chung (bỏ qua bài đó), để không đăng nhầm bản cũ.
+- Tạo ảnh AI cho bài chưa có ảnh
+  Lệnh tạo lại ảnh (`POST /content-variants/{id}/image`) không còn đòi mô tả. Bài chưa có mô tả ảnh thì AI tự thiết kế
+  mô tả từ nội dung bài, giống bài mới tạo, rồi tạo ảnh. Không phải tải ảnh từ máy lên.
+- Bài AI tạo hàng loạt nhắm điểm cao hơn
+  - Người viết được dặn đúng thang chấm của biên tập: mở bài, chi tiết cụ thể, hợp nơi đăng, tự nhiên. Kèm danh sách câu
+    sáo cần tránh, và quy tắc câu hỏi thật cho Stack Exchange.
+  - Bài chưa đạt được viết lại tối đa 2 lần (trước là 1) và **giữ bản có điểm cao nhất**.
+  - Phản hồi gửi người viết có điểm từng tiêu chí để sửa đúng chỗ yếu.
+  - Mỗi bài cần 2–6 lượt gọi AI thay vì 2–4.
+
 ## 1.12.3 · 04/11/2026
 ### Sửa lỗi
 - Sửa được phiên Google trên hồ sơ Chrome đang có nhiều email Google; kiểm tra đăng nhập nhận đúng Tumblr, Voz (tiện ích 1.10.2)

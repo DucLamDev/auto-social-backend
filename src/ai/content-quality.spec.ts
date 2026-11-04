@@ -1,5 +1,5 @@
 import { platformContract } from '../platforms/platform-contract';
-import { clampReview, deterministicIssues, reviewPassed, rewriteFeedback } from './content-quality';
+import { clampReview, deterministicIssues, draftRank, qualityInstructions, reviewPassed, rewriteFeedback } from './content-quality';
 
 const VI = 'Mình vừa chuyển website sang máy chủ mới và thời gian tải trang giảm hẳn, chia sẻ lại các bước đã làm.';
 const EN = 'We moved our website to a new server and page load time dropped a lot, here are the steps we followed.';
@@ -34,8 +34,26 @@ describe('content quality checks', () => {
       .toMatchObject({ score: 10, hook: 1, issues: ['a', 'b', 'c', 'd', 'e'] });
   });
 
-  it('builds de-duplicated rewrite feedback', () => {
+  it('builds de-duplicated rewrite feedback, ending with the sub-scores of a failing review', () => {
     expect(rewriteFeedback(['Thiếu tiêu đề', 'Thiếu tiêu đề'], { ...review, unsupportedClaims: ['Giá rẻ nhất'], issues: ['Mở bài chung chung'] }))
-      .toBe('- Thiếu tiêu đề\n- Remove or ground this claim: Giá rẻ nhất\n- Mở bài chung chung');
+      .toBe(`- Thiếu tiêu đề\n- Remove or ground this claim: Giá rẻ nhất\n- Mở bài chung chung\n- Editor scores (1-10): overall ${review.score}, hook ${review.hook}, specificity ${review.specificity}, platform fit ${review.platformFit}, naturalness ${review.naturalness}. Raise the lowest first.`);
+    expect(rewriteFeedback(['Thiếu tiêu đề'], review)).toBe('- Thiếu tiêu đề');
+  });
+
+  it('gives the writer the editor rubric, with the Stack Exchange question rules only there', () => {
+    const contract = platformContract('unix-linux-stackexchange');
+    const rules = qualityInstructions(contract, 'stackexchange');
+    expect(rules).toContain('aim for 9');
+    expect(rules).toContain('Hook: the first line');
+    expect(rules).toContain('"game-changer"');
+    expect(rules).toContain('Stack Exchange: one precise, answerable technical question');
+    expect(qualityInstructions(platformContract('bluesky'))).not.toContain('Stack Exchange');
+  });
+
+  it('ranks a passing draft first, then the higher score, then fewer machine issues', () => {
+    expect(draftRank(true, { ...review, score: 7 }, [])).toBeGreaterThan(draftRank(false, { ...review, score: 9 }, []));
+    expect(draftRank(false, { ...review, score: 6 }, ['a'])).toBeGreaterThan(draftRank(false, { ...review, score: 5 }, []));
+    expect(draftRank(false, { ...review, score: 6 }, [])).toBeGreaterThan(draftRank(false, { ...review, score: 6 }, ['a']));
+    expect(draftRank(false, null, [])).toBeLessThan(draftRank(false, { ...review, score: 1 }, []));
   });
 });
