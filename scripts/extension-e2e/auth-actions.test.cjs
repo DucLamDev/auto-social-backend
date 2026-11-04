@@ -428,6 +428,37 @@ test('on the configured profile page only owner controls count as the signed-in 
   } finally { await owner.close(); await visitor.close(); }
 });
 
+test('a signed-in dashboard search box is not mistaken for a login field (Tumblr in French)', async () => {
+  const page = await pageAt('https://www.tumblr.com/dashboard', '<header><form role="search"><input type="text" placeholder="Chercher sur Tumblr"></form></header><nav role="navigation"><button aria-expanded="false">Compte</button></nav><main>Pour vous</main>');
+  const scoped = { ...job, targetOrigin: 'https://www.tumblr.com', recipe: { engine: 'tumblr' }, auth: { ...job.auth, expectedUsername: 'vpsttt', profileUrl: 'https://www.tumblr.com/vpsttt' } };
+  try {
+    // Unknown (not "identifier"): the worker then opens the profile page, where owner controls prove the account.
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'unknown');
+    await page.locator('form').evaluate(form => form.removeAttribute('role'));
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'unknown');
+  } finally { await page.close(); }
+});
+
+test('a XenForo ban page is reported as a ban before comparing the signed-in name', async () => {
+  const page = await pageAt('https://voz.vn/login', '<div class="p-navgroup-link--user"><span class="p-navgroup-linkText">Vpsttt</span></div>'
+    + '<div class="blockMessage">Your account is currently awaiting confirmation. Confirmation was sent to someone@example.test.</div>'
+    + '<h1>Oops! We ran into some problems.</h1><div class="blockMessage">You have been banned for the following reason: Spam. Please contact the administrator if this was done in error..</div>');
+  try {
+    const result = await page.evaluate(accountAuthStep, { job: { ...job, targetOrigin: 'https://voz.vn', auth: { ...job.auth, expectedUsername: 'register' } } });
+    assert.equal(result.state, 'challenge');
+    assert.match(result.message, /đình chỉ hoặc khoá/);
+  } finally { await page.close(); }
+});
+
+test('an unconfirmed XenForo account is asked to open the confirmation email', async () => {
+  const page = await pageAt('https://forum.test/', '<div class="p-navgroup-link--user"><span class="p-navgroup-linkText">alice</span></div><div class="blockMessage">Your account is currently awaiting confirmation. Confirmation was sent to alice@example.test.</div>');
+  try {
+    const result = await page.evaluate(accountAuthStep, { job });
+    assert.equal(result.state, 'challenge');
+    assert.match(result.message, /chờ xác nhận email/);
+  } finally { await page.close(); }
+});
+
 test('Bluesky identifies the signed-in account from its own session storage, never returning tokens', async () => {
   const page = await pageAt('https://bsky.app/', '<nav><a href="/profile/someone.bsky.social">someone</a></nav>');
   const scoped = { ...job, targetOrigin: 'https://bsky.app', recipe: { engine: 'bluesky' },

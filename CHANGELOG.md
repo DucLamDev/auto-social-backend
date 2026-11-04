@@ -1,6 +1,17 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.12.3 · 04/11/2026
+### Sửa lỗi
+- Sửa được phiên Google trên hồ sơ Chrome đang có nhiều email Google; kiểm tra đăng nhập nhận đúng Tumblr, Voz (tiện ích 1.10.2)
+  - Sau khi chuyển tài khoản sang Chrome VPS, một hồ sơ Chrome mang nhiều email Google. Quy tắc "một email Google mỗi
+    hồ sơ" khi đó chặn mọi lần lưu Phiên Chrome / 2FA bằng Google ("Use the same Google identity…"). Nay chỉ chặn email
+    Google mới mà hồ sơ chưa dùng, thông báo tiếng Việt liệt kê các email hồ sơ đang dùng.
+  - Tiện ích không còn nhầm ô tìm kiếm của trang đã đăng nhập là ô tên đăng nhập. Tumblr đã đăng nhập vẫn báo "Không
+    nhận diện được nút xác nhận đăng nhập duy nhất" là vì lỗi này.
+  - Diễn đàn XenForo báo tài khoản bị cấm thì kiểm tra nói rõ tài khoản bị khoá. Tài khoản chờ xác nhận email thì được
+    nhắc mở email xác nhận.
+
 ## 1.12.2 · 04/11/2026
 ### Sửa lỗi
 - Bài AI mang tag sang các trang có ô tag: không còn lỗi "Câu hỏi cần ít nhất một tag" (tiện ích Chrome 1.10.1)

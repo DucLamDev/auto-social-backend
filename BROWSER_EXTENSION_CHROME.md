@@ -1,5 +1,15 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.10.2: nhận đúng phiên đã đăng nhập (Tumblr), báo tài khoản bị cấm (XenForo)
+
+- Ô tìm kiếm trên trang đã đăng nhập (ví dụ "Chercher sur Tumblr") không còn bị nhầm là ô tên đăng nhập. Trước đây
+  Tumblr đã đăng nhập vẫn báo "Không nhận diện được nút xác nhận đăng nhập duy nhất". Nay tiện ích mở trang hồ sơ
+  `tumblr.com/<blog>` và nhận chủ blog qua nút "Edit appearance" / "Modifier l'apparence".
+- Diễn đàn XenForo (Voz…) báo "You have been banned for the following reason" thì kiểm tra dừng với thông báo tài
+  khoản bị khoá, không còn báo nhầm "đang đăng nhập tài khoản khác". Tài khoản "awaiting confirmation" được nhắc mở email
+  xác nhận của diễn đàn.
+- Cần backend 1.12.3 nếu muốn sửa phiên Google của tài khoản trên hồ sơ Chrome đang có nhiều email Google.
+
 ## Bản 1.10.1: tag của bài AI cho Stack Exchange, Discourse, DEV, SlideShare
 
 - Trước đây tiện ích chỉ nhận tag cấu hình trong tài khoản, bỏ mất tag AI viết kèm bài. Vì vậy Stack Exchange (Stack
