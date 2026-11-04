@@ -48,6 +48,7 @@ describe('Draft connector semantics', () => {
     };
     const articleWithImage: PostPayload = {
       ...article,
+      hashtags: ['#Self-Hosting', 'web dev', 'VPS', 'bảo mật', 'linux'],
       summary: '  A concise SEO preview for the article.  ',
       media: [{ type: 'image', url: 'https://cdn.example.com/main.png', altText: 'Main diagram' }],
     };
@@ -63,6 +64,8 @@ describe('Draft connector semantics', () => {
         published: false,
         description: 'A concise SEO preview for the article.',
         main_image: 'https://cdn.example.com/main.png',
+        // DEV accepts at most 4 lowercase alphanumeric tags.
+        tags: 'selfhosting,webdev,vps,baomat',
       },
     });
   });

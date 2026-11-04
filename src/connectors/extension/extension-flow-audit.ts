@@ -22,8 +22,7 @@ export function extensionFlowAudit(slug: string, value: unknown) {
   // Disqus has no post destination; Warrior Forum's terms forbid automated access.
   if (!flow) return { status: slug === 'disqus' ? 'UNAVAILABLE' : slug === 'warrior-forum' ? 'MANUAL_ONLY' : 'FLOW_REQUIRED', implemented: false, ...(gaps[slug] || { message: 'Chưa có luồng đăng đã kiểm thử cho nền tảng này.' }) };
   const required: string[] = [];
-  if (flow.engine === 'stackexchange' && !Array.isArray(settings.extensionTags)) required.push('ít nhất một tag');
-  else if (flow.engine === 'stackexchange' && !(settings.extensionTags as unknown[]).length) required.push('ít nhất một tag');
+  // Stack Exchange tags come from the approved post's AI tags; configured tags are optional.
   if (['lemmy', 'discuit'].includes(flow.engine) && !settings.extensionCategory) required.push('community đích');
   if (!settings.extensionTargetUrl && !flow.targetUrl) required.push('trang tạo bài đích');
   if (required.length) return { status: 'DESTINATION_REQUIRED', implemented: true, engine: flow.engine, message: `Đã có luồng; cần cấu hình ${required.join(', ')}. ${flow.setupHint}` };

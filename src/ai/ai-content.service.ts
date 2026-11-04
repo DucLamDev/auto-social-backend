@@ -9,6 +9,8 @@ import { PrismaService } from '../database/prisma.service';
 import { repairEscapedNewlines } from '../common/utils/escaped-text';
 import { PlatformContract, platformContract } from '../platforms/platform-contract';
 import { markdownToPlain } from '../platforms/post-text';
+import { extensionFlowForPlatform } from '../connectors/extension/extension-flows';
+import { tagStyle } from '../connectors/extension/extension-tags';
 import { BrandProfile, brandProfileBlock, BrandProfileService } from './brand-profile.service';
 import {
   clampReview,
@@ -168,6 +170,7 @@ export function contractInstructions(contract: PlatformContract): string {
     appended: `do not put hashtags in the body; list at most ${contract.maxHashtags} in "hashtags" without #, they are appended automatically.`,
     tags: `do not put hashtags in the body; "hashtags" holds at most ${contract.maxHashtags} topic tags without #.`,
   }[contract.hashtagMode];
+  const style = contract.hashtagMode === 'tags' ? tagStyle(extensionFlowForPlatform(contract.slug)?.engine) : undefined;
   return [
     `Destination contract for ${contract.name} (mandatory):`,
     `- Write every field in ${LANGUAGE_NAMES[contract.language]}. If the brief is in another language, convey its meaning naturally; never mix languages.`,
@@ -175,7 +178,7 @@ export function contractInstructions(contract: PlatformContract): string {
     contract.maxChars
       ? `- Hard limit: the published body, including hashtags and links, must be at most ${contract.maxChars} characters; aim for about ${Math.floor(contract.maxChars * 0.85)}.${contract.counting === 'x' ? ' On X, letters with Vietnamese diacritics count as two characters and every link counts as 23.' : ''}`
       : '',
-    `- Hashtags: ${hashtags}`,
+    `- Hashtags: ${hashtags}${style ? ` Tag format: ${style}.` : ''}`,
     contract.titleRequired
       ? `- title is required: specific, at most ${contract.titleMaxChars} characters, and not a copy of the first sentence.`
       : '- title: null unless this destination shows a separate title.',

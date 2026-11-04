@@ -343,26 +343,48 @@ export async function fillSocialAndSubmit(job) {
     }
   } else if (!await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
   if (engine === 'stackexchange') {
-    if (!options.tags?.length) return needs('Câu hỏi cần ít nhất một tag. Điền tags trong cấu hình trên web.');
+    // Tags configured on the account must all be applied; the AI's suggested tags
+    // are used only when the site already has them (never created), up to 5 in total.
+    const configured = options.tags ?? [];
+    const suggested = (options.suggestedTags ?? []).filter(tag => !configured.some(item => item.toLowerCase() === tag.toLowerCase()));
+    if (!configured.length && !suggested.length) return needs('Câu hỏi cần ít nhất một tag. Bài AI chưa có tag; thêm tag trong cấu hình tài khoản trên web rồi giao lại.');
     const tags = pick(['#tagnames']);
     // Selected tags render as ".s-tag" chips ("nginx ×"); suggestions also show counts.
     const chipName = node => normalize(node.innerText).replace(/\s*[×✕✖]\s*$/, '').toLowerCase();
     const hasChip = tag => all('.s-tag, .post-tag, .js-tag').some(node => visible(node) && !node.closest('[role="option"], [role="listbox"]') && chipName(node) === tag.toLowerCase());
-    if (tags) write(tags, options.tags.join(' '));
-    else for (const tag of options.tags) {
-      if (hasChip(tag)) continue;
-      const input = pick(['input#filterInput[aria-label="tags"]', 'input[aria-label="tags" i]', '#tageditor-replacing-tagnames--input']);
-      if (!input || !write(input, tag)) return needs(`Không tìm thấy ô nhập tag trên ${location.hostname}.`);
-      const suggestion = await wait(() => {
-        const rows = all('[role="option"]').filter(visible).filter(node => {
-          const label = node.querySelector('.s-tag, .post-tag');
-          return (label ? chipName(label) : normalize(node.innerText).toLowerCase().split(/\s+/)[0]) === tag.toLowerCase();
-        });
-        return rows.length === 1 ? rows[0] : null;
-      }, 3000);
-      if (suggestion) suggestion.click();
-      else for (const type of ['keydown', 'keypress', 'keyup']) input.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-      if (!await wait(() => hasChip(tag), 3000)) return needs(`Không chọn được tag ${tag} trên ${location.hostname}. Kiểm tra tag có tồn tại trên trang này.`);
+    const tagInput = () => pick(['input#filterInput[aria-label="tags"]', 'input[aria-label="tags" i]', '#tageditor-replacing-tagnames--input']);
+    const suggestionFor = tag => wait(() => {
+      const rows = all('[role="option"]').filter(visible).filter(node => {
+        const label = node.querySelector('.s-tag, .post-tag');
+        return (label ? chipName(label) : normalize(node.innerText).toLowerCase().split(/\s+/)[0]) === tag.toLowerCase();
+      });
+      return rows.length === 1 ? rows[0] : null;
+    }, 3000);
+    // The plain field cannot tell whether a tag exists: AI tags only stand in for missing configured ones.
+    if (tags) write(tags, (configured.length ? configured : suggested).slice(0, 5).join(' '));
+    else {
+      for (const tag of configured) {
+        if (hasChip(tag)) continue;
+        const input = tagInput();
+        if (!input || !write(input, tag)) return needs(`Không tìm thấy ô nhập tag trên ${location.hostname}.`);
+        const suggestion = await suggestionFor(tag);
+        if (suggestion) suggestion.click();
+        else for (const type of ['keydown', 'keypress', 'keyup']) input.dispatchEvent(new KeyboardEvent(type, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+        if (!await wait(() => hasChip(tag), 3000)) return needs(`Không chọn được tag ${tag} trên ${location.hostname}. Kiểm tra tag có tồn tại trên trang này.`);
+      }
+      for (const tag of suggested) {
+        if ([...configured, ...suggested].filter(hasChip).length >= 5) break;
+        if (hasChip(tag)) continue;
+        const input = tagInput();
+        if (!input || !write(input, tag)) break;
+        const suggestion = await suggestionFor(tag);
+        // Only a tag the site lists: Enter could create a new tag, which most accounts may not.
+        if (suggestion) { suggestion.click(); await wait(() => hasChip(tag), 3000); }
+        else write(input, '');
+      }
+      if (![...configured, ...suggested].some(hasChip)) {
+        return needs(`Câu hỏi cần ít nhất một tag có trên ${location.hostname}; các tag AI gợi ý (${suggested.join(', ')}) không có trên trang này. Thêm tag đúng trong cấu hình tài khoản trên web rồi giao lại.`);
+      }
     }
   }
   if (engine === 'reddit' && !await choose(options.flair, ['[role="dialog"] input[placeholder*="Search" i]', '[role="dialog"] input[type="search"]'], ['Add flair and tags', 'Add tags and flair', 'Add tags and flairs', 'Flair', 'Thêm flair'])) return needs('Không chọn được flair của subreddit.');
@@ -406,7 +428,10 @@ export async function fillSocialAndSubmit(job) {
     if (engine === 'medium' && !emailControls.length && /send/i.test(normalize(final.innerText))) return needs('Medium vẫn đang yêu cầu gửi email; chưa xuất bản.');
   }
   const plainTags = ['slideshare', 'devto'].includes(engine) ? pick(['#tag-input', 'input[name="tags"]:not([role="combobox"]):not([aria-autocomplete])']) : null;
-  if (plainTags && options.tags?.length && (!write(plainTags, options.tags.join(', ')) || value(plainTags) !== normalize(options.tags.join(', ')))) return needs('Không điền được tags của SlideShare; chưa xuất bản.');
+  if (plainTags && options.tags?.length && (!write(plainTags, options.tags.join(', ')) || value(plainTags) !== normalize(options.tags.join(', ')))) return needs(`Không điền được tags đã cấu hình trên ${location.hostname}; chưa xuất bản.`);
+  // Without configured tags the AI's tags fill the field; a field that rejects them is left empty.
+  const aiTags = (options.suggestedTags ?? []).join(', ');
+  if (plainTags && !options.tags?.length && aiTags && !value(plainTags) && (!write(plainTags, aiTags) || value(plainTags) !== normalize(aiTags))) write(plainTags, '');
   for (const tag of plainTags || engine === 'stackexchange' ? [] : options.tags ?? []) {
     if (!await choose(tag, [...(engine === 'differ' ? ['input.rs__input[role="combobox"]'] : []), 'input[placeholder*="Add a topic" i]', 'input[placeholder*="Add tags" i]', 'input[placeholder*="Search tags" i]', 'input[name="tags"]'], ['Add tags', 'Topics', 'Tags'])) return needs(`Không chọn được tag “${tag}”; chưa bấm đăng.`);
   }

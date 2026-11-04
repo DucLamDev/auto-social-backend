@@ -148,6 +148,56 @@ test('Stack Overflow accepts a tag shown as an ".s-tag" chip and commits a typed
   await page.close();
 });
 
+function stackOverflowEditor() {
+  return known => {
+    window.steps = []; window.enters = 0;
+    document.body.innerHTML = '<input id="title"><textarea id="wmd-input"></textarea><div class="tag-editor"><span class="chips"></span><input id="filterInput" aria-label="tags"></div><ul role="listbox"></ul><button>Review your question</button><button id="final" hidden>Post your question</button>';
+    const input = document.querySelector('#filterInput'), chips = document.querySelector('.chips'), list = document.querySelector('[role="listbox"]');
+    const add = name => { chips.insertAdjacentHTML('beforeend', `<span class="s-tag">${name}<button aria-label="Remove tag">×</button></span>`); input.value = ''; list.innerHTML = ''; };
+    input.oninput = () => { list.innerHTML = known.includes(input.value) ? `<li role="option"><span class="s-tag">${input.value}</span> × 120</li>` : ''; const row = list.querySelector('li'); if (row) { const name = input.value; row.onclick = () => add(name); } };
+    input.onkeydown = event => { if (event.key === 'Enter' && input.value) { window.enters++; add(input.value); } };
+    document.querySelector('button:not(#final)').onclick = event => { window.steps.push('review'); event.target.hidden = true; document.querySelector('#final').hidden = false; };
+    document.querySelector('#final').onclick = () => window.steps.push('post');
+  };
+}
+
+test('Stack Exchange posts with the AI suggested tags the site has, skipping unknown ones without creating them', async () => {
+  const page = await pageAt('https://unix.stackexchange.com/questions/ask');
+  await page.evaluate(stackOverflowEditor(), ['curl', 'dns']);
+  const result = await page.evaluate(fill, { recipe: EXTENSION_RECIPES.stackexchange, targetOrigin: 'https://unix.stackexchange.com', openUrl: page.url(), post, autoSubmit: true, options: { tags: [], suggestedTags: ['curl', 'socks5-proxy', 'dns'] } });
+  assert.equal(result.status, 'submitted', JSON.stringify(result));
+  assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.chips .s-tag')].map(node => node.firstChild.textContent)), ['curl', 'dns']);
+  assert.equal(await page.evaluate(() => window.enters), 0);
+  assert.equal(await page.locator('#filterInput').inputValue(), '');
+  assert.deepEqual(await page.evaluate(() => window.steps), ['review', 'post']);
+  await page.close();
+});
+
+test('Stack Exchange stops before posting when none of the AI tags exist on the site, naming them', async () => {
+  const page = await pageAt('https://unix.stackexchange.com/questions/ask');
+  await page.evaluate(stackOverflowEditor(), []);
+  const result = await page.evaluate(fill, { recipe: EXTENSION_RECIPES.stackexchange, targetOrigin: 'https://unix.stackexchange.com', openUrl: page.url(), post, autoSubmit: true, options: { tags: [], suggestedTags: ['made-up'] } });
+  assert.equal(result.status, 'filled');
+  assert.match(result.message, /tag có trên unix\.stackexchange\.com; các tag AI gợi ý \(made-up\)/);
+  assert.deepEqual(await page.evaluate(() => window.steps), []);
+  await page.close();
+});
+
+test('DEV fills the AI tags when the account has none configured, and keeps configured tags first', async () => {
+  const page = await pageAt('https://dev.to/new');
+  const form = '<form id="article-form" onsubmit="event.preventDefault();window.submits=(window.submits||0)+1"><textarea id="article-form-title"></textarea><input id="tag-input"><textarea id="article_body_markdown"></textarea><button type="submit">Publish</button></form>';
+  const job = { recipe: EXTENSION_RECIPES.devto, targetOrigin: 'https://dev.to', openUrl: page.url(), post, autoSubmit: true };
+  await page.setContent(form);
+  const result = await page.evaluate(fill, { ...job, options: { tags: [], suggestedTags: ['vps', 'selfhosting'] } });
+  assert.equal(result.status, 'submitted', JSON.stringify(result));
+  assert.equal(await page.locator('#tag-input').inputValue(), 'vps, selfhosting');
+  assert.equal(await page.evaluate(() => window.submits), 1);
+  await page.setContent(form);
+  await page.evaluate(fill, { ...job, options: { tags: ['webdev'], suggestedTags: ['vps'] } });
+  assert.equal(await page.locator('#tag-input').inputValue(), 'webdev');
+  await page.close();
+});
+
 test('a tag the site refuses is reported with that site name and nothing is posted', async () => {
   const page = await pageAt('https://serverfault.com/questions/ask');
   await page.evaluate(() => {

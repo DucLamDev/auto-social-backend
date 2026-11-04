@@ -164,20 +164,16 @@ export async function fillAndSubmit(task) {
       return [...selected, ...formatted.split(',').map((tag) => normalize(tag).toLowerCase()).filter(Boolean)];
     };
     const hasTag = (tag) => selectedTags().includes(tag);
-    const needsTag = /(?:select|choose) at least\s+\d+\s+tags?/i.test(tagHeader()?.textContent ?? '')
-      || tagChooser?.getAttribute('aria-required') === 'true';
-    if (!configuredTags.length && needsTag) {
-      return { status: 'filled', message: 'Đã điền bài. Chuyên mục yêu cầu tag; chọn tag trong tab hoặc cấu hình Tags trong phần Tiện ích rồi giao lại.' };
-    }
+    const requiredMatch = /(?:select|choose) at least\s+(\d+)\s+tags?/i.exec(tagHeader()?.textContent ?? '');
+    const needsTag = Boolean(requiredMatch) || tagChooser?.getAttribute('aria-required') === 'true';
     if (configuredTags.length > 10 || (configuredTags.length && !tagChooser)) {
       return { status: 'filled', message: 'Đã điền bài nhưng chưa chọn được tag đã cấu hình. Kiểm tra mục Tags trong tab diễn đàn.' };
     }
-    for (const tag of configuredTags) {
-      if (hasTag(tag)) continue;
+    // Selects one tag the chooser lists for this category; returns why not, or ''.
+    const pickTag = async (tag, rounds) => {
+      if (hasTag(tag)) return '';
       const header = tagHeader();
-      if (!header || header.disabled || header.getAttribute('aria-disabled') === 'true') {
-        return { status: 'filled', message: `Đã điền bài nhưng ô chọn tag đang khóa: ${tag}` };
-      }
+      if (!header || header.disabled || header.getAttribute('aria-disabled') === 'true') return `Đã điền bài nhưng ô chọn tag đang khóa: ${tag}`;
       if (header.getAttribute('aria-expanded') !== 'true') header.click();
       let filter;
       for (let round = 0; round < 12; round += 1) {
@@ -185,10 +181,10 @@ export async function fillAndSubmit(task) {
         if (visible(filter)) break;
         await sleep(250);
       }
-      if (!visible(filter)) return { status: 'filled', message: `Không mở được bộ chọn tag: ${tag}. Kiểm tra trong tab diễn đàn.` };
+      if (!visible(filter)) return `Không mở được bộ chọn tag: ${tag}. Kiểm tra trong tab diễn đàn.`;
       setValue(filter, tag);
       let option;
-      for (let round = 0; round < 20; round += 1) {
+      for (let round = 0; round < rounds; round += 1) {
         // MiniTagChooser now uses TagRow; older versions used TagChooserRow.
         // Keep generic action/create rows excluded even when their name matches.
         option = [...tagChooser.querySelectorAll('.select-kit-row.tag-row, .select-kit-row.tag-chooser-row')].find((row) => visible(row)
@@ -197,10 +193,30 @@ export async function fillAndSubmit(task) {
         if (option) break;
         await sleep(250);
       }
-      if (!option) return { status: 'filled', message: `Không chọn được tag “${tag}” từ danh sách của chuyên mục. Kiểm tra ô Tags trong tab diễn đàn.` };
+      if (!option) return `Không chọn được tag “${tag}” từ danh sách của chuyên mục. Kiểm tra ô Tags trong tab diễn đàn.`;
       option.click();
       for (let round = 0; round < 12 && !hasTag(tag); round += 1) await sleep(250);
-      if (!hasTag(tag)) return { status: 'filled', message: `Diễn đàn chưa giữ lại tag “${tag}”. Kiểm tra tag trước khi đăng.` };
+      return hasTag(tag) ? '' : `Diễn đàn chưa giữ lại tag “${tag}”. Kiểm tra tag trước khi đăng.`;
+    };
+    for (const tag of configuredTags) {
+      const problem = await pickTag(tag, 20);
+      if (problem) return { status: 'filled', message: problem };
+    }
+    // Without configured tags, up to 3 AI topic tags are tried; only listed ones are
+    // selected (a "create tag" row is never used) and a missing one is cleared and skipped.
+    const suggestedTags = configuredTags.length || !tagChooser ? [] : [...new Set((task.options?.suggestedTags ?? [])
+      .map((tag) => String(tag).trim().replace(/^#/, '').toLowerCase()).filter(Boolean))].slice(0, 3);
+    for (const tag of suggestedTags) {
+      if (await pickTag(tag, 12)) {
+        const filter = tagChooser.querySelector('.select-kit-filter input');
+        if (visible(filter)) setValue(filter, '');
+      }
+    }
+    const required = Math.max(1, Number(requiredMatch?.[1]) || 1);
+    if (!configuredTags.length && needsTag && new Set(selectedTags()).size < required) {
+      return { status: 'filled', message: suggestedTags.length
+        ? `Đã điền bài. Chuyên mục yêu cầu tag; tag AI gợi ý (${suggestedTags.join(', ')}) không có trong danh sách. Chọn tag trong tab hoặc cấu hình Tags trong phần Tiện ích rồi giao lại.`
+        : 'Đã điền bài. Chuyên mục yêu cầu tag; chọn tag trong tab hoặc cấu hình Tags trong phần Tiện ích rồi giao lại.' };
     }
     if (tagHeader()?.getAttribute('aria-expanded') === 'true') tagHeader().click();
     await sleep(300);

@@ -15,6 +15,8 @@ import {
 } from '../connectors/extension/extension-delivery';
 import { PrismaService } from '../database/prisma.service';
 import { renderForExtension } from '../platforms/post-text';
+import { platformContract } from '../platforms/platform-contract';
+import { destinationTags } from '../connectors/extension/extension-tags';
 import { EXTENSION_FAILED_REASONS, ExtensionDeliveryDto, ExtensionTaskResultDto } from './extension-agent.dto';
 import { extensionFlowForPlatform, validateExtensionFlow } from '../connectors/extension/extension-flows';
 import { deviceCanRunAccount, sessionOf } from './extension-account-session.service';
@@ -387,7 +389,14 @@ export class ExtensionAgentService {
       ...(session ? { auth: session } : {}),
       recipe: mergeApprovedSelectors(EXTENSION_RECIPES[settings.engine], approvedSelectors),
       uiRecovery: { enabled: this.config?.get<boolean>('EXTENSION_UI_RECOVERY_ENABLED') === true },
-      options: { tags: settings.tags ?? [], category: settings.category ?? '', flair: settings.flair ?? '', sendEmail: false },
+      options: {
+        tags: settings.tags ?? [],
+        // The AI's topic tags go to the tag field (not the body) on these destinations;
+        // the extension uses only those the site already has.
+        suggestedTags: platformContract(job.platformAccount.platform.slug, { engine: settings.engine }).hashtagMode === 'tags'
+          ? destinationTags(settings.engine, variant.hashtags, settings.tags ?? []) : [],
+        category: settings.category ?? '', flair: settings.flair ?? '', sendEmail: false,
+      },
       media,
       post: { ...post, summary: variant.summary ?? '' },
     };

@@ -5,6 +5,7 @@ import { ConnectorError } from '../core/connector-error';
 import { HttpConnectorBase } from '../core/http-connector.base';
 import { ConnectorAccount, ConnectionTestResult, PostPayload, PublishResult } from '../core/connector.types';
 import { SocialPublisher } from '../core/social-publisher.interface';
+import { destinationTags } from '../extension/extension-tags';
 
 interface DevToArticle { id: number; url?: string }
 interface DevToUser { name?: string; username?: string }
@@ -47,7 +48,8 @@ export class DevToConnector extends HttpConnectorBase implements SocialPublisher
           body_markdown: post.body,
           published: publishImmediately,
           ...(post.summary?.trim() ? { description: post.summary.trim() } : {}),
-          tags: post.hashtags?.slice(0, 4).map((tag) => tag.replace(/^#/, '').trim()).filter(Boolean).join(','),
+          // DEV refuses the whole article for a tag with "-", spaces or accents ("self-hosting").
+          tags: destinationTags('devto', post.hashtags ?? []).join(','),
           canonical_url: post.canonicalUrl,
           ...(post.media?.[0]?.url ? { main_image: post.media[0].url } : {}),
         },

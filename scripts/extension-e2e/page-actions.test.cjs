@@ -205,6 +205,23 @@ test('fills a dialog without legacy IDs, switches to Markdown and selects tags b
   assert.equal(state.submits, 1);
 });
 
+test('uses an AI suggested tag the category lists when no tag was configured, skipping one it does not list', async () => {
+  const { result, state } = await runForum(editor.replace('</div>', `${tags}</div>`),
+    { ...task, autoSubmit: true, options: { tags: [], suggestedTags: ['made-up', 'nginx-open-source'] } });
+  assert.equal(result.status, 'submitted', JSON.stringify(result));
+  assert.deepEqual(state.tags, ['nginx-open-source']);
+  assert.equal(state.submits, 1);
+});
+
+test('never creates a tag from an AI suggestion; a required tag still waits for the operator', async () => {
+  const { result, state } = await runForum(editor.replace('</div>', `${tags}</div>`),
+    { ...task, autoSubmit: true, options: { tags: [], suggestedTags: ['made-up'] } });
+  assert.equal(result.status, 'filled');
+  assert.match(result.message, /tag AI gợi ý \(made-up\) không có trong danh sách/);
+  assert.deepEqual(state.tags, []);
+  assert.equal(state.submits, 0);
+});
+
 test('fills the post but waits for a required tag when none was configured', async () => {
   const { result, state } = await runForum(editor.replace('</div>', `${tags}</div>`), { ...task, autoSubmit: true });
   assert.equal(result.status, 'filled');

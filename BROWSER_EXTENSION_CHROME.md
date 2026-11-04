@@ -1,5 +1,21 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.10.1: tag của bài AI cho Stack Exchange, Discourse, DEV, SlideShare
+
+- Trước đây tiện ích chỉ nhận tag cấu hình trong tài khoản, bỏ mất tag AI viết kèm bài. Vì vậy Stack Exchange (Stack
+  Overflow, Server Fault, Unix & Linux) báo "Câu hỏi cần ít nhất một tag", chuyên mục Discourse bắt buộc tag thì dừng ở
+  "Đã điền bài", còn DEV và SlideShare đăng thiếu tag.
+- Nay máy chủ gửi kèm **tag AI gợi ý** đã chuẩn hoá theo từng trang. Tiện ích dùng tag cố định trong cấu hình trước,
+  rồi thêm tag AI:
+  - Stack Exchange: chỉ chọn tag trang đã có trong gợi ý, không bấm Enter tạo tag mới; tối đa 5. Tag AI không có trên
+    trang thì bỏ qua; không còn tag nào thì dừng và nêu tên các tag đã thử.
+  - Discourse: tra tag trong chuyên mục (`/tags/filter/search`), chỉ dùng tag chuyên mục cho phép; diễn đàn tắt tag thì
+    bỏ qua. Lối điền giao diện thử tối đa 3 tag và không dùng dòng "Create tag".
+  - DEV và SlideShare: tài khoản chưa cấu hình tag thì điền tag AI (DEV: chữ thường và số, tối đa 4).
+- Tài khoản Stack Exchange không còn bắt buộc cấu hình tag.
+- Cần backend 1.12.2. Tải lại tiện ích trên Chrome (`chrome://extensions` → Tải lại) để có bản mới. Bài đang báo lỗi tag
+  thì bấm **Giao lại cho tiện ích**.
+
 ## Bản 1.10.0: đăng bài daily.dev
 
 - daily.dev có luồng đăng bài viết (tiêu đề + nội dung) lên **hồ sơ cá nhân** đang đăng nhập, qua khung soạn

@@ -158,6 +158,22 @@ describe('ExtensionAgentService', () => {
     expect(task?.post).toEqual({ title: 'Tiêu đề', body: 'Nội dung', summary: '' });
     const claimCall = (prisma.publishJob.updateMany.mock.calls[1] as [{ where: Record<string, unknown> }])[0];
     expect(claimCall.where).toMatchObject({ id: 'job-1', lockedAt: null, lastErrorCode: null });
+    // XenForo has no tag field the extension fills: the AI tag goes nowhere.
+    expect(task?.options).toMatchObject({ tags: [], suggestedTags: [] });
+  });
+
+  it('sends the AI topic tags to a Stack Exchange tag field after the tags configured on the account', async () => {
+    const { service, prisma } = setup();
+    const unixSettings = { delivery: 'extension', extensionEngine: 'stackexchange', extensionTargetUrl: 'https://unix.stackexchange.com/questions/ask', extensionAutoSubmit: true, extensionTags: ['linux'] };
+    prisma.publishJob.findFirst.mockResolvedValueOnce({ id: 'job-1' });
+    prisma.publishJob.findUniqueOrThrow.mockResolvedValue({
+      id: 'job-1',
+      platformAccount: { id: 'acc-1', name: 'Unix', settings: unixSettings, platform: { name: 'Unix & Linux Stack Exchange', slug: 'unix-linux-stackexchange' } },
+      target: { campaign: { name: 'C' }, contentVariant: { title: 'curl with --socks5', body: 'Question body', hashtags: ['#curl', 'Proxy', 'linux', 'dns'], content: { canonicalUrl: null } } },
+    });
+    const task = await service.claim(device);
+    expect(task?.options).toMatchObject({ tags: ['linux'], suggestedTags: ['curl', 'proxy', 'dns'] });
+    expect(task?.post.body).not.toContain('#curl');
   });
 
   it('sends approved AI selectors for this destination ahead of the built-in ones, and the recovery flag', async () => {
