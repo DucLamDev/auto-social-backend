@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { freshTotp } from '../auth/totp-provider';
@@ -7,6 +8,7 @@ import { movedUrl, object, sessionOf, sessionScope } from './extension-account-s
 import type { AuthenticatedDevice } from './extension-agent.service';
 import { ExtensionAuthStepDto } from './extension-agent.dto';
 import { extensionFlowAudit } from '../connectors/extension/extension-flow-audit';
+import { defaultExtensionDelivery } from './extension-delivery-defaults';
 
 // Each attempt has its own credential namespace. A Google password must never
 // be offered to a social login form when trying the alternative method.
@@ -125,7 +127,7 @@ export class ExtensionLoginCheckService {
   }
 
   private async active(device: AuthenticatedDevice, id: string) {
-    const check = await this.prisma.extensionLoginCheck.findFirst({ where: { id, deviceId: device.id, status: 'RUNNING', account: { ownerId: device.ownerId } }, include: { account: true } });
+    const check = await this.prisma.extensionLoginCheck.findFirst({ where: { id, deviceId: device.id, status: 'RUNNING', account: { ownerId: device.ownerId } }, include: { account: { include: { platform: { select: { slug: true } } } } } });
     const auth = check && loginSession(check.account.settings, check.method);
     if (!check || !auth || auth.deviceId !== device.id) throw new NotFoundException('Active login check for this Chrome profile not found');
     return { check, auth };
@@ -169,7 +171,20 @@ export class ExtensionLoginCheckService {
       }
       // A Chrome login verifies only the Chrome delivery route. Never turn an
       // API/manual account green using a browser session check.
-      const settings = object(check.account.settings);
+      let settings = object(check.account.settings);
+      // An account meant to connect by itself (imported) that signed in but never got a
+      // posting route (its flow came later, or the flow now has a default page) gets the
+      // flow's default now; one that still cannot post records why, replacing a stale reason.
+      let routed = false;
+      if (success && settings.delivery !== 'extension' && settings.extensionAutoConnect === true && sessionOf(settings)
+        && object(settings.extensionSetup).status !== 'ACCESS_RESTRICTED') {
+        const route = defaultExtensionDelivery(check.account.platform.slug, settings);
+        if (route.status === 'READY') { settings = { ...settings, ...route.settings }; routed = true; }
+        else if (route.status !== 'INVALID' && object(settings.extensionSetup).status !== route.status) {
+          settings = { ...settings, extensionSetup: { status: route.status } };
+          await tx.platformAccount.update({ where: { id: check.platformAccountId }, data: { settings: settings as Prisma.InputJsonObject } });
+        }
+      }
       const autoConnect = settings.extensionAutoConnect === true && settings.extensionAutoSubmit === true && object(settings.extensionSetup).status === 'READY';
       if (settings.delivery === 'extension' && object(settings.extensionSetup).status === 'ACCESS_RESTRICTED') {
         await tx.platformAccount.update({ where: { id: check.platformAccountId }, data: { enabled: false, status: 'ERROR', lastTestedAt: new Date() } });
@@ -177,12 +192,13 @@ export class ExtensionLoginCheckService {
         await tx.platformAccount.update({ where: { id: check.platformAccountId }, data: {
           status: success ? 'CONNECTED' : 'RECONNECT_REQUIRED', lastTestedAt: new Date(),
           ...(success && autoConnect ? { enabled: true } : {}),
+          ...(routed ? { settings: settings as Prisma.InputJsonObject } : {}),
         } });
       }
       if (success && (auth.discoverIdentity || auth.allowIdentityByEmail) && dto.detectedUsername?.trim()) {
         const username = dto.detectedUsername.trim();
         await tx.platformAccount.update({ where: { id: check.platformAccountId }, data: { username,
-          settings: { ...object(check.account.settings), extensionSession: { ...sessionOf(check.account.settings), expectedUsername: username, discoverIdentity: false,
+          settings: { ...settings, extensionSession: { ...sessionOf(settings), expectedUsername: username, discoverIdentity: false,
             profileUrl: username.toLowerCase() === auth.expectedUsername.toLowerCase() ? auth.profileUrl : '' } } } });
       }
       if (!success && dto.googleBlocked && auth.provider === 'google') {

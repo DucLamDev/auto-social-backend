@@ -1,6 +1,22 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.15.0 · 04/11/2026
+### Tính năng
+- Thêm social vào luồng đăng bằng tiện ích mà không đăng nhập lại cả loạt
+  - Nhập lại file: tài khoản đã có mà không đổi gì được bỏ qua (`skipped`). Trước đây mọi dòng đều bị tắt và đăng nhập
+    lại.
+  - Đổi mật khẩu, 2FA hay trang đăng thì cập nhật mà giữ trạng thái bật. Chỉ social mới, hoặc đổi tài khoản đăng nhập /
+    Chrome, mới được đăng nhập thử.
+  - API mới `POST /extension/accounts/import/one` thêm từng social, cùng quy tắc với một dòng file.
+- Tự kết nối social đã đăng nhập nhưng chưa từng bật đăng
+  - Lần kiểm tra đăng nhập thành công của tài khoản nhập từ file tự gắn trang đăng mặc định của luồng và bật Đã kết nối,
+    ví dụ daily.dev. Kênh chưa có luồng thì lưu đúng lý do.
+  - Trang đăng mặc định theo lựa chọn của bạn: DirectAdmin (General Technical Discussion & Troubleshooting), CloudPanel
+    (Install & Config), Tinhte (AI, App, Dịch vụ).
+- Thêm tài khoản cho nền tảng đang tắt (nhập file, nhập file API, tạo tài khoản) thì nền tảng được bật, thay cho trang
+  Nền tảng sẽ bỏ ở giao diện 1.16.0.
+
 ## 1.14.0 · 04/11/2026
 ### Tính năng
 - Proxy cho Chrome trong tiện ích (tiện ích 1.11.0)

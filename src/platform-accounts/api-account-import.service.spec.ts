@@ -21,7 +21,7 @@ function row(values: Partial<ApiImportRow>): ApiImportRow {
 const DEV_KEY = 'dev-secret-key-123';
 const APP_PASSWORD = 'abcd-efgh-ijkl-mnop';
 
-function setup(options: { owned?: unknown[]; busyJobs?: number; test?: jest.Mock; currentSettings?: Record<string, unknown> } = {}) {
+function setup(options: { owned?: unknown[]; busyJobs?: number; test?: jest.Mock; currentSettings?: Record<string, unknown>; platforms?: unknown[] } = {}) {
   const testConnection = options.test ?? jest.fn().mockResolvedValue({ ok: true, accountName: 'Alice' });
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([]),
@@ -35,7 +35,7 @@ function setup(options: { owned?: unknown[]; busyJobs?: number; test?: jest.Mock
     extensionLoginCheck: { count: jest.fn().mockResolvedValue(0) },
   };
   const prisma = {
-    platform: { findMany: jest.fn().mockResolvedValue(platforms) },
+    platform: { findMany: jest.fn().mockResolvedValue(options.platforms ?? platforms), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     platformAccount: tx.platformAccount,
     $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
   };
@@ -48,7 +48,7 @@ function setup(options: { owned?: unknown[]; busyJobs?: number; test?: jest.Mock
     encryption as unknown as CredentialEncryptionService,
     registry as unknown as ConnectorRegistryService,
   );
-  return { service, tx, credentials, registry, testConnection };
+  return { service, tx, credentials, registry, testConnection, prisma };
 }
 
 describe('ApiAccountImportService', () => {
@@ -76,6 +76,13 @@ describe('ApiAccountImportService', () => {
       rows: [{ row: 2, platform: 'dev.to', slug: 'devto', name: 'dev.to · alice', status: 'CONNECTED', accountId: 'new-account', message: 'Đã kết nối (Alice).' }],
     });
     expect(JSON.stringify(result)).not.toContain(DEV_KEY);
+  });
+
+  it('switches a switched-off platform on when an account is imported for it', async () => {
+    const { service, prisma } = setup({ platforms: platforms.map((platform) => ({ ...platform, enabled: platform.slug !== 'devto' })) });
+    await service.import('owner-1', [row({ platform: 'dev.to', username: 'alice', secret: DEV_KEY })]);
+    expect(prisma.platform.findMany).toHaveBeenCalledWith(expect.not.objectContaining({ where: expect.anything() as unknown }) as unknown);
+    expect(prisma.platform.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['p-devto'] } }, data: { enabled: true } });
   });
 
   it('reports a failed test with a redacted reason and leaves the account in error', async () => {
