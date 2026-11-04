@@ -75,6 +75,20 @@ export class CampaignsController {
   @Roles(RoleName.ADMIN, RoleName.EDITOR)
   approve(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ApproveAiCampaignDto) { return this.automation.approve(user.id, id, dto); }
 
+  @Post(':id/variants/:variantId/approve')
+  @ApiCreatedEnvelope(AutomatedCampaignContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  approveVariant(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Param('variantId', ParseUUIDPipe) variantId: string, @Body() dto: ApproveAiCampaignDto) {
+    return this.automation.approveVariant(user.id, id, variantId, dto);
+  }
+
+  @Post(':id/variants/:variantId/reject')
+  @ApiCreatedEnvelope(AutomatedCampaignContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  rejectVariant(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Param('variantId', ParseUUIDPipe) variantId: string) {
+    return this.automation.rejectVariant(user.id, id, variantId);
+  }
+
   @Post(':id/retry-generation')
   @ApiCreatedEnvelope(AutomatedCampaignContractDto)
   @Roles(RoleName.ADMIN, RoleName.EDITOR)

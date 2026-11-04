@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import {
   AccountStatus,
   CampaignStatus,
@@ -66,6 +66,15 @@ type SelectedMediaAsset = {
   contentId: string | null;
   variantId: string | null;
 };
+
+/** When approved posts go out: now, or a future time with an explicit UTC offset. */
+function reviewSchedule(dto: ApproveAiCampaignDto): Date {
+  const scheduledAt = dto.publishMode === 'SCHEDULED' ? new Date(dto.scheduledAt ?? '') : new Date();
+  if (dto.publishMode === 'SCHEDULED' && (!dto.scheduledAt || !/[zZ]|[+-]\d{2}:?\d{2}$/.test(dto.scheduledAt) || !Number.isFinite(scheduledAt.getTime()) || scheduledAt <= new Date())) {
+    throw new BadRequestException('Choose a future scheduledAt with an explicit UTC offset');
+  }
+  return scheduledAt;
+}
 
 @Injectable()
 export class CampaignAutomationService {
@@ -230,17 +239,24 @@ export class CampaignAutomationService {
       for (const variant of reusable) {
         if (!reusableByPlatform.has(variant.platformId)) reusableByPlatform.set(variant.platformId, variant);
       }
-      if (reusable.length && reusableByPlatform.size !== platformSlugs.length) {
-        await this.prisma.contentVariant.updateMany({
-          where: { id: { in: reusable.map((variant) => variant.id) }, targets: { none: {} } },
-          data: { status: VariantStatus.REJECTED },
-        });
+      // Drafts of an interrupted run (and edits made to them during it) are kept;
+      // only the platforms still without a draft are generated.
+      const kept = [...reusableByPlatform.values()];
+      const platformIdBySlug = new Map(accounts.map((account) => [account.platform.slug, account.platformId]));
+      const missing = platformSlugs.filter((slug) => !reusableByPlatform.has(platformIdBySlug.get(slug) ?? ''));
+      const campaignId = reservation.campaign.id;
+      if (background?.processingId) {
+        // The review page lists every saved draft while the rest are generated.
+        await this.prisma.campaign.update({ where: { id: campaignId }, data: { automationVariantIds: kept.map((variant) => variant.id) } });
       }
-      const drafts: DraftVariant[] = reusableByPlatform.size === platformSlugs.length
-        ? [...reusableByPlatform.values()]
+      const generated: DraftVariant[] = !missing.length ? []
         : background?.assertOwnership
-          ? await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider, background.assertOwnership, imagePlan)
-          : await this.ai.generate(ownerId, reservation.campaign.contentId, platformSlugs, aiProvider, undefined, imagePlan);
+          ? await this.ai.generate(ownerId, reservation.campaign.contentId, missing, aiProvider, background.assertOwnership, imagePlan,
+            background.processingId ? async (variant) => {
+              await this.prisma.campaign.update({ where: { id: campaignId }, data: { automationVariantIds: { push: variant.id } } });
+            } : undefined)
+          : await this.ai.generate(ownerId, reservation.campaign.contentId, missing, aiProvider, undefined, imagePlan);
+      const drafts: DraftVariant[] = [...kept, ...generated];
       const slugByPlatform = new Map(accounts.map((account) => [account.platformId, account.platform.slug]));
       const variants = await this.attachGeneratedImages(ownerId, drafts, slugByPlatform, imagePlan, background?.assertOwnership);
       const variantByPlatform = new Map(variants.map((variant) => [variant.platformId, variant]));
@@ -383,10 +399,9 @@ export class CampaignAutomationService {
       return this.result(ownerId, id);
     }
     if (campaign.automationState !== 'WAITING_REVIEW') throw new ConflictException('Campaign is not waiting for review');
-    const scheduledAt = dto.publishMode === 'SCHEDULED' ? new Date(dto.scheduledAt ?? '') : new Date();
-    if (dto.publishMode === 'SCHEDULED' && (!dto.scheduledAt || !/[zZ]|[+-]\d{2}:?\d{2}$/.test(dto.scheduledAt) || !Number.isFinite(scheduledAt.getTime()) || scheduledAt <= new Date())) {
-      throw new BadRequestException('Choose a future scheduledAt with an explicit UTC offset');
-    }
+    const scheduledAt = reviewSchedule(dto);
+    // Some platforms were already approved or rejected one by one: approve the rest.
+    if (await this.hasDecidedVariants(campaign)) return this.decideVariants(ownerId, id, 'approve', dto);
     const request = campaign.automationRequest as unknown as AutomateCampaignDto;
     const accounts = await this.loadConnectedAccounts(ownerId, request.platformAccountIds);
     await this.prisma.$transaction(async (tx) => {
@@ -421,6 +436,97 @@ export class CampaignAutomationService {
     return this.result(ownerId, id);
   }
 
+  /** Approves one platform's draft: its accounts get publish jobs, the other platforms keep waiting. */
+  approveVariant(ownerId: string, id: string, variantId: string, dto: ApproveAiCampaignDto = {}) {
+    return this.decideVariants(ownerId, id, 'approve', dto, variantId);
+  }
+
+  /** Rejects one platform's draft: it is never published; the other platforms keep waiting. */
+  rejectVariant(ownerId: string, id: string, variantId: string) {
+    return this.decideVariants(ownerId, id, 'reject', {}, variantId);
+  }
+
+  private async hasDecidedVariants(campaign: { automationVariantIds: string[] }): Promise<boolean> {
+    return (await this.prisma.contentVariant.count({
+      where: { id: { in: campaign.automationVariantIds }, OR: [{ status: VariantStatus.REJECTED }, { targets: { some: {} } }] },
+    })) > 0;
+  }
+
+  /**
+   * Approves or rejects the drafts still waiting (only `variantId` when given).
+   * The review stays open until every platform is decided; it then becomes
+   * APPROVED, or REJECTED when nothing was approved.
+   */
+  private async decideVariants(ownerId: string, id: string, action: 'approve' | 'reject', dto: ApproveAiCampaignDto = {}, variantId?: string) {
+    const scheduledAt = action === 'approve' ? reviewSchedule(dto) : new Date();
+    const campaign = await this.prisma.campaign.findFirstOrThrow({ where: { id, ownerId } });
+    if (campaign.automationState !== 'WAITING_REVIEW') throw new ConflictException('Campaign is not waiting for review');
+    if (variantId && !campaign.automationVariantIds.includes(variantId)) throw new NotFoundException('This draft is not part of the campaign');
+    const request = campaign.automationRequest as unknown as AutomateCampaignDto;
+    const accounts = action === 'approve' ? await this.loadConnectedAccounts(ownerId, request.platformAccountIds) : [];
+    let publishDraft = false;
+    await this.prisma.$transaction(async (tx) => {
+      // Serializes decisions on one campaign so a draft never gets two sets of jobs.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 7311))::text`;
+      const current = await tx.campaign.findFirst({ where: { id, ownerId, automationState: 'WAITING_REVIEW' } });
+      if (!current) throw new ConflictException('Campaign review has already changed');
+      const pending = await tx.contentVariant.findMany({
+        where: { id: { in: variantId ? [variantId] : current.automationVariantIds }, contentId: current.contentId, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
+      });
+      if (!pending.length) throw new ConflictException(variantId ? 'This draft was already approved or rejected' : 'No draft is waiting for review');
+      if (action === 'approve') {
+        for (const variant of pending) {
+          if (!variant.body.trim()) throw new ConflictException('A draft is empty. Edit it before approving.');
+          if (!accounts.some((account) => account.platformId === variant.platformId)) {
+            throw new ConflictException('No connected account is left for this platform. Reconnect it before approving.');
+          }
+        }
+        await tx.contentVariant.updateMany({ where: { id: { in: pending.map((variant) => variant.id) } }, data: { status: VariantStatus.APPROVED } });
+        for (const variant of pending) {
+          for (const account of accounts.filter((item) => item.platformId === variant.platformId)) {
+            const target = await tx.campaignTarget.create({ data: { campaignId: id, platformAccountId: account.id, contentVariantId: variant.id, overrides: {} } });
+            await tx.publishJob.create({ data: {
+              campaignTargetId: target.id, platformAccountId: account.id,
+              idempotencyKey: stableIdempotencyKey(id, account.id, variant.id),
+              scheduledAt, status: PublishJobStatus.SCHEDULED,
+            } });
+          }
+        }
+        await tx.content.update({ where: { id: current.contentId }, data: { status: ContentStatus.APPROVED } });
+      } else {
+        await tx.contentVariant.updateMany({ where: { id: { in: pending.map((variant) => variant.id) }, targets: { none: {} } }, data: { status: VariantStatus.REJECTED } });
+      }
+      const undecided = await tx.contentVariant.count({
+        where: { id: { in: current.automationVariantIds }, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
+      });
+      const approvedAny = await tx.campaignTarget.count({ where: { campaignId: id } }) > 0;
+      publishDraft = action === 'approve' && current.status === CampaignStatus.DRAFT;
+      // A campaign that already finished its earlier posts runs again for the new ones;
+      // the scheduler then sends every due job of a SCHEDULED or RUNNING campaign.
+      const reopen = action === 'approve' && !publishDraft && current.status !== CampaignStatus.RUNNING && current.status !== CampaignStatus.SCHEDULED;
+      await tx.campaign.update({
+        where: { id },
+        data: {
+          ...(undecided ? {} : { automationState: approvedAny ? 'APPROVED' : 'REJECTED' }),
+          ...(publishDraft ? { scheduledAt } : {}),
+          ...(reopen ? { status: scheduledAt > new Date() ? CampaignStatus.SCHEDULED : CampaignStatus.RUNNING } : {}),
+        },
+      });
+    });
+    await this.audit.recordBestEffort({
+      actorId: ownerId, action: action === 'approve' ? 'CAMPAIGN_AI_APPROVED' : 'CAMPAIGN_AI_REJECTED', entityType: 'campaigns', entityId: id,
+      after: { variantId: variantId ?? null, scope: variantId ? 'platform' : 'remaining' },
+    });
+    if (publishDraft) {
+      try { await this.campaigns.publish(ownerId, id); }
+      catch (error) {
+        // A parallel decision published the campaign first; the scheduler sends these jobs.
+        if (!(error instanceof ConflictException)) throw error;
+      }
+    }
+    return this.result(ownerId, id);
+  }
+
   async retry(ownerId: string, id: string) {
     const updated = await this.prisma.campaign.updateMany({
       where: { id, ownerId, automationState: 'FAILED', targets: { none: {} } },
@@ -431,6 +537,9 @@ export class CampaignAutomationService {
   }
 
   async reject(ownerId: string, id: string) {
+    const campaign = await this.prisma.campaign.findFirst({ where: { id, ownerId, automationState: 'WAITING_REVIEW' } });
+    // After per-platform decisions, "reject" drops only the drafts still waiting.
+    if (campaign && await this.hasDecidedVariants(campaign)) return this.decideVariants(ownerId, id, 'reject');
     const updated = await this.prisma.campaign.updateMany({
       where: { id, ownerId, automationState: 'WAITING_REVIEW', targets: { none: {} } },
       data: { automationState: 'REJECTED' },

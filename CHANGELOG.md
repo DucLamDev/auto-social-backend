@@ -1,6 +1,46 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.11.0 · 04/11/2026
+### Tính năng
+- Duyệt hoặc từ chối từng bài theo nền tảng
+  Lệnh mới `POST /campaigns/{id}/variants/{variantId}/approve` (đăng ngay hoặc `publishMode=SCHEDULED` với giờ hẹn) và
+  `.../reject`. Duyệt một bài chỉ tạo việc đăng cho các tài khoản của đúng nền tảng đó; các nền tảng khác vẫn chờ duyệt.
+  Bài bị từ chối không bao giờ được đăng. Lượt chuyển "Đã duyệt" khi mọi bài đã được quyết (hoặc "Đã từ chối" nếu từ chối
+  hết). Duyệt tất cả và Từ chối của cả lượt nay chỉ áp dụng cho các bài còn chờ. Chiến dịch đã đăng xong các bài trước được
+  mở lại để đăng bài vừa duyệt.
+
+## 1.10.0 · 03/11/2026
+### Tính năng
+- Xem trước bài như khi đăng lên từng mạng xã hội
+  Lệnh mới `POST /content-variants/{id}/preview` trả tiêu đề, nội dung, tag và số ký tự đúng như kênh sẽ nhận (bỏ
+  Markdown với trình soạn chữ thường, đặt hashtag, cắt tiêu đề theo giới hạn, dòng Nguồn), theo đường đăng của tài khoản
+  đã chọn. Nhận cả nội dung đang sửa chưa lưu; chỉ đọc, không đổi gì.
+- Ảnh AI đúng sản phẩm và mang phong cách công nghệ
+  Lời dặn AI viết mô tả ảnh nay bắt vẽ đúng sản phẩm, dịch vụ và ý kỹ thuật của bài (máy chủ, hạ tầng cloud, proxy, luồng
+  mạng…), nhìn kiểu công nghệ hiện đại (nền xanh đậm, ánh sáng xanh / tím, 3D hoặc isometric), mô tả 60–150 từ như brief
+  cho designer; không dùng cảnh đời thường (cốc cà phê, cây cảnh) hay phong cảnh. Mọi ảnh, kể cả khi tạo lại với mô tả
+  sửa tay, được thêm phần dặn chất lượng (bố cục, ánh sáng, chi tiết, không chữ, không logo).
+- Bước "giám đốc mỹ thuật" thiết kế ảnh từ bài đã viết xong
+  Với kênh có ảnh, sau khi bài viết xong và được chấm, AI làm thêm một lượt riêng để thiết kế ảnh theo khung chuẩn: chủ
+  thể cụ thể của bài, bối cảnh, bố cục hợp khổ ảnh của kênh (chủ thể ở giữa, chừa lề vì feed cắt mép), ánh sáng, bảng màu,
+  phong cách (3D cao cấp, isometric 3D hoặc ảnh sản phẩm điện ảnh), không khí, 3–6 chi tiết gắn với nội dung bài và danh
+  sách cần tránh (chữ, logo, người thật, hình sáo mòn như hacker trùm đầu, mưa mã nhị phân, tên lửa). Mô tả ảnh lưu lại là
+  bản ghép đầy đủ đó (sửa được trước khi Tạo lại ảnh). Lượt thiết kế lỗi thì giữ mô tả do AI viết bài đưa ra, bài không bị
+  lỗi theo.
+- Tạo ảnh bằng GPT Image của OpenAI (tuỳ chọn)
+  `AI_IMAGE_PROVIDER=openai` tạo ảnh thẳng bằng OpenAI với `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL` (mặc định `gpt-image-1`)
+  và `OPENAI_IMAGE_QUALITY` (mặc định `high`); tính phí theo tài khoản OpenAI. Mặc định vẫn là VPSTTT AI (Codex).
+
+## 1.9.0 · 03/11/2026
+### Tính năng
+- Nội dung AI của từng kênh được lưu ngay khi viết xong, để review trong lúc AI viết tiếp
+  Lượt tạo nội dung chạy nền (Content đợi duyệt) lưu biến thể của mỗi kênh ngay khi xong và thêm vào danh sách của lượt,
+  thay vì chờ đủ mọi kênh. AI vẫn viết tối đa 4 kênh cùng lúc, nhưng kênh nào xong thì kênh kế tiếp bắt đầu luôn. Lượt
+  bị gián đoạn hoặc lỗi khi chạy lại chỉ tạo các kênh còn thiếu, giữ các kênh đã xong và chỉnh sửa của bạn (trước đây
+  bỏ hết và tạo lại từ đầu). Duyệt đăng vẫn chỉ mở khi đủ mọi kênh. Content Studio giữ cách cũ: chỉ lưu khi mọi kênh đều
+  tạo được.
+
 ## 1.8.0 · 03/11/2026
 ### Tính năng
 - Tự đăng bài lên daily.dev bằng tiện ích Chrome (tiện ích 1.10.0)

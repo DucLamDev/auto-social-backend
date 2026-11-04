@@ -1,6 +1,6 @@
 import { HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ContentStatus, Prisma, VariantStatus } from '@prisma/client';
+import { ContentStatus, ContentVariant, Prisma, VariantStatus } from '@prisma/client';
 import OpenAI from 'openai';
 import { zodResponseFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
@@ -111,6 +111,26 @@ export interface StructuredSpec<T> {
 }
 
 const VARIANT_SPEC: StructuredSpec<GeneratedVariant> = { name: 'content_variant', jsonSchema: outputSchema, zod: VariantSchema };
+
+const briefText = z.string().trim().min(1);
+const briefList = z.array(z.string().trim().min(1)).transform((items) => items.slice(0, 6));
+/** The art director's design of one image, assembled into the generator prompt by composeImagePrompt. */
+export const ImageBriefSchema = z.object({
+  subject: briefText, scene: briefText, composition: briefText, lighting: briefText,
+  palette: briefText, style: briefText, mood: briefText, details: briefList, avoid: briefList, altText: briefText,
+});
+export type ImageBrief = z.infer<typeof ImageBriefSchema>;
+const IMAGE_BRIEF_FIELDS = ['subject', 'scene', 'composition', 'lighting', 'palette', 'style', 'mood', 'details', 'avoid', 'altText'] as const;
+const IMAGE_BRIEF_SPEC: StructuredSpec<ImageBrief> = {
+  name: 'image_brief',
+  jsonSchema: {
+    type: 'object',
+    additionalProperties: false,
+    required: [...IMAGE_BRIEF_FIELDS],
+    properties: Object.fromEntries(IMAGE_BRIEF_FIELDS.map((field) => [field, field === 'details' || field === 'avoid' ? { type: 'array', items: { type: 'string' } } : { type: 'string' }])),
+  },
+  zod: ImageBriefSchema,
+};
 const REVIEW_SPEC: StructuredSpec<ContentReview> = { name: 'content_review', jsonSchema: reviewJsonSchema, zod: ReviewSchema };
 
 type SourceContent = {
@@ -170,7 +190,11 @@ export function imageInstructions(platformName: string, image?: PlatformImagePla
   return [
     `Image (mandatory): one image generated from your description is attached to this ${platformName} post.`,
     '- Set media.type to "image".',
-    `- media.prompt: an English prompt for an image generator, 40 to 120 words. Show the one idea this post is about, as ${image.style}; ${shape} framing. Use the brand colours if the brand profile names them. The image must contain no words, letters, numbers, logos, watermarks, screenshots of real products or recognisable people.`,
+    `- media.prompt: an English prompt for an image generator, 60 to 150 words, written like a brief to a designer: the subject and its concrete details, composition or camera angle, lighting, colour palette and rendering style. Show the one idea this post is about, as ${image.style}; ${shape} framing. Use the brand colours if the brand profile names them. The image must contain no words, letters, numbers, logos, watermarks, screenshots of real products or recognisable people.`,
+    // Generic, cosy stock scenes did not show what is being promoted (a coffee
+    // cup next to a mini PC for a VPS post); keep the picture on the subject.
+    '- Subject: depict the product or service the brief promotes and the technical idea of this post concretely (for example servers and racks, cloud infrastructure, proxies and network routes between nodes, terminals or dashboards drawn as abstract shapes without readable text, data flowing between devices). A reader should guess the topic from the image alone.',
+    '- Look: modern technology. Deep navy or dark backgrounds with blue, cyan or violet light, clean geometric, isometric or 3D-render style, subtle glow and depth. Do not use lifestyle props (coffee cups, plants, wooden desks, printed photos), countryside or nature metaphors (meadows, gates, hills, sky landscapes) or generic office stock scenes.',
     '- media.altText: one sentence in the language of the post describing what the image shows, for screen readers.',
     image.need === 'required'
       ? '- The image is the post here: the caption complements what it shows.'
@@ -183,6 +207,47 @@ function isBrief(content: SourceContent): boolean {
   return analysis !== null && typeof analysis === 'object' && !Array.isArray(analysis) && analysis.kind === 'brief';
 }
 
+const shapeOf = (image: PlatformImagePlan) => image.size === '1024x1024' ? 'square 1:1' : image.size === '1536x1024' ? 'landscape 3:2' : 'portrait 2:3';
+
+/**
+ * Instructions for the art director: a second, dedicated pass that designs the
+ * image from the finished post, instead of the one line the writer adds while
+ * writing. Image generators follow a structured brief far more faithfully.
+ */
+export function imageBriefInstructions(platformName: string, image: PlatformImagePlan, language: string): string {
+  return [
+    `You are the art director of a technology company's social media team. Design ONE image for a ${platformName} post so that a reader connects it at a glance to the product being promoted and to this exact post.`,
+    'Return JSON with these fields:',
+    '- subject: the main subject, concrete and specific to the post: the product or service and the technical idea (servers, racks, cloud regions, proxy routes between nodes, network traffic, a terminal or dashboard drawn as abstract shapes). Describe real object types and their details, not metaphors.',
+    '- scene: the environment and background around the subject.',
+    `- composition: framing for a ${shapeOf(image)} image in a feed: one focal point, the camera angle or view (for example three-quarter isometric, low-angle hero shot, close-up with shallow depth of field), depth layers and where the empty space is. Keep the subject centred with safe margins: feeds crop the edges.`,
+    '- lighting: direction, quality and accents of the light.',
+    '- palette: 3 to 5 colours. Use the brand colours if the brand profile names them; otherwise deep navy or indigo with cyan and violet accents.',
+    `- style: one rendering style that fits ${image.style}: a premium 3D render, an isometric 3D illustration or a cinematic product photograph. Never flat clip-art or cartoon.`,
+    '- mood: two or three words.',
+    '- details: 3 to 6 small concrete details tying the image to this post. Turn figures into visible quantities (three server nodes, a doubled data stream), never written digits.',
+    '- avoid: what would look cheap or mislead for this post.',
+    `- altText: one sentence in ${language === 'vi' ? 'Vietnamese' : 'English'} describing the image for screen readers.`,
+    'Rules: write every field except altText in English. No text, letters, numbers, logos, brand marks, interface text, real people or faces. No clichés: hooded hacker, binary-code rain, glowing brain, handshake, rocket launch, generic gears, a padlock unless the post is about security. No lifestyle props (coffee cups, plants, wooden desks, printed photos) and no landscapes or nature metaphors. Hardware must look physically plausible and modern.',
+  ].join('\n');
+}
+
+/** The prompt sent to the image generator, built from the art director's brief. */
+export function composeImagePrompt(brief: ImageBrief, platformName: string, image: PlatformImagePlan): string {
+  const line = (label: string, text: string) => `${label}: ${text.replace(/\s+/g, ' ').trim().replace(/[.;]+$/, '')}.`;
+  return [
+    `${brief.style.replace(/[.;]+$/, '')} for a ${platformName} post, ${shapeOf(image)} frame.`,
+    line('Subject', brief.subject),
+    line('Scene', brief.scene),
+    line('Composition', brief.composition),
+    line('Lighting', brief.lighting),
+    line('Colour palette', brief.palette),
+    line('Mood', brief.mood),
+    brief.details.length ? line('Details', brief.details.join('; ')) : '',
+    line('Avoid', [...brief.avoid, 'any text, letters, numbers, logos or watermarks'].join(', ')),
+  ].filter(Boolean).join('\n').slice(0, 3_000);
+}
+
 /**
  * The image decision belongs to the route, not the writer: a destination
  * without an image never carries a media request, and one with an image always
@@ -191,7 +256,7 @@ function isBrief(content: SourceContent): boolean {
 function mediaForPlan(generated: GeneratedVariant, image: PlatformImagePlan | null): GeneratedVariant['media'] {
   if (!image) return { type: 'none', altText: '', prompt: null };
   const prompt = generated.media.prompt?.trim()
-    || `${image.style}. It illustrates: ${(generated.title ?? generated.body).replace(/\s+/g, ' ').slice(0, 300)}. No text, letters, logos or recognisable people.`;
+    || `${image.style}, modern technology look with dark navy background and blue or cyan light. It illustrates: ${(generated.title ?? generated.body).replace(/\s+/g, ' ').slice(0, 300)}. No text, letters, logos or recognisable people.`;
   return { type: 'image', altText: generated.media.altText.trim(), prompt };
 }
 
@@ -351,6 +416,12 @@ export class AiContentService {
     requestedProvider?: AiProvider,
     assertOwnership?: () => Promise<void>,
     images?: ReadonlyMap<string, PlatformImagePlan>,
+    /**
+     * Saves each platform's variant as soon as it is generated and reports it, so
+     * a long run can be reviewed while it goes on. Without it, nothing is saved
+     * unless every platform succeeds (Content Studio keeps that all-or-nothing).
+     */
+    onVariant?: (variant: ContentVariant) => Promise<void>,
   ) {
     await assertOwnership?.();
     const provider = this.resolveProvider(requestedProvider);
@@ -373,41 +444,45 @@ export class AiContentService {
     }
     try {
       const brand = await this.brandProfiles?.load() ?? null;
-      const generatedByPlatform: Array<{ platform: (typeof platforms)[number]; generated: GeneratedVariant }> = [];
-      // Bound provider concurrency for large multi-platform campaigns.
-      for (let offset = 0; offset < platforms.length; offset += 4) {
-        generatedByPlatform.push(...await Promise.all(platforms.slice(offset, offset + 4).map(async (platform) => {
-        const prompt = platform.prompts[0];
-        if (!prompt) throw new ApplicationException(ErrorCode.RESOURCE_NOT_FOUND, `No active prompt for ${platform.slug}`, HttpStatus.NOT_FOUND);
-        const generated = await this.generateChecked(provider, platform.slug, prompt.systemPrompt, prompt.userTemplate, content, brand, images?.get(platform.slug) ?? null);
-        return { platform, generated };
-        })));
-      }
-      await assertOwnership?.();
-      return await this.prisma.$transaction(async (transaction) => {
-        const results = [];
-        for (const { platform, generated } of generatedByPlatform) {
-          const latest = await transaction.contentVariant.aggregate({
-            where: { contentId, platformId: platform.id },
-            _max: { version: true },
-          });
-          results.push(await transaction.contentVariant.create({
-            data: {
-              contentId,
-              platformId: platform.id,
-              title: generated.title,
-              body: repairEscapedNewlines(generated.body),
-              summary: generated.summary,
-              hashtags: generated.hashtags,
-              cta: generated.cta,
-              recommended: generated.recommended,
-              reason: generated.reason,
-              mediaRecommendation: generated.media,
-              status: VariantStatus.GENERATED,
-              version: (latest._max.version ?? 0) + 1,
-            },
-          }));
+      const generated: Array<GeneratedVariant | undefined> = [];
+      const saved: Array<ContentVariant | undefined> = [];
+      let failure: { error: unknown } | undefined;
+      let next = 0;
+      // Bound provider concurrency for large multi-platform campaigns: four at a
+      // time, and a finished platform frees its slot for the next one at once.
+      // After a failure no new platform starts; the ones in flight still finish.
+      const worker = async () => {
+        while (!failure && next < platforms.length) {
+          const index = next++;
+          const platform = platforms[index]!;
+          try {
+            const prompt = platform.prompts[0];
+            if (!prompt) throw new ApplicationException(ErrorCode.RESOURCE_NOT_FOUND, `No active prompt for ${platform.slug}`, HttpStatus.NOT_FOUND);
+            const result = await this.generateChecked(provider, platform.slug, prompt.systemPrompt, prompt.userTemplate, content, brand, images?.get(platform.slug) ?? null);
+            if (!onVariant) { generated[index] = result; continue; }
+            await assertOwnership?.();
+            const variant = await this.saveVariant(this.prisma, contentId, platform.id, result);
+            saved[index] = variant;
+            await onVariant(variant);
+          } catch (error) { failure ??= { error }; }
         }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, platforms.length) }, worker));
+      if (failure) throw failure.error;
+      await assertOwnership?.();
+      if (onVariant) {
+        const completed = await this.prisma.content.updateMany({
+          where: { id: contentId, ownerId, status: ContentStatus.AI_GENERATING },
+          data: { status: ContentStatus.GENERATED },
+        });
+        if (!completed.count) {
+          throw new ApplicationException(ErrorCode.CONFLICT, 'Content changed while generation was completing', HttpStatus.CONFLICT);
+        }
+        return saved.filter((variant): variant is ContentVariant => Boolean(variant));
+      }
+      return await this.prisma.$transaction(async (transaction) => {
+        const results: ContentVariant[] = [];
+        for (const [index, platform] of platforms.entries()) results.push(await this.saveVariant(transaction, contentId, platform.id, generated[index]!));
         const completed = await transaction.content.updateMany({
           where: { id: contentId, ownerId, status: ContentStatus.AI_GENERATING },
           data: { status: ContentStatus.GENERATED },
@@ -428,6 +503,27 @@ export class AiContentService {
       });
       throw error;
     }
+  }
+
+  /** The next version of this platform's variant for the content. */
+  private async saveVariant(db: Prisma.TransactionClient, contentId: string, platformId: string, generated: GeneratedVariant): Promise<ContentVariant> {
+    const latest = await db.contentVariant.aggregate({ where: { contentId, platformId }, _max: { version: true } });
+    return db.contentVariant.create({
+      data: {
+        contentId,
+        platformId,
+        title: generated.title,
+        body: repairEscapedNewlines(generated.body),
+        summary: generated.summary,
+        hashtags: generated.hashtags,
+        cta: generated.cta,
+        recommended: generated.recommended,
+        reason: generated.reason,
+        mediaRecommendation: generated.media,
+        status: VariantStatus.GENERATED,
+        version: (latest._max.version ?? 0) + 1,
+      },
+    });
   }
 
   /**
@@ -491,6 +587,7 @@ export class AiContentService {
       draft = await write(rewriteFeedback(assessment.issues, assessment.review));
       assessment = await this.assess(provider, draft, contract, content, brand);
     }
+    if (image) draft = { ...draft, media: await this.directImage(provider, contract, draft, content, brand, image) };
     const hashtags = [...new Set(draft.hashtags.map((tag) => tag.trim().replace(/^#+/, '')).filter(Boolean))];
     const scoreText = assessment.review ? `AI chấm ${assessment.review.score}/10` : 'AI chưa chấm được';
     const recommended = assessment.passed && draft.recommended;
@@ -509,6 +606,38 @@ export class AiContentService {
       recommended,
       reason: reason.slice(0, MAX_REASON_LENGTH),
     };
+  }
+
+  /**
+   * Designs the image from the finished post. If the art director is
+   * unavailable, the writer's own description is kept: the post never fails
+   * because of its image.
+   */
+  private async directImage(
+    provider: AiProvider,
+    contract: PlatformContract,
+    draft: GeneratedVariant,
+    content: SourceContent,
+    brand: BrandProfile | null,
+    image: PlatformImagePlan,
+  ): Promise<GeneratedVariant['media']> {
+    try {
+      const brief = await this.withGenerationRetry(() => this.requestStructured(
+        provider,
+        imageBriefInstructions(contract.name, image, contract.language),
+        [
+          brandProfileBlock(brand),
+          `Brief or source:\n${content.body.slice(0, 6_000)}`,
+          `Finished ${contract.name} post:\n${JSON.stringify({ title: draft.title, body: draft.body.slice(0, 4_000) })}`,
+          draft.media.prompt ? `The writer's first idea for the image (improve on it, keep what fits):\n${draft.media.prompt}` : '',
+        ].filter(Boolean).join('\n\n'),
+        IMAGE_BRIEF_SPEC,
+      ));
+      return { type: 'image', prompt: composeImagePrompt(brief, contract.name, image), altText: brief.altText.slice(0, 300) };
+    } catch (error) {
+      this.logger.warn(`AI image brief unavailable for ${contract.slug}: ${error instanceof Error ? error.message : String(error)}`);
+      return draft.media;
+    }
   }
 
   private async assess(

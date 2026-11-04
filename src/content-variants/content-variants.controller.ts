@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { RoleName, VariantStatus } from '@prisma/client';
-import { IsArray, IsBoolean, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -26,6 +26,25 @@ class UpdateVariantDto {
   @ApiPropertyOptional({ enum: VariantStatus }) @IsOptional() @IsEnum(VariantStatus) status?: VariantStatus;
 }
 
+class PreviewVariantDto {
+  @ApiPropertyOptional({ description: 'Unsaved title to preview instead of the stored one.' }) @IsOptional() @IsString() @MaxLength(500) title?: string;
+  @ApiPropertyOptional({ description: 'Unsaved body to preview instead of the stored one.' }) @IsOptional() @IsString() @MaxLength(100_000) body?: string;
+  @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @ArrayMaxSize(30) @IsString({ each: true }) @MaxLength(80, { each: true }) hashtags?: string[];
+  @ApiPropertyOptional({ description: 'Account of the same platform whose posting route decides the formatting.' }) @IsOptional() @IsUUID() platformAccountId?: string;
+}
+
+class VariantPreviewDto {
+  @ApiProperty({ description: 'Empty for destinations without a title field.' }) title!: string;
+  @ApiProperty({ description: 'Body exactly as the destination receives it.' }) body!: string;
+  @ApiProperty({ enum: ['plain', 'markdown', 'html'] }) format!: string;
+  @ApiProperty({ type: [String], description: 'Tags sent in the destination tag field.' }) tags!: string[];
+  @ApiProperty({ description: 'Platform group (SOCIAL, FORUM, DEVELOPER, BLOGGING…).' }) group!: string;
+  @ApiPropertyOptional({ nullable: true, type: String }) engine!: string | null;
+  @ApiPropertyOptional({ nullable: true, type: Number }) maxChars!: number | null;
+  @ApiProperty() length!: number;
+  @ApiProperty() overLimit!: boolean;
+}
+
 class RegenerateVariantImageDto {
   @ApiPropertyOptional({ description: 'New image description; the stored one is reused when omitted.', maxLength: 4000 })
   @IsOptional() @IsString() @MaxLength(4_000) prompt?: string;
@@ -48,6 +67,14 @@ export class ContentVariantsController {
   @ApiOkEnvelope(ContentVariantContractDto, true)
   list(@CurrentUser() user: AuthenticatedUser, @Query('contentId') contentId?: string) {
     return this.variants.list(user.id, contentId);
+  }
+
+  /** Read-only: renders the post the way its destination will show it. */
+  @Post(':id/preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkEnvelope(VariantPreviewDto)
+  preview(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: PreviewVariantDto) {
+    return this.variants.preview(user.id, id, dto);
   }
 
   @Patch(':id')
