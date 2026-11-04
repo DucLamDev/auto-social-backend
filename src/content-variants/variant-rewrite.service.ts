@@ -10,6 +10,9 @@ import { PrismaService } from '../database/prisma.service';
 /** A rewrite still "generating" after this long is treated as lost (API restart). */
 const GENERATING_STALE_AFTER_MS = 10 * 60 * 1000;
 export const MAX_REWRITE_INSTRUCTION_LENGTH = 2_000;
+/** "Sửa theo khuyến nghị": how many review points one request may carry, and how long each may be. */
+export const MAX_REWRITE_NOTES = 20;
+export const MAX_REWRITE_NOTE_LENGTH = 1_000;
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -34,9 +37,15 @@ export class VariantRewriteService {
 
   constructor(private readonly prisma: PrismaService, private readonly ai: AiContentService) {}
 
-  async start(ownerId: string, variantId: string, input: { instruction?: string; aiProvider?: AiProvider }) {
+  async start(ownerId: string, variantId: string, input: { instruction?: string; notes?: string[]; aiProvider?: AiProvider }) {
     const instruction = input.instruction?.trim() ?? '';
     if (instruction.length > MAX_REWRITE_INSTRUCTION_LENGTH) throw new BadRequestException('Hướng dẫn viết lại tối đa 2.000 ký tự.');
+    // Chosen review points replace the automatic notes; none chosen and no instruction leaves nothing to fix.
+    const notes = input.notes ? [...new Set(input.notes.map((note) => note.trim()).filter(Boolean))] : undefined;
+    if (notes && (notes.length > MAX_REWRITE_NOTES || notes.some((note) => note.length > MAX_REWRITE_NOTE_LENGTH))) {
+      throw new BadRequestException(`Chọn tối đa ${MAX_REWRITE_NOTES} khuyến nghị, mỗi khuyến nghị tối đa 1.000 ký tự.`);
+    }
+    if (notes && !notes.length && !instruction) throw new BadRequestException('Chọn ít nhất một khuyến nghị để AI sửa.');
     const provider = this.ai.resolveProvider(input.aiProvider);
     const variant = await this.prisma.contentVariant.findFirst({
       where: { id: variantId, content: { ownerId } },
@@ -53,7 +62,7 @@ export class VariantRewriteService {
     if (rewriteRunning(variant.aiRevision)) throw new ConflictException('AI đang viết lại bài này.');
     // Provider configured and the platform still has an active prompt: fail now, not in the background.
     await this.ai.assertReady([variant.platform.slug], provider);
-    const revision = { status: 'generating', instruction, provider, startedAt: new Date().toISOString(), finishedAt: null, error: null };
+    const revision = { status: 'generating', instruction, ...(notes ? { notes } : {}), provider, startedAt: new Date().toISOString(), finishedAt: null, error: null };
     // Compare-and-set on updatedAt: an edit, approval or second click in between wins.
     const claimed = await this.prisma.contentVariant.updateMany({
       where: { id: variantId, updatedAt: variant.updatedAt, targets: { none: {} } },
@@ -81,8 +90,10 @@ export class VariantRewriteService {
         revision: {
           previous: { title: variant.title, body: variant.body, hashtags: variant.hashtags },
           instruction: typeof revision.instruction === 'string' ? revision.instruction : '',
-          // A passing draft's reason is praise, not a note to fix.
-          notes: variant.recommended ? null : variant.reason,
+          // Points the operator chose replace the whole last review; a passing draft's reason is praise, not a note to fix.
+          ...(Array.isArray(revision.notes)
+            ? { notes: null, chosenNotes: revision.notes.filter((note): note is string => typeof note === 'string') }
+            : { notes: variant.recommended ? null : variant.reason }),
         },
       }, provider);
       const saved = await this.prisma.contentVariant.updateMany({

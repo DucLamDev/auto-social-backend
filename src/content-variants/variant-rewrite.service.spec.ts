@@ -80,6 +80,27 @@ describe('rewrite one draft with AI', () => {
     await expect(setup().service.start('owner-1', 'variant-1', { instruction: 'x'.repeat(2_001) })).rejects.toThrow('2.000 ký tự');
   });
 
+  it('fixes only the review points the operator chose, in place of the whole last review', async () => {
+    const { service, prisma, reviseDraft } = setup();
+    await service.start('owner-1', 'variant-1', { notes: ['  Lời mở đầu hơi chung chung ', 'Thêm ví dụ', 'Thêm ví dụ', ' '] });
+    expect((prisma.contentVariant.updateMany.mock.calls[0] as UpdateCall)[0].data.aiRevision)
+      .toMatchObject({ status: 'generating', instruction: '', notes: ['Lời mở đầu hơi chung chung', 'Thêm ví dụ'] });
+    await settle(); await settle();
+    expect(reviseDraft).toHaveBeenCalledWith('owner-1', expect.objectContaining({
+      revision: { previous: { title: null, body: 'Bản cũ', hashtags: ['vps'] }, instruction: '', notes: null, chosenNotes: ['Lời mở đầu hơi chung chung', 'Thêm ví dụ'] },
+    }), 'openai');
+  });
+
+  it('refuses a request that chose no review point and gave no instruction, or too many points', async () => {
+    const empty = setup();
+    await expect(empty.service.start('owner-1', 'variant-1', { notes: [' '] })).rejects.toThrow('ít nhất một khuyến nghị');
+    expect(empty.prisma.contentVariant.updateMany).not.toHaveBeenCalled();
+    // An instruction alone is enough: the review notes are then left out.
+    await expect(setup().service.start('owner-1', 'variant-1', { notes: [], instruction: 'Ngắn hơn' })).resolves.toEqual({ status: 'generating' });
+    await expect(setup().service.start('owner-1', 'variant-1', { notes: Array.from({ length: 21 }, (_, index) => `Mục ${index}`) })).rejects.toThrow('tối đa 20');
+    await expect(setup().service.start('owner-1', 'variant-1', { notes: ['x'.repeat(1_001)] })).rejects.toThrow('1.000 ký tự');
+  });
+
   it('restarts a rewrite left "generating" by a restart after ten minutes', async () => {
     const stale = draft({ aiRevision: { status: 'generating', startedAt: new Date(Date.now() - 11 * 60 * 1000).toISOString() } });
     await expect(setup(stale).service.start('owner-1', 'variant-1', {})).resolves.toEqual({ status: 'generating' });

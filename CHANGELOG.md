@@ -1,6 +1,15 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.16.0 · 04/11/2026
+### Tính năng
+- Sửa bài theo khuyến nghị của AI, chọn được từng mục
+  `POST /content-variants/{id}/rewrite` nhận thêm `notes`: danh sách khuyến nghị người duyệt đã chọn từ ghi chú chấm
+  điểm. Khi có `notes`, AI chỉ sửa theo đúng các mục đó, thay cho toàn bộ ghi chú lần chấm trước. Ví dụ bỏ chọn mục
+  "Thông tin chưa có căn cứ" thì AI không bị yêu cầu xoá câu giới thiệu thương hiệu. Các mục đã chọn vẫn được nhắc lại
+  ở những lượt AI tự viết lại khi bài chưa đạt. Tối đa 20 mục, mỗi mục tối đa 1.000 ký tự; không chọn mục nào và không
+  có hướng dẫn thì báo lỗi. `aiRevision.notes` lưu các mục đã chọn để giao diện hiện "theo N khuyến nghị đã chọn".
+
 ## 1.15.0 · 04/11/2026
 ### Tính năng
 - Thêm social vào luồng đăng bằng tiện ích mà không đăng nhập lại cả loạt

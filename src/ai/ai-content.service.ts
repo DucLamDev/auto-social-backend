@@ -169,6 +169,8 @@ export interface DraftRevision {
   instruction: string;
   /** The last review of the stored draft ("Cần xem lại …"), if any. */
   notes?: string | null;
+  /** "Sửa theo khuyến nghị": the review points the operator chose; the other earlier notes do not apply. */
+  chosenNotes?: string[] | null;
 }
 
 function revisionBrief(revision: DraftRevision): string {
@@ -177,6 +179,9 @@ function revisionBrief(revision: DraftRevision): string {
     `Previous draft:\n${JSON.stringify({ title: revision.previous.title, body: revision.previous.body.slice(0, 20_000), hashtags: revision.previous.hashtags })}`,
     revision.instruction ? `Operator's instructions (highest priority, within the destination contract):\n${revision.instruction}` : '',
     revision.notes ? `Editor's notes from the last review:\n${revision.notes}` : '',
+    revision.chosenNotes?.length
+      ? `Fix each of these points from the editor's last review, chosen by the operator (other earlier notes do not apply):\n${revision.chosenNotes.map((note) => `- ${note}`).join('\n')}`
+      : '',
   ].filter(Boolean).join('\n\n');
 }
 
@@ -620,7 +625,10 @@ export class AiContentService {
     // (recommended=false) is not fixed by rewriting; it goes to the operator.
     // Each rewrite answers the latest review; the best-scoring attempt is kept,
     // since a rewrite can also score lower than the draft before it.
-    const standing = revision?.instruction ? `\n- The operator's instructions still apply: ${revision.instruction}` : '';
+    const standing = [
+      revision?.instruction ? `The operator's instructions still apply: ${revision.instruction}` : '',
+      revision?.chosenNotes?.length ? `The fixes the operator chose still apply: ${revision.chosenNotes.join('; ')}` : '',
+    ].filter(Boolean).map((line) => `\n- ${line}`).join('');
     for (let rewrite = 0; rewrite < QUALITY_MAX_REWRITES && !assessment.passed; rewrite += 1) {
       draft = await write(`${rewriteFeedback(assessment.issues, assessment.review)}${standing}`);
       assessment = await this.assess(provider, draft, contract, content, brand);
