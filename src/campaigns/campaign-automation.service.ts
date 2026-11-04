@@ -541,14 +541,11 @@ export class CampaignAutomationService {
       if (!current) throw new ConflictException('Campaign review has already changed');
 
       const undecidedDrafts = await tx.contentVariant.findMany({
-
-      let pending = await tx.contentVariant.findMany({
-
         where: { id: { in: variantId ? [variantId] : current.automationVariantIds }, contentId: current.contentId, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
       });
       if (!undecidedDrafts.length) throw new ConflictException(variantId ? 'This draft was already approved or rejected' : 'No draft is waiting for review');
       // A post whose planned image is still being created cannot go out yet.
-      const pending = action === 'approve' ? undecidedDrafts.filter((variant) => !imagePending(variant.mediaRecommendation)) : undecidedDrafts;
+      let pending = action === 'approve' ? undecidedDrafts.filter((variant) => !imagePending(variant.mediaRecommendation)) : undecidedDrafts;
       if (!pending.length) throw new ConflictException(variantId ? 'Ảnh của bài này đang được tạo; duyệt khi ảnh xong.' : 'Chưa có bài nào sẵn sàng: các bài còn chờ đang được tạo ảnh.');
       if (action === 'approve') {
         const approvable = pending.filter((variant) => accounts.some((account) => account.platformId === variant.platformId));
@@ -601,14 +598,11 @@ export class CampaignAutomationService {
     });
     await this.audit.recordBestEffort({
       actorId: ownerId, action: action === 'approve' ? 'CAMPAIGN_AI_APPROVED' : 'CAMPAIGN_AI_REJECTED', entityType: 'campaigns', entityId: id,
-
-      after: { variantId: variantId ?? null, scope: variantId ? 'platform' : 'remaining', trigger },
       after: {
-        variantId: variantId ?? null, scope: variantId ? 'platform' : 'remaining',
+        variantId: variantId ?? null, scope: variantId ? 'platform' : 'remaining', trigger,
         ...(outcome.skippedAccounts.length ? { skippedAccountIds: outcome.skippedAccounts.map((account) => account.id) } : {}),
         ...(outcome.waitingVariantIds.length ? { waitingVariantIds: outcome.waitingVariantIds } : {}),
       },
-
     });
     if (publishDraft) {
       try { await this.campaigns.publish(ownerId, id); }

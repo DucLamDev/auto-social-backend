@@ -245,10 +245,7 @@ describe('Shorter review: approve ready posts while the AI writes, or publish pa
     const running = { ...ctx.campaign, automationState: 'PROCESSING', automationVariantIds: ['variant-1'], automationRequest: { ...ctx.dto, platformAccountIds: ['account-1', 'account-2'] } };
     ctx.prisma.campaign.findFirstOrThrow.mockResolvedValue(running);
     ctx.prisma.campaign.findFirst.mockResolvedValue(running);
-    ctx.prisma.platformAccount.findMany.mockResolvedValue([
-      { id: 'account-1', platformId: 'platform-1', platform: { id: 'platform-1', slug: 'devto', mode: PlatformMode.OFFICIAL_API } },
-      { id: 'account-2', platformId: 'platform-2', platform: { id: 'platform-2', slug: 'x', mode: PlatformMode.OFFICIAL_API } },
-    ]);
+    ctx.prisma.platformAccount.findMany.mockResolvedValue([readyAccount('account-1', 'platform-1', 'devto'), readyAccount('account-2', 'platform-2', 'x')]);
     return { ...ctx, other, running };
   }
 
@@ -331,6 +328,9 @@ describe('Shorter review: approve ready posts while the AI writes, or publish pa
     await service.automate('owner-1', dto, 'request-key-hash', undefined, { enqueue: true });
     prisma.campaign.findFirst.mockResolvedValue(prisma.campaign.create.mock.results[0]?.value);
     await expect(service.automate('owner-1', { ...dto, autoPublish: true }, 'request-key-hash', undefined, { enqueue: true })).rejects.toThrow('different automation request');
+  });
+});
+
 describe('Review with accounts that are not ready', () => {
   function withAccounts(accounts: ReturnType<typeof readyAccount>[]) {
     const ctx = setup();
