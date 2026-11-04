@@ -12129,6 +12129,11 @@
             "default": true,
             "description": "Let VPSTTT AI create one image per destination whose publishing route can attach it. Ignored when mediaAssetIds supplies your own image."
           },
+          "autoPublish": {
+            "type": "boolean",
+            "default": false,
+            "description": "Publish each post the AI quality check passed as soon as it (and its image) is ready, without waiting for review. Posts that did not pass still wait for review."
+          },
           "aiProvider": {
             "type": "string",
             "enum": [

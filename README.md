@@ -33,7 +33,9 @@ Các connector chưa được coi là “đã kiểm chứng production” cho �
 
 ## Chạy local
 
-Luồng AI chạy ngầm: `POST /campaigns/automate` lưu tác vụ vào database và trả về ngay. Cron của API xử lý lần lượt dưới Redis lease, khôi phục tác vụ sau khi API khởi động lại và giữ kết quả ở `WAITING_REVIEW`. Chỉ `POST /campaigns/:id/approve` mới tạo và kích hoạt publish jobs; body nhận `publishMode: NOW` hoặc `publishMode: SCHEDULED` kèm `scheduledAt` trong tương lai. `/reject` từ chối bản nháp; `/retry-generation` đưa lượt lỗi trở lại hàng đợi. Cần chạy migration `20261102100000_background_ai_review` trước khi khởi động mã mới (Compose tự chạy `prisma:deploy`).
+Luồng AI chạy ngầm: `POST /campaigns/automate` lưu tác vụ vào database và trả về ngay. Cron của API xử lý lần lượt dưới Redis lease, khôi phục tác vụ sau khi API khởi động lại. Mỗi kênh viết xong (và có ảnh, nếu kênh đó có ảnh) là **duyệt được ngay** trong lúc AI viết tiếp các kênh khác: `POST /campaigns/:id/variants/:variantId/approve` hoặc `POST /campaigns/:id/approve` (duyệt mọi bài đã sẵn sàng) tạo publish jobs và kích hoạt chiến dịch, bài tự đăng không cần bấm thêm. Body nhận `publishMode: NOW` hoặc `publishMode: SCHEDULED` kèm `scheduledAt` trong tương lai. Bài có ảnh đang tạo (`mediaRecommendation.status` = `pending` / `generating`) chưa duyệt được. Lượt kết thúc ở `WAITING_REVIEW` nếu còn bài chờ, hoặc `APPROVED` / `REJECTED` khi mọi bài đã được quyết. Gửi `autoPublish: true` khi tạo thì bài AI tự chấm đạt được duyệt và đăng ngay khi xong, bài chưa đạt vẫn chờ duyệt. `/reject` từ chối các bài còn chờ; `/retry-generation` đưa lượt lỗi trở lại hàng đợi. Cần chạy migration `20261102100000_background_ai_review` trước khi khởi động mã mới (Compose tự chạy `prisma:deploy`).
+
+Blogger và dev.to đăng thật bài đã duyệt (từ 1.12.0, migration `20261104090000_publish_blogger_devto_live` chuyển các tài khoản cũ); muốn chỉ lưu nháp thì đổi ở từng tài khoản (Tài khoản → Đăng ngay / Lưu nháp).
 
 Yêu cầu Node.js 22+, Corepack và Docker.
 

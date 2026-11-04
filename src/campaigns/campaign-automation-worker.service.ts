@@ -24,7 +24,9 @@ export class CampaignAutomationWorkerService {
       // A RUNNING record belongs to a process that lost the global lease. Its
       // drafts can be reused; no publish jobs exist before explicit approval.
       const campaign = await this.prisma.campaign.findFirst({
-        where: { automationState: { in: ['QUEUED', 'PROCESSING'] }, status: 'DRAFT' },
+        // Posts approved while the AI was writing may have started the campaign
+        // already; the run still finishes its other platforms.
+        where: { automationState: { in: ['QUEUED', 'PROCESSING'] }, status: { not: 'CANCELLED' } },
         orderBy: { createdAt: 'asc' },
       });
       if (!campaign) return;

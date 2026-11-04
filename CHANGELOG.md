@@ -1,6 +1,19 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.12.0 · 04/11/2026
+### Tính năng
+- Duyệt một lần là bài tự đăng, rút gọn quy trình
+  Kênh nào AI viết xong (kèm ảnh, nếu kênh đó có ảnh) là duyệt được ngay, không chờ các kênh còn lại; duyệt xong bài vào
+  hàng đợi đăng và tự lên social. "Duyệt tất cả" lúc AI còn viết sẽ duyệt các bài đã sẵn sàng. Bài có ảnh đang tạo chưa
+  duyệt được (để không đăng thiếu ảnh). Các bài duyệt giữa chừng được giữ nguyên khi lượt chạy xong hoặc chạy lại sau
+  khi máy chủ khởi động lại; lượt tự chuyển "Đã duyệt" khi mọi bài đã được quyết.
+- Tuỳ chọn tự đăng bài AI chấm đạt, không cần duyệt
+  Khi tạo nội dung gửi `autoPublish: true`: bài AI tự chấm đạt được duyệt và đăng ngay khi viết xong (kèm ảnh); bài
+  chưa đạt, hoặc tài khoản bị ngắt kết nối giữa chừng, vẫn chờ bạn duyệt. Mặc định tắt.
+- Blogger và dev.to đăng thật bài đã duyệt
+  Trước đây chỉ lưu nháp rồi phải vào Publishing bấm "Đã đăng". Migration `20261104090000_publish_blogger_devto_live`
+  chuyển các tài khoản đang lưu nháp sang đăng thật; vẫn chọn lưu nháp được ở từng tài khoản.
 ## 1.11.0 · 04/11/2026
 ### Tính năng
 - Duyệt hoặc từ chối từng bài theo nền tảng
