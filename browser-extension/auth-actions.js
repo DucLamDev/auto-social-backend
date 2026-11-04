@@ -52,8 +52,14 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
   if (/^error$/i.test(document.title.trim()) && !all('input,button,[role="button"]').some(visible)) return challenge('Nền tảng trả về trang Error, không có form đăng nhập. Chưa gửi thông tin đăng nhập.');
   // A suspended or banned account is not a wrong password: stop and say so ("@vpsttt is suspended." on Discuit).
   const notices = all('[role="alert"], .alert, .error, .form-error, [class*="error" i], form').filter(visible).map(node => node.innerText).join(' ');
-  if (!google && /@\S+\s+is\s+(?:suspended|banned)|account\s+(?:has\s+been\s+|is\s+)?(?:suspended|banned|disabled|deactivated)|tài\s+khoản\s+(?:của\s+bạn\s+)?(?:đã\s+)?bị\s+(?:khoá|khóa|đình\s+chỉ|cấm)/i.test(notices)) {
+  // XenForo shows its ban as the page error itself: "You have been banned for the following reason: Spam."
+  if (!google && (/@\S+\s+is\s+(?:suspended|banned)|account\s+(?:has\s+been\s+|is\s+)?(?:suspended|banned|disabled|deactivated)|tài\s+khoản\s+(?:của\s+bạn\s+)?(?:đã\s+)?bị\s+(?:khoá|khóa|đình\s+chỉ|cấm)/i.test(notices)
+    || /you have been banned for the following reason|bạn đã bị cấm vì lý do sau/i.test(text))) {
     return challenge('Nền tảng báo tài khoản đã bị đình chỉ hoặc khoá (không phải sai mật khẩu). Cần giải quyết với nền tảng hoặc dùng tài khoản khác; đã dừng, không thử đăng nhập lại.');
+  }
+  // XenForo: signed in, but new threads wait until the emailed confirmation link is opened.
+  if (!google && /your account is currently awaiting confirmation|tài khoản của bạn đang chờ xác nhận/i.test(text)) {
+    return challenge('Diễn đàn báo tài khoản đang chờ xác nhận email nên chưa đăng bài được. Mở email xác nhận của diễn đàn (hoặc bấm gửi lại trên trang) rồi kiểm tra lại.');
   }
   if (job.recipe.engine === 'discourse') {
     const notice = all('#login-alert, .login-modal .alert-error, .login-page .alert-error, [role="alert"]').filter(visible).map(n => n.innerText).join(' ');
@@ -316,7 +322,12 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     if (!payload?.code || Date.now() >= payload.expiresAt) return challenge('Mã TOTP đã hết hạn trước khi điền.');
   }
   const password = one(['#ctrl_pageLogin_password', 'input[type="password"]']);
-  const identifier = one(google ? ['#identifierId'] : ['#ctrl_pageLogin_login', 'input[data-testid="loginUsernameInput"]', 'input[autocomplete="username"]', 'input[name="login"]', 'input[name="username"]', 'input[name="email"]', 'input[type="email"]', '#login-account-name', 'input[name="text"]', 'form input[type="text"]']);
+  // A signed-in page's search box ("Chercher sur Tumblr") is not a login field.
+  const searchBox = node => node.type === 'search' || Boolean(node.closest('[role="search"], form[action*="search" i]'))
+    || /^(?:q|query|search|s|keywords?)$/i.test(node.name || '')
+    || /search|chercher|recherche|suche|buscar|tìm kiếm/i.test(`${node.placeholder || ''} ${node.getAttribute('aria-label') || ''}`);
+  const loginField = selectors => { for (const selector of selectors) { const found = all(selector).filter(visible).filter(node => !searchBox(node)); if (found.length === 1) return found[0]; } return null; };
+  const identifier = google ? one(['#identifierId']) : loginField(['#ctrl_pageLogin_login', 'input[data-testid="loginUsernameInput"]', 'input[autocomplete="username"]', 'input[name="login"]', 'input[name="username"]', 'input[name="email"]', 'input[type="email"]', '#login-account-name', 'input[name="text"]', 'form input[type="text"]']);
   // Pages such as Substack ask only for an email (magic link) until "Sign in
   // with password" is clicked. Use it for accounts that sign in with a password.
   if (!google && !otp && !password && identifier && auth.provider !== 'google') {
