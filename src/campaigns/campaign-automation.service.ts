@@ -99,6 +99,18 @@ type SelectedMediaAsset = {
 };
 
 /** When approved posts go out: now, or a future time with an explicit UTC offset. */
+/** A background run can be reviewed while the AI is still writing its other platforms. */
+const REVIEWABLE_STATES = ['WAITING_REVIEW', 'PROCESSING'];
+/** Image states after which a post can be published (with or without its image). */
+const IMAGE_SETTLED = new Set(['generated', 'failed', 'removed']);
+
+/** True while a planned image is still to be created; such a post is not ready. */
+export function imagePending(mediaRecommendation: unknown): boolean {
+  const media = mediaRecommendation && typeof mediaRecommendation === 'object' && !Array.isArray(mediaRecommendation)
+    ? mediaRecommendation as Record<string, unknown> : {};
+  return media.status === 'pending' || media.status === 'generating';
+}
+
 function reviewSchedule(dto: ApproveAiCampaignDto): Date {
   const scheduledAt = dto.publishMode === 'SCHEDULED' ? new Date(dto.scheduledAt ?? '') : new Date();
   if (dto.publishMode === 'SCHEDULED' && (!dto.scheduledAt || !/[zZ]|[+-]\d{2}:?\d{2}$/.test(dto.scheduledAt) || !Number.isFinite(scheduledAt.getTime()) || scheduledAt <= new Date())) {
@@ -158,6 +170,7 @@ export class CampaignAutomationService {
       ...(background ? { reviewRequired: true } : {}),
       // Only the opt-out changes the hash, so requests stored before images existed still replay.
       ...(dto.generateImages === false ? { generateImages: false } : {}),
+      ...(dto.autoPublish ? { autoPublish: true } : {}),
     }));
 
     const alreadyReserved = await this.findReservation(ownerId, automationKey);
@@ -175,7 +188,9 @@ export class CampaignAutomationService {
     if (background?.enqueue && alreadyReserved?.automationState) {
       return this.result(ownerId, alreadyReserved.id);
     }
-    if (alreadyReserved?.targets.length) {
+    // Posts approved while the AI was still writing have targets already; the
+    // background run still has to finish the other platforms.
+    if (alreadyReserved?.targets.length && !background?.processingId) {
       return this.replayCompleted(ownerId, alreadyReserved, publishImmediately, requestId);
     }
     if (!alreadyReserved && dto.scheduledAt && scheduledAt <= new Date()) {
@@ -225,7 +240,7 @@ export class CampaignAutomationService {
       throw new ConflictException('Idempotency-Key was already used with a different automation request');
     }
 
-    if (reservation.campaign.targets.length > 0) {
+    if (reservation.campaign.targets.length > 0 && !background?.processingId) {
       return this.replayCompleted(ownerId, reservation.campaign, publishImmediately, requestId);
     }
 
@@ -260,8 +275,8 @@ export class CampaignAutomationService {
           where: {
             contentId: reservation.campaign.contentId,
             platformId: { in: accounts.map((account) => account.platformId) },
-            status: VariantStatus.GENERATED,
-            targets: { none: {} },
+            // Drafts of this run already approved or rejected stay decided.
+            OR: [{ status: VariantStatus.GENERATED, targets: { none: {} } }, { id: { in: reservation.campaign.automationVariantIds ?? [] } }],
           },
           orderBy: { version: 'desc' },
           select: { id: true, platformId: true, recommended: true, reason: true, mediaRecommendation: true },
@@ -276,6 +291,9 @@ export class CampaignAutomationService {
       const platformIdBySlug = new Map(accounts.map((account) => [account.platform.slug, account.platformId]));
       const missing = platformSlugs.filter((slug) => !reusableByPlatform.has(platformIdBySlug.get(slug) ?? ''));
       const campaignId = reservation.campaign.id;
+      const slugByPlatform = new Map(accounts.map((account) => [account.platformId, account.platform.slug]));
+      // Posts whose image was handled as soon as they were written.
+      const handled = new Map<string, DraftVariant>();
       if (background?.processingId) {
         // The review page lists every saved draft while the rest are generated.
         await this.prisma.campaign.update({ where: { id: campaignId }, data: { automationVariantIds: kept.map((variant) => variant.id) } });
@@ -285,22 +303,33 @@ export class CampaignAutomationService {
           ? await this.ai.generate(ownerId, reservation.campaign.contentId, missing, aiProvider, background.assertOwnership, imagePlan,
             background.processingId ? async (variant) => {
               await this.prisma.campaign.update({ where: { id: campaignId }, data: { automationVariantIds: { push: variant.id } } });
+              // Each platform becomes ready on its own: its image right away, then
+              // (with autoPublish) its publication, while the AI writes the others.
+              const [ready] = await this.attachGeneratedImages(ownerId, [variant], slugByPlatform, imagePlan, background.assertOwnership);
+              if (ready) handled.set(ready.id, ready);
+              if (dto.autoPublish && ready?.recommended) await this.autoApprove(ownerId, campaignId, ready.id, dto);
             } : undefined)
           : await this.ai.generate(ownerId, reservation.campaign.contentId, missing, aiProvider, undefined, imagePlan);
       const drafts: DraftVariant[] = [...kept, ...generated];
-      const slugByPlatform = new Map(accounts.map((account) => [account.platformId, account.platform.slug]));
-      const variants = await this.attachGeneratedImages(ownerId, drafts, slugByPlatform, imagePlan, background?.assertOwnership);
+      const rest = new Map((await this.attachGeneratedImages(ownerId, drafts.filter((variant) => !handled.has(variant.id)), slugByPlatform, imagePlan, background?.assertOwnership))
+        .map((variant) => [variant.id, variant]));
+      const variants = drafts.map((variant) => handled.get(variant.id) ?? rest.get(variant.id) ?? variant);
       const variantByPlatform = new Map(variants.map((variant) => [variant.platformId, variant]));
       if (variantByPlatform.size !== platformSlugs.length) {
         throw new ConflictException('AI did not generate exactly one variant for every selected platform');
       }
 
       if (background?.processingId) {
+        // Drafts kept from an interrupted run that passed the check are published too.
+        if (dto.autoPublish) {
+          const waiting = await this.prisma.contentVariant.findMany({
+            where: { id: { in: variants.filter((variant) => variant.recommended).map((variant) => variant.id) }, status: VariantStatus.GENERATED, targets: { none: {} } },
+            select: { id: true },
+          });
+          for (const variant of waiting) await this.autoApprove(ownerId, campaignId, variant.id, dto);
+        }
         await background.assertOwnership?.();
-        await this.prisma.campaign.update({
-          where: { id: reservation.campaign.id },
-          data: { automationState: 'WAITING_REVIEW', automationErrorCode: null, automationVariantIds: variants.map((variant) => variant.id) },
-        });
+        await this.finishReview(campaignId, variants.map((variant) => variant.id));
         return this.result(ownerId, reservation.campaign.id);
       }
 
@@ -429,6 +458,8 @@ export class CampaignAutomationService {
       if (campaign.status === CampaignStatus.DRAFT) await this.campaigns.publish(ownerId, id);
       return this.result(ownerId, id);
     }
+    // While the AI is still writing, "approve all" approves the posts already ready.
+    if (campaign.automationState === 'PROCESSING') return this.decideVariants(ownerId, id, 'approve', dto);
     if (campaign.automationState !== 'WAITING_REVIEW') throw new ConflictException('Campaign is not waiting for review');
     const scheduledAt = reviewSchedule(dto);
     // Some platforms were already approved or rejected one by one: approve the rest.
@@ -494,10 +525,10 @@ export class CampaignAutomationService {
    * the others. A platform with no ready account keeps its draft waiting
    * ("approve all"), or fails with the accounts and reasons (one platform).
    */
-  private async decideVariants(ownerId: string, id: string, action: 'approve' | 'reject', dto: ApproveAiCampaignDto = {}, variantId?: string) {
+  private async decideVariants(ownerId: string, id: string, action: 'approve' | 'reject', dto: ApproveAiCampaignDto = {}, variantId?: string, trigger: 'review' | 'auto' = 'review') {
     const scheduledAt = action === 'approve' ? reviewSchedule(dto) : new Date();
     const campaign = await this.prisma.campaign.findFirstOrThrow({ where: { id, ownerId } });
-    if (campaign.automationState !== 'WAITING_REVIEW') throw new ConflictException('Campaign is not waiting for review');
+    if (!REVIEWABLE_STATES.includes(campaign.automationState ?? '')) throw new ConflictException('Campaign is not waiting for review');
     if (variantId && !campaign.automationVariantIds.includes(variantId)) throw new NotFoundException('This draft is not part of the campaign');
     const request = campaign.automationRequest as unknown as AutomateCampaignDto;
     const { ready: accounts, blocked } = action === 'approve' ? await this.reviewAccounts(ownerId, request.platformAccountIds) : { ready: [], blocked: [] };
@@ -506,12 +537,19 @@ export class CampaignAutomationService {
     await this.prisma.$transaction(async (tx) => {
       // Serializes decisions on one campaign so a draft never gets two sets of jobs.
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 7311))::text`;
-      const current = await tx.campaign.findFirst({ where: { id, ownerId, automationState: 'WAITING_REVIEW' } });
+      const current = await tx.campaign.findFirst({ where: { id, ownerId, automationState: { in: REVIEWABLE_STATES } } });
       if (!current) throw new ConflictException('Campaign review has already changed');
+
+      const undecidedDrafts = await tx.contentVariant.findMany({
+
       let pending = await tx.contentVariant.findMany({
+
         where: { id: { in: variantId ? [variantId] : current.automationVariantIds }, contentId: current.contentId, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
       });
-      if (!pending.length) throw new ConflictException(variantId ? 'This draft was already approved or rejected' : 'No draft is waiting for review');
+      if (!undecidedDrafts.length) throw new ConflictException(variantId ? 'This draft was already approved or rejected' : 'No draft is waiting for review');
+      // A post whose planned image is still being created cannot go out yet.
+      const pending = action === 'approve' ? undecidedDrafts.filter((variant) => !imagePending(variant.mediaRecommendation)) : undecidedDrafts;
+      if (!pending.length) throw new ConflictException(variantId ? 'Ảnh của bài này đang được tạo; duyệt khi ảnh xong.' : 'Chưa có bài nào sẵn sàng: các bài còn chờ đang được tạo ảnh.');
       if (action === 'approve') {
         const approvable = pending.filter((variant) => accounts.some((account) => account.platformId === variant.platformId));
         const held = pending.filter((variant) => !approvable.includes(variant));
@@ -547,13 +585,15 @@ export class CampaignAutomationService {
       });
       const approvedAny = await tx.campaignTarget.count({ where: { campaignId: id } }) > 0;
       publishDraft = action === 'approve' && current.status === CampaignStatus.DRAFT;
+      // While the AI writes other platforms the review stays open for them.
+      const finished = !undecided && current.automationState === 'WAITING_REVIEW';
       // A campaign that already finished its earlier posts runs again for the new ones;
       // the scheduler then sends every due job of a SCHEDULED or RUNNING campaign.
       const reopen = action === 'approve' && !publishDraft && current.status !== CampaignStatus.RUNNING && current.status !== CampaignStatus.SCHEDULED;
       await tx.campaign.update({
         where: { id },
         data: {
-          ...(undecided ? {} : { automationState: approvedAny ? 'APPROVED' : 'REJECTED' }),
+          ...(finished ? { automationState: approvedAny ? 'APPROVED' : 'REJECTED' } : {}),
           ...(publishDraft ? { scheduledAt } : {}),
           ...(reopen ? { status: scheduledAt > new Date() ? CampaignStatus.SCHEDULED : CampaignStatus.RUNNING } : {}),
         },
@@ -561,11 +601,14 @@ export class CampaignAutomationService {
     });
     await this.audit.recordBestEffort({
       actorId: ownerId, action: action === 'approve' ? 'CAMPAIGN_AI_APPROVED' : 'CAMPAIGN_AI_REJECTED', entityType: 'campaigns', entityId: id,
+
+      after: { variantId: variantId ?? null, scope: variantId ? 'platform' : 'remaining', trigger },
       after: {
         variantId: variantId ?? null, scope: variantId ? 'platform' : 'remaining',
         ...(outcome.skippedAccounts.length ? { skippedAccountIds: outcome.skippedAccounts.map((account) => account.id) } : {}),
         ...(outcome.waitingVariantIds.length ? { waitingVariantIds: outcome.waitingVariantIds } : {}),
       },
+
     });
     if (publishDraft) {
       try { await this.campaigns.publish(ownerId, id); }
@@ -587,7 +630,9 @@ export class CampaignAutomationService {
   }
 
   async reject(ownerId: string, id: string) {
-    const campaign = await this.prisma.campaign.findFirst({ where: { id, ownerId, automationState: 'WAITING_REVIEW' } });
+    const campaign = await this.prisma.campaign.findFirst({ where: { id, ownerId, automationState: { in: REVIEWABLE_STATES } } });
+    // While the AI is still writing, only the posts already shown are rejected.
+    if (campaign?.automationState === 'PROCESSING') return this.decideVariants(ownerId, id, 'reject');
     // After per-platform decisions, "reject" drops only the drafts still waiting.
     if (campaign && await this.hasDecidedVariants(campaign)) return this.decideVariants(ownerId, id, 'reject');
     const updated = await this.prisma.campaign.updateMany({
@@ -597,6 +642,39 @@ export class CampaignAutomationService {
     if (!updated.count) throw new ConflictException('Only content waiting for review can be rejected');
     await this.audit.recordBestEffort({ actorId: ownerId, action: 'CAMPAIGN_AI_REJECTED', entityType: 'campaigns', entityId: id });
     return this.result(ownerId, id);
+  }
+
+  /**
+   * Publishes one post the AI check passed, as the user chose when creating the
+   * run. Anything that stops it (an account disconnected meanwhile, a past
+   * schedule) leaves the post waiting for review instead of failing the run.
+   */
+  private async autoApprove(ownerId: string, campaignId: string, variantId: string, dto: AutomateCampaignDto) {
+    const schedule = dto.scheduledAt && new Date(dto.scheduledAt) > new Date() ? { publishMode: 'SCHEDULED' as const, scheduledAt: dto.scheduledAt } : {};
+    try {
+      await this.decideVariants(ownerId, campaignId, 'approve', schedule, variantId, 'auto');
+    } catch (error) {
+      this.logger.warn(`Auto-publish of variant ${variantId} skipped; it waits for review (${error instanceof Error ? error.message : 'unknown error'})`);
+    }
+  }
+
+  /**
+   * Ends a background run. Decisions made while it ran are kept: the run is
+   * APPROVED / REJECTED when nothing is left to review, else it waits for review.
+   * The decision lock keeps a simultaneous approval from being missed.
+   */
+  private async finishReview(campaignId: string, variantIds: string[]) {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${campaignId}, 7311))::text`;
+      const undecided = await tx.contentVariant.count({
+        where: { id: { in: variantIds }, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
+      });
+      const approvedAny = await tx.campaignTarget.count({ where: { campaignId } }) > 0;
+      await tx.campaign.update({
+        where: { id: campaignId },
+        data: { automationState: undecided ? 'WAITING_REVIEW' : approvedAny ? 'APPROVED' : 'REJECTED', automationErrorCode: null, automationVariantIds: variantIds },
+      });
+    });
   }
 
   private async loadConnectedAccounts(ownerId: string, accountIds: string[]): Promise<ConnectedAccount[]> {
@@ -725,25 +803,35 @@ export class CampaignAutomationService {
     for (const variant of variants) {
       const slug = slugByPlatform.get(variant.platformId);
       const image = slug ? plan.get(slug) : undefined;
-      if (!image || await this.prisma.mediaAsset.count({ where: { variantId: variant.id, type: MediaType.IMAGE } })) {
+      const request = variant.mediaRecommendation && typeof variant.mediaRecommendation === 'object' && !Array.isArray(variant.mediaRecommendation)
+        ? variant.mediaRecommendation as Record<string, unknown> : {};
+      // Done already (each platform gets its image as soon as it is written), or
+      // the variant already holds an image (a resumed run, a manual upload).
+      if (!image || IMAGE_SETTLED.has(String(request.status)) || await this.prisma.mediaAsset.count({ where: { variantId: variant.id, type: MediaType.IMAGE } })) {
         results.push(variant);
         continue;
       }
-      const request = variant.mediaRecommendation && typeof variant.mediaRecommendation === 'object' && !Array.isArray(variant.mediaRecommendation)
-        ? variant.mediaRecommendation as Record<string, unknown> : {};
       const prompt = typeof request.prompt === 'string' && request.prompt.trim() ? request.prompt.trim() : image.style;
       const altText = typeof request.altText === 'string' ? request.altText : '';
       // A lost worker lease must stop the run, not be recorded as an image failure.
       await assertOwnership?.();
+      await this.prisma.contentVariant.update({ where: { id: variant.id }, data: { mediaRecommendation: { ...request, type: 'image', prompt, altText, size: image.size, status: 'generating' } } });
       let failure: string | undefined;
+      let generated: Awaited<ReturnType<typeof images.generate>> | undefined;
       try {
-        const generated = await images.generate(prompt, image.size);
-        await assertOwnership?.();
-        await media.storeGeneratedImage(ownerId, variant.id, generated, { altText, prompt });
+        generated = await images.generate(prompt, image.size);
       } catch (error) {
-        if (error instanceof ConflictException) throw error;
         failure = error instanceof ApplicationException ? error.message : 'Không tạo được ảnh bằng VPSTTT AI.';
         this.logger.warn(`AI image for ${slug} failed: ${failure}`);
+      }
+      await assertOwnership?.();
+      if (generated) {
+        try {
+          await media.storeGeneratedImage(ownerId, variant.id, generated, { altText, prompt });
+        } catch (error) {
+          failure = error instanceof Error ? error.message : 'Không lưu được ảnh.';
+          this.logger.warn(`AI image for ${slug} could not be stored: ${failure}`);
+        }
       }
       const required = image.need === 'required';
       const reason = failure && required ? `Chưa tạo được ảnh bắt buộc cho kênh này: ${failure}`.slice(0, 1_000) : variant.reason;

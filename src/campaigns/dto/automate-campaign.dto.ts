@@ -60,6 +60,14 @@ export class AutomateCampaignDto {
   @IsBoolean()
   generateImages?: boolean;
 
+  @ApiPropertyOptional({
+    default: false,
+    description: 'Publish each post the AI quality check passed as soon as it (and its image) is ready, without waiting for review. Posts that did not pass still wait for review.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  autoPublish?: boolean;
+
   @ApiPropertyOptional({ enum: AI_PROVIDER_IDS, description: 'AI provider for this automation run. Uses the backend default when omitted.' })
   @IsOptional()
   @IsIn(AI_PROVIDER_IDS)

@@ -40,7 +40,11 @@ const VariantSchema = z.object({
   cta: z.string().nullable(),
   recommended: z.boolean(),
   reason: z.string(),
-  media: z.object({ type: z.enum(['none', 'image', 'video', 'document']), altText: z.string(), prompt: z.string().nullable().optional() }),
+  media: z.object({
+    type: z.enum(['none', 'image', 'video', 'document']), altText: z.string(), prompt: z.string().nullable().optional(),
+    // Set by the backend, never by the model: where the planned image stands.
+    status: z.enum(['pending', 'generating', 'generated', 'failed', 'removed']).nullable().optional(),
+  }),
 });
 
 export type GeneratedVariant = z.infer<typeof VariantSchema>;
@@ -602,6 +606,9 @@ export class AiContentService {
       : `Cần xem lại (${scoreText}): ${[...new Set(problems)].join('; ') || `điểm dưới ${QUALITY_PASS_SCORE}/10`}`;
     return {
       ...draft,
+      // A planned image is created after the post is saved: until then the
+      // post is not ready to approve or publish.
+      media: image ? { ...draft.media, status: 'pending' } : draft.media,
       hashtags: contract.hashtagMode === 'inline' ? hashtags : hashtags.slice(0, contract.maxHashtags),
       recommended,
       reason: reason.slice(0, MAX_REASON_LENGTH),

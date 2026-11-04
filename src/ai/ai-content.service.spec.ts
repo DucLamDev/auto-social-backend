@@ -674,8 +674,9 @@ describe('AiContentService quality-checked generation', () => {
     expect(request(create, 0).instructions).toContain('Look: modern technology');
     expect(request(create, 0).instructions).toContain('60 to 150 words, written like a brief to a designer');
     expect(request(create, 0).instructions).toMatch(/Do not use lifestyle props \(coffee cups, plants/);
-    // The art director failed here, so the writer's own description is kept.
-    expect(created[0]!.mediaRecommendation).toEqual({ type: 'image', altText: 'Máy chủ VPS trong phòng dữ liệu', prompt: 'A bright NVMe server rack, soft blue light' });
+    // The art director failed here, so the writer's own description is kept;
+    // the image itself is still to be created, so the post is not ready yet.
+    expect(created[0]!.mediaRecommendation).toEqual({ type: 'image', altText: 'Máy chủ VPS trong phòng dữ liệu', prompt: 'A bright NVMe server rack, soft blue light', status: 'pending' });
   });
 
   it('has an art director design the image from the finished post and stores the assembled prompt', async () => {
