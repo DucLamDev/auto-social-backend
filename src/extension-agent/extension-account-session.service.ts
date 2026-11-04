@@ -98,14 +98,19 @@ export class ExtensionAccountSessionService {
         lockedAt: { not: null }, OR: [{ lastErrorCode: null }, { lastErrorCode: { not: 'EXTENSION_MODERATION_PENDING' } }] } });
       if (busy) throw new BadRequestException('This account has a claimed task; resolve or requeue it before changing its session');
       const others = await tx.platformAccount.findMany({ where: { ownerId, id: { not: accountId } }, select: { settings: true } });
+      const googleIdentities = new Set<string>();
       for (const other of others) {
         const session = sessionOf(other.settings);
         if (session?.deviceId !== dto.deviceId) continue;
         if (sessionScope(other.settings) === sessionScope(settings)) throw new BadRequestException('This Chrome profile already belongs to another account on this platform. Pair a separate Chrome profile');
-        if (dto.autoLogin && dto.provider === 'google' && session.autoLogin && session.provider === 'google'
-          && session.loginUsername.toLowerCase() !== dto.loginUsername?.trim().toLowerCase()) {
-          throw new BadRequestException('Use the same Google identity across platforms in one Chrome profile, or pair another profile');
-        }
+        if (session.autoLogin && session.provider === 'google' && session.loginUsername) googleIdentities.add(session.loginUsername.trim().toLowerCase());
+      }
+      // A Chrome profile signs in the Google accounts its platforms use. A new Google
+      // identity needs its own profile, but one this profile already uses stays allowed:
+      // profiles moved from another Chrome can carry several, and must stay editable.
+      const googleEmail = dto.loginUsername?.trim().toLowerCase() ?? '';
+      if (dto.autoLogin && dto.provider === 'google' && googleIdentities.size && !googleIdentities.has(googleEmail)) {
+        throw new BadRequestException(`Hồ sơ Chrome này đang dùng Google ${[...googleIdentities].sort().join(', ')}. Chọn một trong các email đó, hoặc ghép một hồ sơ Chrome khác cho Google mới.`);
       }
       const trustedUrl = (raw: string, label: string) => {
         let url: URL;

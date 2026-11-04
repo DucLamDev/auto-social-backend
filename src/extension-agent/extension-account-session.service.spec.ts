@@ -90,10 +90,19 @@ describe('Chrome account sessions', () => {
     await expect(service.configure(device.ownerId, 'account-a', { ...input, password: '', totpSecret: '' })).rejects.toThrow('password are required');
   });
 
-  it('requires Google SSO accounts in one profile to use the same Google identity', async () => {
+  it('refuses a new Google identity on a profile whose platforms already use another one', async () => {
     const { service, tx } = setup();
     tx.platformAccount.findMany.mockResolvedValue([{ settings: { ...base, extensionTargetUrl: 'https://other.test/new-topic', extensionSession: { ...input, provider: 'google', loginUsername: 'bob@example.test' } } }]);
-    await expect(service.configure(device.ownerId, 'account-a', { ...input, provider: 'google' })).rejects.toThrow('same Google identity');
+    await expect(service.configure(device.ownerId, 'account-a', { ...input, provider: 'google' })).rejects.toThrow('đang dùng Google bob@example.test');
+  });
+
+  it('lets an account switch to a Google identity this profile already uses, even when the profile carries several', async () => {
+    const { service, tx } = setup();
+    const google = (site: string, email: string) => ({ settings: { ...base, extensionTargetUrl: `https://${site}/new-topic`, extensionSession: { ...input, provider: 'google', loginUsername: email } } });
+    tx.platformAccount.findMany.mockResolvedValue([google('one.test', 'bob@example.test'), google('two.test', 'Alice@Example.test'), google('three.test', 'carol@example.test')]);
+    await expect(service.configure(device.ownerId, 'account-a', { ...input, provider: 'google' })).resolves.toBeDefined();
+    await expect(service.configure(device.ownerId, 'account-a', { ...input, provider: 'google', loginUsername: 'dave@example.test' }))
+      .rejects.toThrow('đang dùng Google alice@example.test, bob@example.test, carol@example.test');
   });
 
   it('requires the exact claimed device and auth origin, returns only a current OTP, and prevents a repeated attempt', async () => {
