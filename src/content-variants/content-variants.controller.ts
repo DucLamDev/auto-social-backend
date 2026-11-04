@@ -9,7 +9,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { ApiCreatedEnvelope, ApiOkEnvelope, ContentVariantContractDto } from '../common/swagger/api-contract.dto';
 import { ContentVariantsService } from './content-variants.service';
 import { VariantImageService } from './variant-image.service';
-import { MAX_REWRITE_INSTRUCTION_LENGTH, VariantRewriteService } from './variant-rewrite.service';
+import { MAX_REWRITE_INSTRUCTION_LENGTH, MAX_REWRITE_NOTE_LENGTH, MAX_REWRITE_NOTES, VariantRewriteService } from './variant-rewrite.service';
 import { CreateContentVariantDto } from './dto/create-content-variant.dto';
 
 class UpdateVariantStatusDto {
@@ -55,6 +55,9 @@ class RegenerateVariantImageDto {
 class RewriteVariantDto {
   @ApiPropertyOptional({ description: 'What to change, in the operator\'s words; the last review notes are added automatically.', maxLength: MAX_REWRITE_INSTRUCTION_LENGTH })
   @IsOptional() @IsString() @MaxLength(MAX_REWRITE_INSTRUCTION_LENGTH) instruction?: string;
+
+  @ApiPropertyOptional({ type: [String], maxItems: MAX_REWRITE_NOTES, description: 'Review recommendations the operator chose to apply ("Sửa theo khuyến nghị"). When sent, they replace the automatic review notes: the AI fixes only these.' })
+  @IsOptional() @IsArray() @ArrayMaxSize(MAX_REWRITE_NOTES) @IsString({ each: true }) @MaxLength(MAX_REWRITE_NOTE_LENGTH, { each: true }) notes?: string[];
 
   @ApiPropertyOptional({ enum: AI_PROVIDER_IDS, description: 'AI provider; the default one when omitted.' })
   @IsOptional() @IsIn(AI_PROVIDER_IDS) aiProvider?: AiProvider;

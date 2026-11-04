@@ -814,6 +814,25 @@ describe('AiContentService quality-checked generation', () => {
     expect(result.media.status).toBeUndefined();
   });
 
+  it('revises a draft from only the review points the operator chose, keeping them through rewrites', async () => {
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant(shortBody))
+      .mockResolvedValueOnce(reviewed({ ...passingReview, score: 6, issues: ['Thiếu số liệu'] }))
+      .mockResolvedValueOnce(variant(shortBody))
+      .mockResolvedValueOnce(reviewed());
+    const { service } = setup(create);
+    await service.reviseDraft('owner-1', {
+      contentId: 'content-1', platformSlug: 'bluesky',
+      revision: { previous: { title: null, body: 'Bản cũ nhạt', hashtags: ['vps'] }, instruction: '', notes: null, chosenNotes: ['Lời mở đầu hơi chung chung', 'Thêm một ví dụ cụ thể'] },
+    }, 'openai');
+
+    const writer = request(create, 0);
+    expect(writer.input).toContain("Fix each of these points from the editor's last review, chosen by the operator (other earlier notes do not apply):\n- Lời mở đầu hơi chung chung\n- Thêm một ví dụ cụ thể");
+    expect(writer.input).not.toContain("Editor's notes from the last review");
+    expect(writer.input).not.toContain("Operator's instructions");
+    expect(request(create, 2).input).toContain('The fixes the operator chose still apply: Lời mở đầu hơi chung chung; Thêm một ví dụ cụ thể');
+  });
+
   it('designs an image for an existing post from its text, and reports a failure instead of inventing one', async () => {
     const create = jest.fn().mockResolvedValueOnce(artDirected());
     const { service } = setup(create);

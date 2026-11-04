@@ -182,7 +182,7 @@ export class ContentVariantContractDto {
   @ApiProperty() recommended!: boolean;
   @ApiPropertyOptional({ type: String, nullable: true }) reason?: string | null;
   @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true }) mediaRecommendation?: Record<string, unknown> | null;
-  @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true, description: 'Last "rewrite with AI" request: status generating | done | failed, instruction, startedAt, finishedAt, error.' })
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true, description: 'Last "rewrite with AI" request: status generating | done | failed, instruction, notes (review points chosen by the operator, when sent), startedAt, finishedAt, error.' })
   aiRevision?: Record<string, unknown> | null;
   @ApiProperty({ enum: VariantStatus }) status!: VariantStatus;
   @ApiProperty() version!: number;

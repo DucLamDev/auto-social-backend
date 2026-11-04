@@ -105,6 +105,9 @@ lượt/phút nên chọn khoảng 6–8 nền tảng mỗi lần tạo tự đ�
 Bài đạt từ 7/10. Ở Content đợi duyệt:
 - bài chưa đạt (hoặc bất kỳ bài chờ duyệt nào) có thể **viết lại bằng AI** kèm hướng dẫn của bạn qua
   `POST /api/v1/content-variants/{id}/rewrite` (`instruction`, tuỳ chọn `aiProvider`);
+- **sửa theo khuyến nghị**: gửi thêm `notes` (mảng, tối đa 20 mục, mỗi mục tối đa 1.000 ký tự) là các khuyến nghị
+  bạn chọn trong ghi chú chấm điểm. Khi có `notes`, AI chỉ sửa theo các mục đó thay vì toàn bộ ghi chú lần chấm trước;
+  `notes` rỗng thì phải có `instruction`;
 - việc này chạy nền 1–3 phút. Trạng thái nằm ở trường `aiRevision` của biến thể (`generating`, `done`, `failed`);
 - bài mới thay bài cũ tại chỗ, được chấm lại; bài đã duyệt nhưng chưa vào chiến dịch quay về chờ duyệt;
 - bạn sửa tay trong lúc AI đang viết thì giữ bản bạn sửa.
