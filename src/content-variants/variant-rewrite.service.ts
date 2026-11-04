@@ -15,6 +15,13 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+/** A rewrite is running (and not left over from a restart): the draft's text is about to change. */
+export function rewriteRunning(aiRevision: unknown): boolean {
+  const revision = record(aiRevision);
+  const startedAt = typeof revision.startedAt === 'string' ? Date.parse(revision.startedAt) : NaN;
+  return revision.status === 'generating' && Date.now() - startedAt < GENERATING_STALE_AFTER_MS;
+}
+
 /**
  * "Viết lại bằng AI" on one draft. Writing, scoring and up to two rewrites take
  * a minute or more, longer than a proxied request may stay open, so it runs
@@ -43,11 +50,7 @@ export class VariantRewriteService {
     if (!variant) throw new NotFoundException('Content variant not found');
     if (variant._count.targets) throw new ConflictException('Bài đã vào chiến dịch đang đăng, không viết lại được nữa.');
     if (variant.status === VariantStatus.REJECTED) throw new ConflictException('Bài đã bị từ chối. Khôi phục bài trước khi viết lại.');
-    const current = record(variant.aiRevision);
-    const startedAt = typeof current.startedAt === 'string' ? Date.parse(current.startedAt) : NaN;
-    if (current.status === 'generating' && Date.now() - startedAt < GENERATING_STALE_AFTER_MS) {
-      throw new ConflictException('AI đang viết lại bài này.');
-    }
+    if (rewriteRunning(variant.aiRevision)) throw new ConflictException('AI đang viết lại bài này.');
     // Provider configured and the platform still has an active prompt: fail now, not in the background.
     await this.ai.assertReady([variant.platform.slug], provider);
     const revision = { status: 'generating', instruction, provider, startedAt: new Date().toISOString(), finishedAt: null, error: null };

@@ -11,6 +11,7 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   - Việc chạy nền 1–3 phút, trạng thái ở trường mới `aiRevision` (migration
     `20261104160000_content_variant_ai_revision`, chỉ thêm cột).
   - Bạn sửa tay trong lúc AI đang viết thì giữ bản bạn sửa. Bài đã vào chiến dịch hoặc bị từ chối thì không viết lại.
+  - Bài đang được AI viết lại không duyệt được, kể cả bằng nút duyệt chung (bỏ qua bài đó), để không đăng nhầm bản cũ.
 - Tạo ảnh AI cho bài chưa có ảnh
   Lệnh tạo lại ảnh (`POST /content-variants/{id}/image`) không còn đòi mô tả. Bài chưa có mô tả ảnh thì AI tự thiết kế
   mô tả từ nội dung bài, giống bài mới tạo, rồi tạo ảnh. Không phải tải ảnh từ máy lên.

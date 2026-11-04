@@ -271,6 +271,18 @@ describe('Shorter review: approve ready posts while the AI writes, or publish pa
     expect(prisma.publishJob.create).toHaveBeenCalledTimes(1);
   });
 
+  it('does not approve a post the AI is rewriting; "approve all" takes only the others', async () => {
+    const { service, prisma, variant, other } = processing();
+    const rewriting = { ...other, aiRevision: { status: 'generating', startedAt: new Date().toISOString() } };
+    prisma.contentVariant.findMany.mockResolvedValue([rewriting]);
+    await expect(service.approveVariant('owner-1', 'campaign-1', 'variant-1')).rejects.toThrow('AI đang viết lại bài này');
+    expect(prisma.publishJob.create).not.toHaveBeenCalled();
+    prisma.contentVariant.findMany.mockResolvedValue([{ ...variant, aiRevision: { status: 'done' } }, rewriting]);
+    await service.approve('owner-1', 'campaign-1');
+    expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['variant-1'] } }, data: { status: VariantStatus.APPROVED } });
+    expect(prisma.publishJob.create).toHaveBeenCalledTimes(1);
+  });
+
   it('ends a run in APPROVED when every post was already decided during it', async () => {
     const { service, prisma, ai, dto, campaign } = setup();
     await service.automate('owner-1', dto, 'request-key-123', undefined, { enqueue: true });

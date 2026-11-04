@@ -22,6 +22,7 @@ import { ConnectorRegistryService } from '../connectors/core/connector-registry.
 import { isExtensionDelivery } from '../connectors/extension/extension-delivery';
 import { CONTENT_REVIEW_REQUIRED_CODE } from '../publishing/publishing.constants';
 import { MediaService } from '../media/media.service';
+import { rewriteRunning } from '../content-variants/variant-rewrite.service';
 import { CampaignsService } from './campaigns.service';
 import { PlatformImagePlan, planImages } from './image-plan';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
@@ -544,9 +545,14 @@ export class CampaignAutomationService {
         where: { id: { in: variantId ? [variantId] : current.automationVariantIds }, contentId: current.contentId, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
       });
       if (!undecidedDrafts.length) throw new ConflictException(variantId ? 'This draft was already approved or rejected' : 'No draft is waiting for review');
-      // A post whose planned image is still being created cannot go out yet.
-      let pending = action === 'approve' ? undecidedDrafts.filter((variant) => !imagePending(variant.mediaRecommendation)) : undecidedDrafts;
-      if (!pending.length) throw new ConflictException(variantId ? 'Ảnh của bài này đang được tạo; duyệt khi ảnh xong.' : 'Chưa có bài nào sẵn sàng: các bài còn chờ đang được tạo ảnh.');
+      // A post whose planned image is still being created, or whose text the AI
+      // is rewriting, cannot go out yet: approving now would send the old text.
+      const busy = (variant: { mediaRecommendation: Prisma.JsonValue; aiRevision: Prisma.JsonValue }) => imagePending(variant.mediaRecommendation) || rewriteRunning(variant.aiRevision);
+      let pending = action === 'approve' ? undecidedDrafts.filter((variant) => !busy(variant)) : undecidedDrafts;
+      if (!pending.length) {
+        throw new ConflictException(!variantId ? 'Chưa có bài nào sẵn sàng: các bài còn chờ đang được tạo ảnh hoặc AI đang viết lại.'
+          : rewriteRunning(undecidedDrafts[0]!.aiRevision) ? 'AI đang viết lại bài này; duyệt khi bài mới xong.' : 'Ảnh của bài này đang được tạo; duyệt khi ảnh xong.');
+      }
       if (action === 'approve') {
         const approvable = pending.filter((variant) => accounts.some((account) => account.platformId === variant.platformId));
         const held = pending.filter((variant) => !approvable.includes(variant));
