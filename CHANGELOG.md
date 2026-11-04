@@ -1,6 +1,15 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.11.0 · 04/11/2026
+### Tính năng
+- Duyệt hoặc từ chối từng bài theo nền tảng
+  Lệnh mới `POST /campaigns/{id}/variants/{variantId}/approve` (đăng ngay hoặc `publishMode=SCHEDULED` với giờ hẹn) và
+  `.../reject`. Duyệt một bài chỉ tạo việc đăng cho các tài khoản của đúng nền tảng đó; các nền tảng khác vẫn chờ duyệt.
+  Bài bị từ chối không bao giờ được đăng. Lượt chuyển "Đã duyệt" khi mọi bài đã được quyết (hoặc "Đã từ chối" nếu từ chối
+  hết). Duyệt tất cả và Từ chối của cả lượt nay chỉ áp dụng cho các bài còn chờ. Chiến dịch đã đăng xong các bài trước được
+  mở lại để đăng bài vừa duyệt.
+
 ## 1.10.0 · 03/11/2026
 ### Tính năng
 - Xem trước bài như khi đăng lên từng mạng xã hội

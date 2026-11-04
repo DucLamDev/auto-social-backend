@@ -20,11 +20,12 @@ function setup() {
       update: jest.fn().mockResolvedValue(campaign), updateMany: jest.fn().mockResolvedValue({ count: 1 }), upsert: jest.fn().mockResolvedValue(campaign),
     },
     content: { create: jest.fn().mockResolvedValue(content), findFirstOrThrow: jest.fn().mockResolvedValue(content), update: jest.fn(), updateMany: jest.fn() },
-    contentVariant: { findMany: jest.fn().mockResolvedValue([variant]), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    contentVariant: { findMany: jest.fn().mockResolvedValue([variant]), updateMany: jest.fn().mockResolvedValue({ count: 1 }), count: jest.fn().mockResolvedValue(0) },
     platformAccount: { findMany: jest.fn().mockResolvedValue([account]) },
     campaignTarget: { create: jest.fn().mockResolvedValue({ id: 'target-1' }) },
     publishJob: { create: jest.fn() },
     $transaction: jest.fn(),
+    $queryRaw: jest.fn(),
   };
   prisma.$transaction.mockImplementation((fn: (tx: typeof prisma) => unknown) => fn(prisma));
   const ai = { resolveProvider: jest.fn().mockReturnValue('openai'), assertReady: jest.fn(), generate: jest.fn().mockResolvedValue([variant]) };
@@ -155,6 +156,71 @@ describe('Background AI review', () => {
     expect(prisma.campaign.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ ownerId: 'owner-1', automationState: 'WAITING_REVIEW' }) as unknown, data: { automationState: 'REJECTED' } }));
     expect(prisma.publishJob.create).not.toHaveBeenCalled();
     expect(campaigns.publish).not.toHaveBeenCalled();
+  });
+});
+
+describe('Per-platform review', () => {
+  function perPlatform() {
+    const ctx = setup();
+    const second = { id: 'account-2', platformId: 'platform-2', platform: { id: 'platform-2', slug: 'x', mode: PlatformMode.OFFICIAL_API } };
+    const other = { ...ctx.variant, id: 'variant-2', platformId: 'platform-2', body: 'Second text' };
+    const waiting = { ...ctx.campaign, automationVariantIds: ['variant-1', 'variant-2'], automationRequest: { ...ctx.dto, platformAccountIds: ['account-1', 'account-2'] } };
+    ctx.prisma.campaign.findFirstOrThrow.mockResolvedValue(waiting);
+    ctx.prisma.campaign.findFirst.mockResolvedValue(waiting);
+    ctx.prisma.platformAccount.findMany.mockResolvedValue([{ id: 'account-1', platformId: 'platform-1', platform: { id: 'platform-1', slug: 'devto', mode: PlatformMode.OFFICIAL_API } }, second]);
+    Object.assign(ctx.prisma, { campaignTarget: { create: jest.fn().mockResolvedValue({ id: 'target-1' }), count: jest.fn().mockResolvedValue(1) } });
+    return { ...ctx, waiting, other };
+  }
+
+  it('approves one platform: only its accounts get a job, the review stays open for the others', async () => {
+    const { service, prisma, campaigns, variant } = perPlatform();
+    prisma.contentVariant.findMany.mockResolvedValue([variant]);
+    prisma.contentVariant.count.mockResolvedValue(1); // variant-2 still waiting
+    await service.approveVariant('owner-1', 'campaign-1', 'variant-1');
+    expect(prisma.$queryRaw).toHaveBeenCalled();
+    expect(prisma.contentVariant.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: ['variant-1'] }, targets: { none: {} } }) as unknown }));
+    expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['variant-1'] } }, data: { status: VariantStatus.APPROVED } });
+    expect(prisma.publishJob.create).toHaveBeenCalledTimes(1);
+    expect(prisma.publishJob.create).toHaveBeenCalledWith({ data: expect.objectContaining({ platformAccountId: 'account-1', status: 'SCHEDULED' }) as unknown });
+    const update = (prisma.campaign.update.mock.calls.at(-1) as [{ data: Record<string, unknown> }])[0].data;
+    expect(update.automationState).toBeUndefined();
+    expect(campaigns.publish).toHaveBeenCalledWith('owner-1', 'campaign-1');
+  });
+
+  it('closes the review when the last platform is rejected and never publishes the rejected draft', async () => {
+    const { service, prisma, campaigns, other, waiting } = perPlatform();
+    prisma.campaign.findFirst.mockResolvedValue({ ...waiting, status: CampaignStatus.RUNNING });
+    prisma.contentVariant.findMany.mockResolvedValue([other]);
+    prisma.contentVariant.count.mockResolvedValue(0);
+    await service.rejectVariant('owner-1', 'campaign-1', 'variant-2');
+    expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['variant-2'] }, targets: { none: {} } }, data: { status: VariantStatus.REJECTED } });
+    expect(prisma.publishJob.create).not.toHaveBeenCalled();
+    expect(prisma.campaign.update).toHaveBeenLastCalledWith({ where: { id: 'campaign-1' }, data: { automationState: 'APPROVED' } });
+    expect(campaigns.publish).not.toHaveBeenCalled();
+  });
+
+  it('reopens a finished campaign for a platform approved later, and refuses a second approval of the same draft', async () => {
+    const { service, prisma, campaigns, other, waiting } = perPlatform();
+    prisma.campaign.findFirst.mockResolvedValue({ ...waiting, status: CampaignStatus.COMPLETED });
+    prisma.contentVariant.findMany.mockResolvedValue([other]);
+    await service.approveVariant('owner-1', 'campaign-1', 'variant-2');
+    expect(prisma.campaign.update).toHaveBeenLastCalledWith({ where: { id: 'campaign-1' }, data: { automationState: 'APPROVED', status: CampaignStatus.RUNNING } });
+    expect(campaigns.publish).not.toHaveBeenCalled();
+    prisma.contentVariant.findMany.mockResolvedValue([]);
+    await expect(service.approveVariant('owner-1', 'campaign-1', 'variant-2')).rejects.toThrow('already approved or rejected');
+    await expect(service.approveVariant('owner-1', 'campaign-1', 'variant-9')).rejects.toThrow('not part of the campaign');
+  });
+
+  it('turns "approve all" and "reject" into decisions on the drafts still waiting once one platform was decided', async () => {
+    const { service, prisma, other } = perPlatform();
+    prisma.contentVariant.count.mockResolvedValueOnce(1).mockResolvedValue(0);
+    prisma.contentVariant.findMany.mockResolvedValue([other]);
+    await service.approve('owner-1', 'campaign-1');
+    expect(prisma.contentVariant.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: ['variant-1', 'variant-2'] } }) as unknown }));
+    expect(prisma.publishJob.create).toHaveBeenCalledWith({ data: expect.objectContaining({ platformAccountId: 'account-2' }) as unknown });
+    prisma.contentVariant.count.mockResolvedValueOnce(1).mockResolvedValue(0);
+    await service.reject('owner-1', 'campaign-1');
+    expect(prisma.contentVariant.updateMany).toHaveBeenLastCalledWith({ where: { id: { in: ['variant-2'] }, targets: { none: {} } }, data: { status: VariantStatus.REJECTED } });
   });
 });
 
