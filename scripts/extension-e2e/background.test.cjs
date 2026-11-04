@@ -67,7 +67,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     } },
   };
   const source = fs.readFileSync(path.join(__dirname, '../../browser-extension/background.js'), 'utf8')
-    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery)\.js';\r?\n/gm, '')
+    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery|proxy)\.js';\r?\n/gm, '')
     .replace(/const NEXT_JOB_DELAY_MS = [\d_]+;/, `const NEXT_JOB_DELAY_MS = ${nextJobDelay};`)
     .replace(/const NO_GOOGLE_GRACE_MS = [\d_]+;/, 'const NO_GOOGLE_GRACE_MS = 0;')
     .replace(/const CLOUDFLARE_WAIT_MS = [\d_]+;/, `const CLOUDFLARE_WAIT_MS = ${cloudflareWait};`);
@@ -79,6 +79,9 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     submitDiscoursePost: function submitDiscoursePost() {},
     showPublishNotice: function showPublishNotice() {},
     collectUiCandidates: function collectUiCandidates() {}, verifyUiSelectors: function verifyUiSelectors() {},
+    PROXY_STORAGE_KEY: 'proxy',
+    registerProxyAuth: () => { state.proxyAuthRegistered = (state.proxyAuthRegistered ?? 0) + 1; },
+    applyProxy: async () => { state.proxyApplied = (state.proxyApplied ?? 0) + 1; },
     fetch: async (url, options) => {
       if (url.endsWith('/result')) {
         if (state.reportOffline) throw new Error('Backend offline');
@@ -112,6 +115,18 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
   vm.runInContext(source + '\nglobalThis.worker = { start, sweep, getTasks, tick, tickSoon, ensureAlarm, withDeadline, authenticateTask };', context);
   return { state, chrome, worker: context.worker };
 }
+
+test('answers the proxy login from the start, and applies the proxy on startup and when it or the pairing changes', async () => {
+  const { state, chrome } = setup();
+  assert.equal(state.proxyAuthRegistered, 1);
+  const before = state.proxyApplied ?? 0;
+  for (const listener of chrome.runtime.onStartup.listeners) listener();
+  for (const listener of chrome.storage.onChanged.listeners) listener({ proxy: { newValue: { enabled: true } } }, 'local');
+  for (const listener of chrome.storage.onChanged.listeners) listener({ apiUrl: { newValue: 'http://backend.test' } }, 'local');
+  for (const listener of chrome.storage.onChanged.listeners) listener({ history: { newValue: [] } }, 'local');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(state.proxyApplied - before, 3);
+});
 
 test('a page probe that never resolves cannot hold the authentication queue forever', async () => {
   const { worker } = setup();

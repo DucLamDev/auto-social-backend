@@ -8,6 +8,10 @@ import { accountAuthStep } from './auth-actions.js';
 import { submitDiscoursePost } from './discourse-session.js';
 import { showPublishNotice } from './publish-notice.js';
 import { collectUiCandidates, verifyUiSelectors } from './ui-recovery.js';
+import { applyProxy, PROXY_STORAGE_KEY, registerProxyAuth } from './proxy.js';
+
+// The proxy's login prompt can arrive before anything else wakes the worker.
+registerProxyAuth();
 
 const TICK_ALARM = 'tick';
 const LOAD_TIMEOUT_MS = 90_000;
@@ -923,12 +927,15 @@ async function startPolling() {
   }
 }
 
-chrome.runtime.onInstalled.addListener(() => { void startPolling(); });
-chrome.runtime.onStartup.addListener(() => { void startPolling(); });
+const ensureProxy = () => applyProxy().catch(error => chrome.storage.local.set({ lastError: { at: new Date().toISOString(), message: `Không áp dụng được proxy: ${String(error?.message ?? error).slice(0, 200)}` } }));
+chrome.runtime.onInstalled.addListener(() => { void ensureProxy(); void startPolling(); });
+chrome.runtime.onStartup.addListener(() => { void ensureProxy(); void startPolling(); });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === TICK_ALARM) void startPolling();
 });
 chrome.storage.onChanged.addListener((changes, area) => {
+  // The backend address is the proxy's bypass, so a new pairing re-applies it too.
+  if (area === 'local' && (PROXY_STORAGE_KEY in changes || 'apiUrl' in changes)) void ensureProxy();
   if (area === 'local' && ('apiUrl' in changes || 'token' in changes || changes.paused?.newValue === false)) {
     void startPolling();
   }

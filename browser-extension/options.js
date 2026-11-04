@@ -1,3 +1,5 @@
+import { parseProxy, PROXY_STORAGE_KEY } from './proxy.js';
+
 const $ = (id) => document.getElementById(id);
 let origins = [];
 
@@ -31,6 +33,70 @@ async function load() {
     }
   }
 }
+
+async function loadProxy() {
+  const { [PROXY_STORAGE_KEY]: proxy } = await chrome.storage.local.get(PROXY_STORAGE_KEY);
+  $('proxyEnabled').checked = Boolean(proxy?.enabled);
+  $('proxyAddress').value = proxy?.host ? `${proxy.host}:${proxy.port}` : '';
+  $('proxyUser').value = proxy?.username ?? '';
+  // The saved password is never shown again; an empty field keeps it.
+  $('proxyPassword').value = '';
+  $('proxyPassword').placeholder = proxy?.password ? 'Đã lưu. Để trống để giữ nguyên' : 'Mật khẩu proxy';
+  $('proxyStatus').textContent = proxy?.enabled ? `Đang dùng proxy ${proxy.host}:${proxy.port}.` : 'Không dùng proxy.';
+  $('proxyStatus').className = proxy?.enabled ? 'ok' : 'muted';
+}
+
+// Pasting "host:port:user:password" fills the three fields at once.
+$('proxyAddress').addEventListener('change', () => {
+  const value = $('proxyAddress').value.trim();
+  if (value.split(':').length < 4) return;
+  try {
+    const parsed = parseProxy(value);
+    $('proxyAddress').value = `${parsed.host}:${parsed.port}`;
+    $('proxyUser').value = parsed.username;
+    $('proxyPassword').value = parsed.password;
+    $('proxyStatus').textContent = 'Đã tách tên đăng nhập và mật khẩu. Bấm Lưu proxy.';
+    $('proxyStatus').className = 'muted';
+  } catch (error) {
+    $('proxyStatus').textContent = String(error.message ?? error);
+    $('proxyStatus').className = 'bad';
+  }
+});
+
+$('proxyForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const status = $('proxyStatus');
+  const enabled = $('proxyEnabled').checked;
+  try {
+    // Chrome only lets the extension answer the proxy's login for pages it may see.
+    // Asked first, while this click still counts as a user gesture.
+    if (enabled && !await chrome.permissions.request({ origins: ['https://*/*', 'http://*/*'] })) {
+      throw new Error('Cần cho phép tiện ích truy cập các trang để tự đăng nhập proxy.');
+    }
+    const { [PROXY_STORAGE_KEY]: saved } = await chrome.storage.local.get(PROXY_STORAGE_KEY);
+    const address = $('proxyAddress').value.trim();
+    let next = { ...saved, enabled: false };
+    if (address || enabled) {
+      const parsed = parseProxy(address);
+      const { host, port } = parsed;
+      const username = $('proxyUser').value.trim() || parsed.username;
+      const sameLogin = saved?.host === host && saved?.username === username;
+      const password = $('proxyPassword').value || parsed.password || (sameLogin ? saved?.password ?? '' : '');
+      next = { enabled, host, port, username, password };
+    }
+    await chrome.storage.local.set({ [PROXY_STORAGE_KEY]: next });
+    await loadProxy();
+    if (enabled) {
+      status.textContent = `Đã bật proxy ${next.host}:${next.port}. Bấm "Xem IP đang dùng" để kiểm tra.`;
+      status.className = 'ok';
+    }
+  } catch (error) {
+    status.textContent = String(error.message ?? error);
+    status.className = 'bad';
+  }
+});
+
+$('proxyCheck').addEventListener('click', () => { void chrome.tabs.create({ url: 'https://api.ipify.org/' }); });
 
 function renderPause(paused) {
   $('pause').textContent = paused ? 'Tiếp tục' : 'Tạm dừng';
@@ -106,3 +172,4 @@ $('pause').addEventListener('click', async () => {
 });
 
 void load();
+void loadProxy();
