@@ -23,6 +23,20 @@
   <h2>3. Chạy</h2>
   <div class="row"><button id="pause" type="button">Tạm dừng</button><span id="pauseStatus" class="muted"></span></div>
   <p class="muted">Sau khi ghép nối, bạn tạo bài, duyệt và khởi chạy chiến dịch trên web. Giữ Chrome mở và đã đăng nhập nền tảng; tiện ích tự nhận bài khoảng mỗi 30 giây, mở tab và đăng khi bật Tự bấm Đăng. Không cần mở popup hoặc bấm Kiểm tra ngay cho mỗi bài.</p>
+
+  <h2>4. Proxy cho Chrome (tuỳ chọn)</h2>
+  <p class="muted">Dùng khi Chrome chạy trên VPS và nền tảng hay hiện CAPTCHA: proxy dân cư cho Chrome một IP giống người dùng thường. Mọi trang trong hồ sơ Chrome này đi qua proxy, trừ địa chỉ API của hệ thống. Thông tin proxy chỉ lưu trong Chrome này, không gửi về hệ thống. Tiện ích tự trả lời hộp đăng nhập của proxy, kể cả sau khi Chrome khởi động lại.</p>
+  <form id="proxyForm">
+    <label class="row"><input id="proxyEnabled" type="checkbox"> Dùng proxy</label>
+    <label for="proxyAddress">Địa chỉ proxy HTTP</label>
+    <input id="proxyAddress" autocomplete="off" spellcheck="false" placeholder="host:port (dán cả host:port:user:mật khẩu cũng được)">
+    <label for="proxyUser">Tên đăng nhập proxy</label>
+    <input id="proxyUser" autocomplete="off" spellcheck="false">
+    <label for="proxyPassword">Mật khẩu proxy</label>
+    <input id="proxyPassword" type="password" autocomplete="new-password" placeholder="Để trống để giữ mật khẩu đã lưu">
+    <div class="row"><button class="primary" type="submit">Lưu proxy</button><button id="proxyCheck" type="button">Xem IP đang dùng</button><span id="proxyStatus" class="muted"></span></div>
+    <p class="muted">Đổi sang IP mới, vài nền tảng (Google…) có thể hỏi xác minh lại một lần. Nên dùng proxy giữ nguyên một IP (sticky), không đổi IP mỗi lượt, để phiên đăng nhập không bị đá ra.</p>
+  </form>
 </main>
 <script type="module" src="options.js"></script>
 </body>

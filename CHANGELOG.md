@@ -1,6 +1,14 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.14.0 · 04/11/2026
+### Tính năng
+- Proxy cho Chrome trong tiện ích (tiện ích 1.11.0)
+  - Trang Cài đặt có mục bật proxy HTTP (dán `host:port:user:mật khẩu`). Mọi trang đi qua proxy, trừ API của hệ thống.
+  - Tiện ích tự trả lời hộp đăng nhập của đúng proxy đó, kể cả sau khi Chrome khởi động lại. Dùng proxy dân cư để các
+    nền tảng bớt hiện CAPTCHA với IP máy chủ.
+  - Thông tin proxy chỉ lưu trong Chrome đó, không gửi về hệ thống.
+
 ## 1.13.0 · 04/11/2026
 ### Tính năng
 - Viết lại từng bài bằng AI theo hướng dẫn của bạn

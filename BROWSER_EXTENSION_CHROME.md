@@ -1,5 +1,19 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Bản 1.11.0: proxy cho Chrome (giảm CAPTCHA khi chạy trên VPS)
+
+- Trang **Cài đặt** của tiện ích có mục **4. Proxy cho Chrome (tuỳ chọn)**: bật **Dùng proxy**, dán chuỗi nhà cung cấp
+  đưa (`host:port:user:mật khẩu`, tiện ích tự tách) rồi **Lưu proxy**. Chrome hỏi quyền truy cập các trang thì bấm
+  **Cho phép**: tiện ích cần quyền này để tự đăng nhập proxy cho mọi trang.
+- Mọi trang trong hồ sơ Chrome đó đi qua proxy, trừ địa chỉ API của hệ thống (đi thẳng, không tốn băng thông proxy).
+  Tiện ích tự trả lời hộp đăng nhập **của đúng proxy đó** (không bao giờ điền vào hộp đăng nhập của trang web, tối đa 2
+  lần mỗi yêu cầu), nên Chrome khởi động lại vẫn chạy tiếp mà không treo ở hộp hỏi mật khẩu.
+- Thông tin proxy chỉ lưu trong Chrome đó (`chrome.storage.local`), không gửi về hệ thống; mật khẩu không hiện lại sau
+  khi lưu. Chỉ hỗ trợ proxy HTTP/HTTPS (Chrome không gửi được mật khẩu cho proxy SOCKS).
+- **Xem IP đang dùng** mở `api.ipify.org` để kiểm tra Chrome đã ra Internet bằng IP của proxy.
+- Đổi IP có thể làm vài nền tảng (Google…) hỏi xác minh lại một lần; nên dùng proxy giữ nguyên IP (sticky).
+- Bản này thêm quyền `proxy`, `webRequest`, `webRequestAuthProvider`. Cập nhật thư mục tiện ích rồi bấm **Tải lại**.
+
 ## Bản 1.10.2: nhận đúng phiên đã đăng nhập (Tumblr), báo tài khoản bị cấm (XenForo)
 
 - Ô tìm kiếm trên trang đã đăng nhập (ví dụ "Chercher sur Tumblr") không còn bị nhầm là ô tên đăng nhập. Trước đây
