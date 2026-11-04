@@ -1,6 +1,15 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.12.1 · 04/11/2026
+### Sửa lỗi
+- Test đăng nhập hàng loạt bỏ qua tài khoản đã đăng nhập thành công
+  "Test đăng nhập hàng loạt" và "Kiểm tra tất cả" chỉ chạy cho tài khoản chưa đăng nhập (cần thao tác, chưa kiểm tra,
+  lỗi…), bỏ qua tài khoản mà lần kiểm tra gần nhất đã đăng nhập thành công, nên không đăng nhập lại vô ích và ít gặp
+  CAPTCHA, khoá tài khoản. Kết quả cho biết số tài khoản được bỏ qua. Nút "Test" ở một dòng vẫn kiểm lại tài khoản đó.
+- Sửa lần gộp làm backend không build được
+  Gộp "duyệt từng bài" với "chỉ dùng tài khoản sẵn sàng" để lại mã ghép dở trong phần duyệt bài và tệp VERSION có hai
+  số; nay ghép lại đúng ý cả hai và VERSION còn một số.
 ## 1.12.0 · 04/11/2026
 ### Tính năng
 - Duyệt một lần là bài tự đăng, rút gọn quy trình

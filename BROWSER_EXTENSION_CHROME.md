@@ -156,7 +156,9 @@ do bạn cung cấp được lưu mã hóa ở backend; không lưu trong cấu 
 ### Bản 1.4.2: nhập cấu hình và test đăng nhập hàng loạt
 
 Trên **Tài khoản**, phần **Test đăng nhập social** hiển thị trạng thái riêng cho mỗi account.
-**Test đăng nhập hàng loạt** xếp lượt kiểm tra vào hàng đợi của hồ sơ đã gán. Tiện ích chỉ đăng nhập,
+**Test đăng nhập hàng loạt** xếp lượt kiểm tra vào hàng đợi của hồ sơ đã gán, **bỏ qua tài khoản mà lần kiểm tra gần
+nhất đã đăng nhập thành công** (từ backend 1.12.1; gửi `skipAuthenticated: true`), để không đăng nhập lại vô ích và
+gặp CAPTCHA. Muốn kiểm lại một tài khoản đã đăng nhập, bấm **Test** ở dòng của nó. Tiện ích chỉ đăng nhập,
 nhận diện account và báo kết quả; không mở composer, không tạo PublishJob và không đăng bài.
 Trạng thái **Đăng nhập thành công** chưa xác nhận quyền đăng hoặc credential API của nền tảng.
 Tiện ích chạy tối đa 3 nền tảng độc lập cùng lúc trong một Chrome. Các lượt dùng cùng phạm vi cookie hoặc
@@ -478,7 +480,8 @@ luồng bài cá nhân báo rõ nguyên nhân và giữ bản nháp. Việc nh�
 
 Trong **Tài khoản**, nút **Test**, **Kiểm tra tất cả** và bật công tắc tài khoản (từ frontend 1.6.1) chạy giống
 **Test đăng nhập hàng loạt**: dùng phiên sẵn có, Chrome chưa đăng nhập thì tự đăng nhập bằng mật khẩu đã lưu rồi
-Google, mỗi cách thử một lần. Chỉ **Hướng dẫn kết nối → Tôi đã đăng nhập · Kiểm tra** xác nhận phiên sẵn có mà không
+Google, mỗi cách thử một lần. **Kiểm tra tất cả** cũng bỏ qua tài khoản đã đăng nhập thành công; **Test** ở một dòng luôn
+kiểm lại tài khoản đó. Chỉ **Hướng dẫn kết nối → Tôi đã đăng nhập · Kiểm tra** xác nhận phiên sẵn có mà không
 lấy mật khẩu/TOTP từ backend, dành cho lúc bạn vừa đăng nhập tay. Không lượt nào đăng bài. Các tài khoản dùng chung
 phiên của một nền tảng vẫn được kiểm tra lần lượt.
 
