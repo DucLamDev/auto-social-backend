@@ -89,6 +89,20 @@ export class CampaignsController {
     return this.automation.rejectVariant(user.id, id, variantId);
   }
 
+  @Post(':id/restore')
+  @ApiCreatedEnvelope(AutomatedCampaignContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  restore(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.automation.restore(user.id, id);
+  }
+
+  @Post(':id/variants/:variantId/restore')
+  @ApiCreatedEnvelope(AutomatedCampaignContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  restoreVariant(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Param('variantId', ParseUUIDPipe) variantId: string) {
+    return this.automation.restore(user.id, id, variantId);
+  }
+
   @Post(':id/retry-generation')
   @ApiCreatedEnvelope(AutomatedCampaignContractDto)
   @Roles(RoleName.ADMIN, RoleName.EDITOR)

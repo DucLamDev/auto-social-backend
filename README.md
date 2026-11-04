@@ -37,6 +37,9 @@ Luồng AI chạy ngầm: `POST /campaigns/automate` lưu tác vụ vào databas
 
 Blogger và dev.to đăng thật bài đã duyệt (từ 1.12.0, migration `20261104090000_publish_blogger_devto_live` chuyển các tài khoản cũ); muốn chỉ lưu nháp thì đổi ở từng tài khoản (Tài khoản → Đăng ngay / Lưu nháp).
 
+Khôi phục khi từ chối nhầm: `POST /campaigns/:id/restore` đưa các bài đã từ chối về chờ duyệt; `POST /campaigns/:id/variants/:variantId/restore` khôi phục riêng một bài. Chỉ ADMIN/EDITOR sở hữu chiến dịch được gọi. Nội dung và ảnh giữ nguyên, không gọi AI hay tạo việc đăng; bài đã gắn vào đích đăng không được khôi phục. Hỗ trợ cả lượt cũ chỉ lưu trạng thái từ chối ở cấp chiến dịch. Sau khôi phục, người dùng sửa và duyệt/hẹn lịch lại theo luồng hiện có.
+
+
 Yêu cầu Node.js 22+, Corepack và Docker.
 
 ```powershell

@@ -1,6 +1,10 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.12.0 · 04/11/2026
+### Tính năng
+- Khôi phục nội dung đã từ chối
+  Thêm lệnh khôi phục cả lượt AI hoặc từng bài bị từ chối về chờ duyệt, hỗ trợ cả lượt từ chối cũ. Giữ nguyên nội dung, không tạo lại AI hay tạo việc đăng. Chỉ chủ sở hữu có quyền biên tập được khôi phục bài chưa gắn với việc đăng.
 ## 1.12.1 · 04/11/2026
 ### Sửa lỗi
 - Test đăng nhập hàng loạt bỏ qua tài khoản đã đăng nhập thành công
@@ -33,6 +37,7 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   rõ bằng tiếng Việt từng tài khoản và lý do, không tạo việc đăng nào. "Duyệt hết" đăng các nền tảng đã có tài khoản sẵn
   sàng, để các bài còn lại tiếp tục chờ duyệt (`waitingVariantIds`) cho tới khi bạn kết nối lại tài khoản hoặc từ chối
   bài. Tài khoản bị bỏ qua sẽ không tự nhận bài này khi kết nối lại sau.
+
 
 ## 1.11.0 · 04/11/2026
 ### Tính năng
