@@ -3,7 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
 import { AiProvider } from './ai-provider';
-import { AiContentService, extractJsonObject } from './ai-content.service';
+import { AiContentService, contractInstructions, extractJsonObject } from './ai-content.service';
+import { platformContract } from '../platforms/platform-contract';
 import { BrandProfileService } from './brand-profile.service';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
 
@@ -868,5 +869,13 @@ describe('extractJsonObject', () => {
     expect(extractJsonObject('```\n{"a":1}\n```')).toBe('{"a":1}');
     expect(extractJsonObject('Here it is: {"a":{"b":2}} Done.')).toBe('{"a":{"b":2}}');
     expect(extractJsonObject('no json here')).toBe('no json here');
+  });
+});
+
+describe('contractInstructions tag format', () => {
+  it('asks for real Stack Exchange tags and DEV-safe tags, and adds nothing for inline hashtags', () => {
+    expect(contractInstructions(platformContract('unix-linux-stackexchange'))).toContain('Tag format: English tags that already exist on this Stack Exchange site');
+    expect(contractInstructions(platformContract('devto'))).toContain('Tag format: lowercase letters and digits only');
+    expect(contractInstructions(platformContract('bluesky'))).not.toContain('Tag format');
   });
 });

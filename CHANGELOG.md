@@ -1,6 +1,19 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.12.2 · 04/11/2026
+### Sửa lỗi
+- Bài AI mang tag sang các trang có ô tag: không còn lỗi "Câu hỏi cần ít nhất một tag" (tiện ích Chrome 1.10.1)
+  Việc giao cho tiện ích trước đây chỉ có tag cấu hình trong tài khoản, bỏ mất tag AI viết kèm bài. Nay máy chủ gửi
+  thêm tag AI gợi ý (`suggestedTags`), đã chuẩn hoá theo luật từng trang. Tiện ích dùng tag cố định trước rồi thêm tag
+  AI mà trang đã có, không bao giờ tạo tag mới:
+  - Stack Overflow, Server Fault, Unix & Linux: tối đa 5 tag;
+  - diễn đàn Discourse: chỉ tag chuyên mục cho phép;
+  - DEV, SlideShare: khi tài khoản chưa cấu hình tag.
+  Tài khoản Stack Exchange không còn bắt buộc cấu hình tag. Kết nối DEV qua API chuẩn hoá tag (chữ thường và số, tối đa
+  4), vì DEV từ chối cả bài khi có tag kiểu "self-hosting". AI được dặn viết tag đúng kiểu từng trang (Stack Exchange:
+  tag tiếng Anh đã có trên trang). `VERSION` trở lại một dòng.
+
 ## 1.12.0 · 04/11/2026
 ### Tính năng
 - Khôi phục nội dung đã từ chối

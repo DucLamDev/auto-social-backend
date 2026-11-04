@@ -16,10 +16,15 @@ before(async () => {
 });
 after(async () => browser?.close());
 async function fixture(overrides = {}) {
-  const page = await browser.newPage(); const posts = [];
+  const page = await browser.newPage(); const posts = []; const searches = [];
   const current = { id: 7, username: 'alice', can_create_topic: true, ...overrides.user };
   await page.route('**/*', async route => {
-    const path = new URL(route.request().url()).pathname;
+    const url = new URL(route.request().url()); const path = url.pathname;
+    if (path.endsWith('/tags/filter/search')) {
+      searches.push(Object.fromEntries(url.searchParams));
+      const q = url.searchParams.get('q');
+      return route.fulfill({ json: { results: (overrides.allowedTags ?? []).filter(name => name === q).map(name => ({ id: name, name, text: name, count: 3 })) } });
+    }
     if (path.endsWith('/posts.json')) {
       posts.push(new URLSearchParams(route.request().postData()));
       if (overrides.networkFailure) return route.abort();
@@ -27,13 +32,13 @@ async function fixture(overrides = {}) {
     }
     if (path.endsWith('/session/current.json')) return route.fulfill({ json: { current_user: current } });
     if (path.endsWith('/session/csrf.json')) return route.fulfill({ json: { csrf: 'test-only-token' } });
-    if (path.endsWith('/site.json')) return route.fulfill({ json: { categories: overrides.categories ?? [{ id: 2, slug: 'general', name: 'General', permission: 1 }] } });
+    if (path.endsWith('/site.json')) return route.fulfill({ json: { categories: overrides.categories ?? [{ id: 2, slug: 'general', name: 'General', permission: 1 }], ...overrides.site } });
     if (path.endsWith('/posts/101.json')) return route.fulfill({ json: { id: 101, topic_id: 42, post_number: 1, username: 'alice', raw: overrides.savedBody ?? job.post.body } });
     if (path.endsWith('/t/42.json')) return route.fulfill({ json: { id: 42, slug: 'a-technical-question', title: job.post.title } });
     await route.fulfill({ contentType: 'text/html', body: overrides.html || '<main>No composer required</main>' });
   });
   await page.goto(job.openUrl);
-  return { page, posts };
+  return { page, posts, searches };
 }
 
 test('accepted receipt displays a dismissible result without changing the draft, clicking Post or sending network writes', async () => {
@@ -66,6 +71,31 @@ test('uses the current session, exact Markdown and allowed general category; ver
     assert.equal(posts.length, 1); assert.equal(posts[0].get('raw'), job.post.body); assert.equal(posts[0].get('category'), '2');
     assert.equal(posts[0].get('nested_post'), 'true');
     await page.evaluate(submit, job); assert.equal(posts.length, 1);
+  } finally { await page.close(); }
+});
+test('adds the AI suggested tags the category already has, after the configured ones, and never creates a tag', async () => {
+  const categories = [{ id: 9, slug: 'projects', name: 'Projects', permission: 1 }, { id: 23, parent_category_id: 9, slug: 'nginx', name: 'NGINX', permission: 1, minimum_required_tags: 1 }];
+  const { page, posts, searches } = await fixture({ categories, allowedTags: ['docker', 'nginx', 'linux'], site: { max_tags_per_topic: 3 } });
+  try {
+    const scoped = { ...job, options: { category: 'projects/nginx', tags: ['web-server'], suggestedTags: ['docker', 'not-on-forum', 'nginx', 'linux'] } };
+    assert.equal((await page.evaluate(submit, scoped)).status, 'published');
+    assert.deepEqual(posts[0].getAll('tags[]'), ['web-server', 'docker', 'nginx']);
+    assert.deepEqual(searches.map(item => [item.q, item.categoryId, item.filterForInput]), [['docker', '23', 'true'], ['not-on-forum', '23', 'true'], ['nginx', '23', 'true']]);
+  } finally { await page.close(); }
+});
+test('a category that needs a tag still stops when none of the AI tags exist there, naming them', async () => {
+  const categories = [{ id: 23, slug: 'nginx', name: 'NGINX', permission: 1, minimum_required_tags: 1 }];
+  const { page, posts } = await fixture({ categories, allowedTags: [] });
+  try {
+    const result = await page.evaluate(submit, { ...job, options: { category: 'nginx', tags: [], suggestedTags: ['made-up'] } });
+    assert.equal(result.status, 'filled'); assert.match(result.message, /Tag AI gợi ý \(made-up\) không có/); assert.equal(posts.length, 0);
+  } finally { await page.close(); }
+});
+test('a forum with tagging turned off gets no tag lookups', async () => {
+  const { page, posts, searches } = await fixture({ site: { can_tag_topics: false }, allowedTags: ['docker'] });
+  try {
+    assert.equal((await page.evaluate(submit, { ...job, options: { suggestedTags: ['docker'] } })).status, 'published');
+    assert.deepEqual(posts[0].getAll('tags[]'), []); assert.equal(searches.length, 0);
   } finally { await page.close(); }
 });
 test('requires the configured category and tags and does not silently substitute another category', async () => {

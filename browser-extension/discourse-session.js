@@ -61,7 +61,22 @@ export async function submitDiscoursePost(job) {
   if (category.permission !== 1) return { status: 'restricted', message: `Tài khoản không có quyền tạo chủ đề trong “${category.name}”.` };
   const tags = [...new Set((job.options?.tags?.length ? job.options.tags : (open.searchParams.get('tags') || '').split(','))
     .map(t => String(t).trim().replace(/^#/, '')).filter(Boolean))];
-  if (tags.length < (category.minimum_required_tags || 0)) return needs(`Chuyên mục “${category.name}” cần ít nhất ${category.minimum_required_tags} tag. Lưu tag mặc định trên web.`);
+  // AI topic tags join only when this category already offers them: a suggestion
+  // never creates a tag, and a failed lookup just leaves it out.
+  const limit = Number(site.max_tags_per_topic) || 5;
+  for (const tag of site.can_tag_topics === false ? [] : job.options?.suggestedTags ?? []) {
+    if (tags.length >= limit) break;
+    if (tags.some(item => normalize(item) === normalize(tag))) continue;
+    try {
+      const found = await read(`/tags/filter/search?${new URLSearchParams({ q: tag, limit: '5', categoryId: String(category.id), filterForInput: 'true' })}`);
+      const match = (Array.isArray(found?.results) ? found.results : []).find(item => normalize(item.name ?? item.id ?? item.text) === normalize(tag));
+      if (match) tags.push(String(match.name ?? match.id ?? match.text));
+    } catch { /* optional */ }
+  }
+  if (tags.length < (category.minimum_required_tags || 0)) {
+    const tried = job.options?.suggestedTags?.length ? ` Tag AI gợi ý (${job.options.suggestedTags.join(', ')}) không có trong chuyên mục này.` : '';
+    return needs(`Chuyên mục “${category.name}” cần ít nhất ${category.minimum_required_tags} tag.${tried} Lưu tag mặc định trên web.`);
+  }
   if (!job.post?.title?.trim() || !job.post?.body?.trim()) return needs('Bài chưa có đủ tiêu đề và nội dung.');
   const data = new URLSearchParams({ title: job.post.title, raw: job.post.body, category: String(category.id), archetype: 'regular', nested_post: 'true' });
   for (const tag of tags) data.append('tags[]', tag);
