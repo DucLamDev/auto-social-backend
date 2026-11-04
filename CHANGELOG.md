@@ -5,6 +5,39 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
 ### Tính năng
 - Khôi phục nội dung đã từ chối
   Thêm lệnh khôi phục cả lượt AI hoặc từng bài bị từ chối về chờ duyệt, hỗ trợ cả lượt từ chối cũ. Giữ nguyên nội dung, không tạo lại AI hay tạo việc đăng. Chỉ chủ sở hữu có quyền biên tập được khôi phục bài chưa gắn với việc đăng.
+## 1.12.1 · 04/11/2026
+### Sửa lỗi
+- Test đăng nhập hàng loạt bỏ qua tài khoản đã đăng nhập thành công
+  "Test đăng nhập hàng loạt" và "Kiểm tra tất cả" chỉ chạy cho tài khoản chưa đăng nhập (cần thao tác, chưa kiểm tra,
+  lỗi…), bỏ qua tài khoản mà lần kiểm tra gần nhất đã đăng nhập thành công, nên không đăng nhập lại vô ích và ít gặp
+  CAPTCHA, khoá tài khoản. Kết quả cho biết số tài khoản được bỏ qua. Nút "Test" ở một dòng vẫn kiểm lại tài khoản đó.
+- Sửa lần gộp làm backend không build được
+  Gộp "duyệt từng bài" với "chỉ dùng tài khoản sẵn sàng" để lại mã ghép dở trong phần duyệt bài và tệp VERSION có hai
+  số; nay ghép lại đúng ý cả hai và VERSION còn một số.
+## 1.12.0 · 04/11/2026
+### Tính năng
+- Duyệt một lần là bài tự đăng, rút gọn quy trình
+  Kênh nào AI viết xong (kèm ảnh, nếu kênh đó có ảnh) là duyệt được ngay, không chờ các kênh còn lại; duyệt xong bài vào
+  hàng đợi đăng và tự lên social. "Duyệt tất cả" lúc AI còn viết sẽ duyệt các bài đã sẵn sàng. Bài có ảnh đang tạo chưa
+  duyệt được (để không đăng thiếu ảnh). Các bài duyệt giữa chừng được giữ nguyên khi lượt chạy xong hoặc chạy lại sau
+  khi máy chủ khởi động lại; lượt tự chuyển "Đã duyệt" khi mọi bài đã được quyết.
+- Tuỳ chọn tự đăng bài AI chấm đạt, không cần duyệt
+  Khi tạo nội dung gửi `autoPublish: true`: bài AI tự chấm đạt được duyệt và đăng ngay khi viết xong (kèm ảnh); bài
+  chưa đạt, hoặc tài khoản bị ngắt kết nối giữa chừng, vẫn chờ bạn duyệt. Mặc định tắt.
+- Blogger và dev.to đăng thật bài đã duyệt
+  Trước đây chỉ lưu nháp rồi phải vào Publishing bấm "Đã đăng". Migration `20261104090000_publish_blogger_devto_live`
+  chuyển các tài khoản đang lưu nháp sang đăng thật; vẫn chọn lưu nháp được ở từng tài khoản.
+## 1.11.1 · 04/11/2026
+### Sửa lỗi
+- Duyệt bài không còn hỏng chỉ vì một tài khoản trong chiến dịch chưa sẵn sàng
+  Trước đây chỉ cần một tài khoản bị tắt, "Cần thao tác" (chưa đăng nhập lại), chưa bật "Tự bấm Đăng" hay mất phiên trình
+  duyệt là mọi lần duyệt đều báo `Every selected account must belong to you and be enabled, connected, and ready`. Nay
+  duyệt một bài chỉ xét tài khoản của đúng nền tảng đó: bài được đăng lên các tài khoản sẵn sàng, các tài khoản còn lại được
+  bỏ qua và liệt kê trong kết quả (`skippedAccounts`, có tên và lý do). Nền tảng không còn tài khoản nào sẵn sàng thì báo
+  rõ bằng tiếng Việt từng tài khoản và lý do, không tạo việc đăng nào. "Duyệt hết" đăng các nền tảng đã có tài khoản sẵn
+  sàng, để các bài còn lại tiếp tục chờ duyệt (`waitingVariantIds`) cho tới khi bạn kết nối lại tài khoản hoặc từ chối
+  bài. Tài khoản bị bỏ qua sẽ không tự nhận bài này khi kết nối lại sau.
+
 
 ## 1.11.0 · 04/11/2026
 ### Tính năng

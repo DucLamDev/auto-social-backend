@@ -84,3 +84,44 @@ describe('login completion and automatic connection', () => {
     expect(tx.platformAccount.update).not.toHaveBeenCalled();
   });
 });
+
+describe('bulk login checks', () => {
+  const session = (deviceId = 'device') => ({ extensionSession: { deviceId, expectedUsername: 'brand', origin: 'https://social.test', provider: 'password', loginUsername: 'brand', autoLogin: true },
+    extensionLoginMethods: { password: { available: true, username: 'brand' } } });
+  function setup(latest: Array<{ platformAccountId: string; status: string }>) {
+    const accounts = ['signed-in', 'needs-action', 'never-checked', 'running'].map((id) => ({ id, settings: session() }));
+    const tx = {
+      $queryRaw: jest.fn(),
+      platformAccount: { findMany: jest.fn().mockResolvedValue(accounts) },
+      extensionDevice: { findMany: jest.fn().mockResolvedValue([{ id: 'device' }]) },
+      extensionLoginCheck: {
+        findMany: jest.fn((args: { where: { status?: unknown } }) => Promise.resolve(args.where.status ? [{ platformAccountId: 'running' }] : latest)),
+        create: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const service = new ExtensionLoginCheckService({ $transaction: jest.fn((fn: (client: typeof tx) => unknown) => fn(tx)) } as never, {} as never);
+    return { service, tx };
+  }
+  const queuedIds = (tx: ReturnType<typeof setup>['tx']) => (tx.extensionLoginCheck.create.mock.calls as Array<[{ data: { platformAccountId: string } }]>).map(([call]) => call.data.platformAccountId);
+
+  it('leaves out accounts whose latest check signed in, and checks every other status', async () => {
+    const { service, tx } = setup([{ platformAccountId: 'signed-in', status: 'AUTHENTICATED' }, { platformAccountId: 'needs-action', status: 'NEEDS_ACTION' }]);
+    await expect(service.queue('owner', undefined, false, true, true)).resolves.toMatchObject({ queued: 2, skipped: 1 });
+    expect(queuedIds(tx)).toEqual(['needs-action', 'never-checked']);
+    // Only the latest check of each account decides.
+    expect(tx.extensionLoginCheck.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { createdAt: 'desc' }, distinct: ['platformAccountId'] }));
+  });
+
+  it('checks an account again when its latest check failed after an earlier success', async () => {
+    // The query returns the latest check per account: here NEEDS_ACTION, newer than an old success.
+    const { service, tx } = setup([{ platformAccountId: 'signed-in', status: 'NEEDS_ACTION' }]);
+    await service.queue('owner', undefined, false, true, true);
+    expect(queuedIds(tx)).toContain('signed-in');
+  });
+
+  it('still checks signed-in accounts when the caller asks for them (one account, import)', async () => {
+    const { service, tx } = setup([{ platformAccountId: 'signed-in', status: 'AUTHENTICATED' }]);
+    await expect(service.queue('owner', undefined, false, true)).resolves.toMatchObject({ queued: 3, skipped: 0 });
+    expect(queuedIds(tx)).toContain('signed-in');
+  });
+});

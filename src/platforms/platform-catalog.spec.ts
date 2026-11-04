@@ -89,11 +89,13 @@ describe('platform catalog', () => {
     }
   });
 
-  it('advertises a single DEV article main image while keeping drafts as the default', () => {
+  it('advertises a single DEV article main image and publishes approved posts live by default', () => {
     expect(PLATFORM_CATALOG.find(({ slug }) => slug === 'devto')).toMatchObject({
       capability: { image: true, maxImages: 1 },
-      defaultSettings: { publishImmediately: false },
+      defaultSettings: { publishImmediately: true },
     });
+    // An approved post goes out as a public post; saving drafts is an opt-in per account.
+    expect(PLATFORM_CATALOG.find(({ slug }) => slug === 'blogger')?.defaultSettings).toMatchObject({ publishImmediately: true });
   });
 
   it('reuses connector implementations only for compatible platforms', () => {

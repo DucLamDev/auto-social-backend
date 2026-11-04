@@ -46,24 +46,39 @@ export class ExtensionLoginCheckService {
     }));
   }
 
-  async queue(ownerId: string, accountIds?: string[], verifyOnly = false, tryBoth = false) {
+  /**
+   * Queues login checks. With `skipAuthenticated` (bulk runs) an account whose
+   * latest check succeeded is left alone: it is already signed in, and signing
+   * in again only risks CAPTCHAs and lockouts. A single account is always checked.
+   */
+  async queue(ownerId: string, accountIds?: string[], verifyOnly = false, tryBoth = false, skipAuthenticated = false) {
     const batchId = randomUUID();
     return this.prisma.$transaction(async tx => {
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${ownerId}, 7302))::text`;
       const accounts = await tx.platformAccount.findMany({ where: { ownerId, ...(accountIds ? { id: { in: accountIds } } : {}) } });
       const activeDevices = new Set((await tx.extensionDevice.findMany({ where: { ownerId, revokedAt: null }, select: { id: true } })).map(d => d.id));
       const active = new Set((await tx.extensionLoginCheck.findMany({ where: { account: { ownerId }, status: { in: ['QUEUED', 'RUNNING'] } }, select: { platformAccountId: true } })).map(c => c.platformAccountId));
+      const signedIn = new Set<string>();
+      if (skipAuthenticated) {
+        const latest = await tx.extensionLoginCheck.findMany({
+          where: { account: { ownerId }, ...(accountIds ? { platformAccountId: { in: accountIds } } : {}) },
+          orderBy: { createdAt: 'desc' }, distinct: ['platformAccountId'], select: { platformAccountId: true, status: true },
+        });
+        for (const check of latest) if (check.status === 'AUTHENTICATED') signedIn.add(check.platformAccountId);
+      }
       let queued = 0;
+      let skipped = 0;
       for (const account of accounts) {
         const auth = sessionOf(account.settings);
         if (!auth || object(object(account.settings).extensionImport).selected === false || !activeDevices.has(auth.deviceId) || active.has(account.id)) continue;
+        if (signedIn.has(account.id)) { skipped++; continue; }
         const methods = object(object(account.settings).extensionLoginMethods);
         const method = tryBoth && !verifyOnly ? (object(methods.password).available === true ? 'password' : object(methods.google).available === true ? 'google' : 'configured') : 'configured';
         await tx.extensionLoginCheck.create({ data: { batchId, platformAccountId: account.id, deviceId: auth.deviceId, verifyOnly,
           method, tryFallback: tryBoth && !verifyOnly && method === 'password' && object(methods.google).available === true } });
         queued++;
       }
-      return { batchId, queued };
+      return { batchId, queued, skipped };
     });
   }
 

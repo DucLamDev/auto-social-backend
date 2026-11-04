@@ -12200,6 +12200,44 @@
           "updatedAt"
         ]
       },
+      "SkippedReviewAccountContractDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "description": "Platform display name."
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "DISABLED",
+              "NOT_CONNECTED",
+              "PLATFORM_DISABLED",
+              "UNSUPPORTED",
+              "MANUAL_SUBMIT",
+              "NO_BROWSER_SESSION"
+            ]
+          },
+          "reasonLabel": {
+            "type": "string",
+            "description": "Vietnamese explanation shown to the reviewer."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "platform",
+          "reason",
+          "reasonLabel"
+        ]
+      },
       "AutomatedCampaignContractDto": {
         "type": "object",
         "properties": {
@@ -12220,6 +12258,20 @@
           "activated": {
             "type": "boolean",
             "description": "Whether the campaign was activated for immediate or scheduled delivery."
+          },
+          "skippedAccounts": {
+            "description": "Review decisions only: accounts of an approved platform that got no post because they were not ready.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedReviewAccountContractDto"
+            }
+          },
+          "waitingVariantIds": {
+            "description": "Review decisions only: drafts left waiting because their platform had no ready account.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -12346,6 +12398,11 @@
             "type": "boolean",
             "default": true,
             "description": "Let VPSTTT AI create one image per destination whose publishing route can attach it. Ignored when mediaAssetIds supplies your own image."
+          },
+          "autoPublish": {
+            "type": "boolean",
+            "default": false,
+            "description": "Publish each post the AI quality check passed as soon as it (and its image) is ready, without waiting for review. Posts that did not pass still wait for review."
           },
           "aiProvider": {
             "type": "string",
