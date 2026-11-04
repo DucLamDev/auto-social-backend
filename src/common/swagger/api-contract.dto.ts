@@ -220,12 +220,24 @@ export class CampaignContractDto {
   @ApiProperty({ format: 'date-time' }) updatedAt!: string;
 }
 
+export class SkippedReviewAccountContractDto {
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ description: 'Platform display name.' }) platform!: string;
+  @ApiProperty({ enum: ['DISABLED', 'NOT_CONNECTED', 'PLATFORM_DISABLED', 'UNSUPPORTED', 'MANUAL_SUBMIT', 'NO_BROWSER_SESSION'] }) reason!: string;
+  @ApiProperty({ description: 'Vietnamese explanation shown to the reviewer.' }) reasonLabel!: string;
+}
+
 export class AutomatedCampaignContractDto {
   @ApiProperty({ type: CampaignContractDto }) campaign!: CampaignContractDto;
   @ApiProperty({ type: ContentContractDto }) content!: ContentContractDto;
   @ApiProperty({ minimum: 0 }) generatedVariants!: number;
   @ApiProperty({ minimum: 0 }) jobsCreated!: number;
   @ApiProperty({ description: 'Whether the campaign was activated for immediate or scheduled delivery.' }) activated!: boolean;
+  @ApiPropertyOptional({ type: [SkippedReviewAccountContractDto], description: 'Review decisions only: accounts of an approved platform that got no post because they were not ready.' })
+  skippedAccounts?: SkippedReviewAccountContractDto[];
+  @ApiPropertyOptional({ type: [String], description: 'Review decisions only: drafts left waiting because their platform had no ready account.' })
+  waitingVariantIds?: string[];
 }
 
 export class AiProviderContractDto {

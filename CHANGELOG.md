@@ -1,6 +1,17 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.11.1 · 04/11/2026
+### Sửa lỗi
+- Duyệt bài không còn hỏng chỉ vì một tài khoản trong chiến dịch chưa sẵn sàng
+  Trước đây chỉ cần một tài khoản bị tắt, "Cần thao tác" (chưa đăng nhập lại), chưa bật "Tự bấm Đăng" hay mất phiên trình
+  duyệt là mọi lần duyệt đều báo `Every selected account must belong to you and be enabled, connected, and ready`. Nay
+  duyệt một bài chỉ xét tài khoản của đúng nền tảng đó: bài được đăng lên các tài khoản sẵn sàng, các tài khoản còn lại được
+  bỏ qua và liệt kê trong kết quả (`skippedAccounts`, có tên và lý do). Nền tảng không còn tài khoản nào sẵn sàng thì báo
+  rõ bằng tiếng Việt từng tài khoản và lý do, không tạo việc đăng nào. "Duyệt hết" đăng các nền tảng đã có tài khoản sẵn
+  sàng, để các bài còn lại tiếp tục chờ duyệt (`waitingVariantIds`) cho tới khi bạn kết nối lại tài khoản hoặc từ chối
+  bài. Tài khoản bị bỏ qua sẽ không tự nhận bài này khi kết nối lại sau.
+
 ## 1.11.0 · 04/11/2026
 ### Tính năng
 - Duyệt hoặc từ chối từng bài theo nền tảng
