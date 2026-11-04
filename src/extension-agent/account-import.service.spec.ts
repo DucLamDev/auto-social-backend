@@ -89,3 +89,86 @@ describe('account file onboarding', () => {
   });
 });
 
+
+describe('re-uploading a file only touches socials that are new or changed', () => {
+  const platforms = [
+    { id: 'p-mastodon', slug: 'mastodon', name: 'Mastodon.social', enabled: true },
+    { id: 'p-daily', slug: 'daily-dev', name: 'daily.dev', enabled: false },
+  ];
+  const session = { deviceId: 'device-1', provider: 'password', loginUsername: 'alice', expectedUsername: 'alice', profileUrl: 'https://mastodon.social/@alice', origin: 'https://mastodon.social' };
+  const existing = (settings: Record<string, unknown> = {}) => ({
+    id: 'acc-old', platformId: 'p-mastodon', name: 'Mastodon.social · alice', enabled: true, status: 'CONNECTED',
+    credential: { status: 'ACTIVE', encryptedPayload: 'encrypted' },
+    settings: { delivery: 'extension', extensionEngine: 'mastodon', extensionTargetUrl: 'https://mastodon.social/publish', extensionAutoSubmit: true,
+      extensionTags: [], extensionCategory: '', extensionSession: session, ...settings },
+  });
+  const alice: AccountImportRow = { ...row, platform: 'mastodon', loginUsername: 'alice', provider: 'password', password: 'fixture-pass', profileUrl: 'https://mastodon.social/@alice', expectedUsername: 'alice' }; // vpsttt-secretscan: ignore (mật khẩu giả cho test)
+  const daily: AccountImportRow = { ...row, platform: 'daily-dev', label: 'daily.dev', loginUsername: 'writer@example.test', provider: 'google', password: 'fixture-google', profileUrl: 'https://app.daily.dev/writer', expectedUsername: 'writer' }; // vpsttt-secretscan: ignore (mật khẩu giả cho test)
+
+  function setup(owned: unknown[], latestCheck = 'NEEDS_ACTION') {
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      platformAccount: {
+        findMany: jest.fn().mockResolvedValue(owned),
+        create: jest.fn().mockResolvedValue({ id: 'acc-new' }),
+        update: jest.fn((args: { where: { id: string }; data: Record<string, unknown> }) => Promise.resolve({ id: args.where.id })),
+      },
+      platform: { update: jest.fn().mockResolvedValue({}) },
+      extensionLoginCheck: { count: jest.fn().mockResolvedValue(0), findFirst: jest.fn().mockResolvedValue({ status: latestCheck }) },
+      publishJob: { count: jest.fn().mockResolvedValue(0) },
+    };
+    const prisma = {
+      extensionDevice: { findFirst: jest.fn().mockResolvedValue({ id: 'device-1' }) },
+      platform: { findMany: jest.fn().mockResolvedValue(platforms) },
+      $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
+    };
+    const encryption = { decrypt: jest.fn().mockReturnValue({ extensionLogin: { username: 'alice', password: 'fixture-pass' } }) }; // vpsttt-secretscan: ignore (mật khẩu giả cho test)
+    const checks = { queue: jest.fn((_owner: string, ids: string[]) => Promise.resolve({ queued: ids.length, batchId: 'batch-1' })) };
+    const service = new AccountImportService(prisma as never, { upsert: jest.fn() } as never, encryption as never, checks as never);
+    return { service, tx, checks };
+  }
+  type Update = [{ where: { id: string }; data: Record<string, unknown> }];
+
+  it('leaves an unchanged account alone: no update, no switch-off, no login check', async () => {
+    const { service, tx, checks } = setup([existing()]);
+    const result = await service.import('owner', 'device-1', [alice]);
+    expect(result).toMatchObject({ imported: 0, skipped: 1, queued: 0, rows: [{ id: 'acc-old', setup: 'UNCHANGED' }] });
+    expect(tx.platformAccount.update).not.toHaveBeenCalled();
+    expect(checks.queue).not.toHaveBeenCalled();
+  });
+
+  it('saves a new password without switching the account off or signing it in again', async () => {
+    const { service, tx, checks } = setup([existing()]);
+    const result = await service.import('owner', 'device-1', [{ ...alice, password: 'fixture-new' }]); // vpsttt-secretscan: ignore (mật khẩu giả cho test)
+    expect(result).toMatchObject({ imported: 1, skipped: 0, queued: 0 });
+    const data = (tx.platformAccount.update.mock.calls[0] as Update)[0].data;
+    expect(data).not.toHaveProperty('enabled');
+    expect(data).not.toHaveProperty('status');
+    expect(checks.queue).not.toHaveBeenCalled();
+  });
+
+  it('adds only the new social, switches its platform on, and checks only that one', async () => {
+    const { service, tx, checks } = setup([existing()]);
+    const result = await service.import('owner', 'device-1', [alice, daily]);
+    expect(result).toMatchObject({ imported: 1, skipped: 1, queued: 1 });
+    expect(tx.platform.update).toHaveBeenCalledWith({ where: { id: 'p-daily' }, data: { enabled: true } });
+    expect(checks.queue).toHaveBeenCalledWith('owner', ['acc-new'], false, true);
+    // daily.dev has a default page: the new account is ready to post once signed in.
+    expect((tx.platformAccount.create.mock.calls[0] as Update)[0].data).toMatchObject({ settings: expect.objectContaining({ delivery: 'extension', extensionTargetUrl: 'https://daily.dev/squads/create' }) as unknown });
+  });
+
+  it('signs an account in again when it moves to another Chrome', async () => {
+    const { service, tx, checks } = setup([existing({ extensionSession: { ...session, deviceId: 'old-chrome' } })]);
+    await service.import('owner', 'device-1', [alice]);
+    expect((tx.platformAccount.update.mock.calls[0] as Update)[0].data).toMatchObject({ enabled: false, status: 'RECONNECT_REQUIRED' });
+    expect(checks.queue).toHaveBeenCalledWith('owner', ['acc-old'], false, true);
+  });
+
+  it('connects a signed-in account that only now gets a posting route', async () => {
+    const unrouted = { ...existing(), enabled: false, status: 'RECONNECT_REQUIRED', settings: { extensionSession: session, extensionSetup: { status: 'FLOW_REQUIRED' } } };
+    const { service, tx, checks } = setup([unrouted], 'AUTHENTICATED');
+    await service.import('owner', 'device-1', [alice]);
+    expect((tx.platformAccount.update.mock.calls[0] as Update)[0].data).toMatchObject({ enabled: true, status: 'CONNECTED', settings: expect.objectContaining({ delivery: 'extension' }) as unknown });
+    expect(checks.queue).not.toHaveBeenCalled();
+  });
+});

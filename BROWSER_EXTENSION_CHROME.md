@@ -1,5 +1,21 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.15.0: thêm social không đăng nhập lại cả loạt, tự kết nối social đã đăng nhập
+
+- **Nhập lại file chỉ xử lý social mới:**
+  - tài khoản đã có mà không đổi gì thì bỏ qua: không tắt, không đăng nhập lại;
+  - đổi mật khẩu, 2FA hay trang đăng thì cập nhật mà giữ trạng thái bật;
+  - chỉ social mới, hoặc tài khoản đổi email / Chrome, mới được đăng nhập thử.
+- **Thêm từng social:** dùng `POST /extension/accounts/import/one`, cùng quy tắc như một dòng file.
+- **Social đã đăng nhập nhưng chưa từng bật đăng** (luồng có sau khi nhập, ví dụ daily.dev): lần **Test** thành công tiếp
+  theo tự gắn trang đăng mặc định của luồng và bật **Đã kết nối**. Kênh chưa có luồng thì ghi rõ "chưa có luồng".
+- **Trang đăng mặc định mới:**
+  - DirectAdmin: box General Technical Discussion & Troubleshooting;
+  - CloudPanel: box Install & Config;
+  - Tinhte: chuyên mục AI, App, Dịch vụ (795).
+  Muốn box khác thì đổi ở nút **Tiện ích** của tài khoản.
+- Thêm tài khoản (nhập file, nhập file API, tạo tài khoản) cho nền tảng đang tắt thì nền tảng được bật.
+
 ## Bản 1.11.0: proxy cho Chrome (giảm CAPTCHA khi chạy trên VPS)
 
 - Trang **Cài đặt** của tiện ích có mục **4. Proxy cho Chrome (tuỳ chọn)**: bật **Dùng proxy**, dán chuỗi nhà cung cấp
@@ -460,7 +476,8 @@ và trả hàng đợi ngay, không chờ hết thời gian rồi báo lỗi chu
 |---|---|---|
 | `GET/POST /api/v1/extension/devices`, `DELETE …/:id` | Web (JWT, tạo/thu hồi: ADMIN) | Mã chỉ trả một lần; DB lưu SHA-256 |
 | `PUT /api/v1/extension/accounts/:id` | Web (ADMIN) | `{ enabled, engine, targetUrl, autoSubmit, tags?, category?, flair? }`; nền tảng API cần có luồng tiện ích tương ứng trong danh mục |
-| `POST /api/v1/extension/accounts/import` | Web (ADMIN) | Multipart XLSX/CSV/TSV tối đa 2 MiB, `deviceId`; mỗi dòng dùng email / mật khẩu / 2FA của chính dòng đó; mã hoá credential và xếp lượt kiểm tra, không trả secret |
+| `POST /api/v1/extension/accounts/import` | Web (ADMIN) | Multipart XLSX/CSV/TSV tối đa 2 MiB, `deviceId`; mỗi dòng dùng email / mật khẩu / 2FA của chính dòng đó; mã hoá credential, không trả secret. Tài khoản đã có mà không đổi gì thì bỏ qua (`skipped`, dòng `UNCHANGED`); chỉ tài khoản mới hoặc đổi tài khoản đăng nhập / Chrome mới được xếp kiểm tra; đổi mật khẩu / 2FA / trang đăng thì cập nhật mà giữ trạng thái bật |
+| `POST /api/v1/extension/accounts/import/one` | Web (ADMIN) | JSON một social: `deviceId`, `platform` (slug), `provider` (`password`/`google`), `loginUsername`, tuỳ chọn `password`, `totpSecret`, `expectedUsername`, `profileUrl`, `targetUrl`, `category`, `tags`; cùng quy tắc và kết quả như một dòng file |
 | `PUT /api/v1/extension/accounts/:id/session` | Web (ADMIN) | Gán hồ sơ, danh tính, phương thức login và secret mã hóa; không trả lại secret |
 | `POST /api/v1/extension/jobs/:id/requeue` | Web (ADMIN/EDITOR) | Chỉ job tiện ích đang chờ người vận hành; không nhận bài đã chờ diễn đàn duyệt |
 | `POST /api/v1/extension/agent/heartbeat` | Tiện ích (`Bearer spx_…`) | Số bài chờ, danh sách tên miền cần quyền |

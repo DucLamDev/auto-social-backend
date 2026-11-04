@@ -104,8 +104,7 @@ export class ApiAccountImportService {
 
   async import(ownerId: string, rows: ApiImportRow[]) {
     const platforms: ImportPlatform[] = (await this.prisma.platform.findMany({
-      where: { enabled: true },
-      select: { id: true, slug: true, name: true, connectorKey: true, defaultSettings: true },
+      select: { id: true, slug: true, name: true, enabled: true, connectorKey: true, defaultSettings: true },
     })).map((platform) => ({ ...platform, defaultSettings: asRecord(platform.defaultSettings) }));
     const results: ApiImportResultRow[] = [];
     const planned: PlannedRow[] = [];
@@ -132,6 +131,9 @@ export class ApiAccountImportService {
       results.push({ ...base, name: mapped.name, platform: platform.name, slug: platform.slug, status: 'CHECK_FAILED', message: 'Chưa kiểm tra.' });
       planned.push({ index: results.length - 1, row, platform, mapped });
     }
+    // Adding an account switches its platform on (the Platforms page with its switches is gone).
+    const switchOn = [...new Set(planned.filter((item) => item.platform.enabled === false).map((item) => item.platform.id))];
+    if (switchOn.length) await this.prisma.platform.updateMany({ where: { id: { in: switchOn } }, data: { enabled: true } });
     const saved = planned.length ? await this.save(ownerId, planned, results) : [];
     for (let offset = 0; offset < saved.length; offset += TEST_CONCURRENCY) {
       await Promise.all(saved.slice(offset, offset + TEST_CONCURRENCY).map((item) => this.test(item, results)));

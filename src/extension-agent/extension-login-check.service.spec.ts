@@ -50,9 +50,9 @@ describe('login completion and automatic connection', () => {
     expect(settings.extensionSession.autoLogin).toBe(true);
   });
 
-  function fixture(settings: Record<string, unknown>, enabled = false, verifyOnly = false) {
+  function fixture(settings: Record<string, unknown>, enabled = false, verifyOnly = false, slug = 'disqus') {
     const auth = { deviceId: 'device', expectedUsername: 'brand', loginUsername: 'owner@example.test', provider: 'google', allowIdentityByEmail: true, profileUrl: 'https://example.test/u/brand' };
-    const check = { id: 'check', platformAccountId: 'account', verifyOnly, account: { enabled, settings: { ...settings, extensionSession: auth } } };
+    const check = { id: 'check', platformAccountId: 'account', verifyOnly, account: { enabled, settings: { ...settings, extensionSession: auth }, platform: { slug } } };
     const tx = { extensionLoginCheck: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) }, platformAccount: { update: jest.fn() } };
     const prisma = { extensionLoginCheck: { findFirst: jest.fn().mockResolvedValue(check) }, $transaction: jest.fn(async fn => fn(tx)) };
     const service = new ExtensionLoginCheckService(prisma as never, {} as never);
@@ -74,6 +74,38 @@ describe('login completion and automatic connection', () => {
     await service.result({ id: 'device', ownerId: 'owner' } as never, 'check', { outcome: 'NEEDS_ACTION', message: 'Chưa nhận diện được phiên sẵn có và tài khoản này chưa bật tự đăng nhập hoặc còn thiếu thông tin xác thực.' });
     expect(tx.extensionLoginCheck.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ message: expect.stringContaining('phiên đăng nhập sẵn có') }) }));
   });
+  type Update = [{ data: { enabled?: boolean; status?: string; settings?: Record<string, unknown> } }];
+  const updates = (tx: ReturnType<typeof fixture>['tx']) => (tx.platformAccount.update.mock.calls as Update[]).map(([call]) => call.data);
+
+  it.each([
+    ['daily-dev', 'https://daily.dev/squads/create'],
+    ['cloudpanel-forum', 'https://www.cloudpanelforum.org/forums/install-config/post-thread'],
+    ['directadmin-forums', 'https://forum.directadmin.com/forums/general-technical-discussion-troubleshooting.32/post-thread'],
+    ['tinhte', 'https://tinhte.vn/editorv2/create/795/'],
+  ])('connects a signed-in imported %s account that never got a posting route, using the flow default page', async (slug, page) => {
+    // daily.dev still carries the reason saved before its flow existed.
+    const { service, tx } = fixture({ extensionAutoConnect: true, extensionSetup: { status: 'FLOW_REQUIRED' } }, false, true, slug);
+    await service.result({ id: 'device', ownerId: 'owner' } as never, 'check', { outcome: 'AUTHENTICATED' });
+    const connected = updates(tx).find((data) => data.enabled === true);
+    expect(connected).toMatchObject({ status: 'CONNECTED', settings: { delivery: 'extension', extensionTargetUrl: page, extensionAutoSubmit: true, extensionSetup: { status: 'READY' } } });
+  });
+
+  it('records why a signed-in account still cannot post, without switching it on', async () => {
+    const { service, tx } = fixture({ extensionAutoConnect: true, extensionSetup: { status: 'DESTINATION_REQUIRED' } }, false, false, 'disqus');
+    await service.result({ id: 'device', ownerId: 'owner' } as never, 'check', { outcome: 'AUTHENTICATED' });
+    expect(updates(tx)).toEqual([expect.objectContaining({ settings: expect.objectContaining({ extensionSetup: { status: 'FLOW_REQUIRED' } }) as unknown }) as unknown]);
+    expect(updates(tx).some((data) => data.enabled)).toBe(false);
+  });
+
+  it('gives no route after a failed login, nor to an account not meant to connect by itself', async () => {
+    const failed = fixture({ extensionAutoConnect: true }, false, false, 'daily-dev');
+    await failed.service.result({ id: 'device', ownerId: 'owner' } as never, 'check', { outcome: 'NEEDS_ACTION' });
+    expect(failed.tx.platformAccount.update).not.toHaveBeenCalled();
+    const manual = fixture({}, false, false, 'daily-dev');
+    await manual.service.result({ id: 'device', ownerId: 'owner' } as never, 'check', { outcome: 'AUTHENTICATED' });
+    expect(manual.tx.platformAccount.update).not.toHaveBeenCalled();
+  });
+
   it.each([
     { delivery: 'extension', extensionAutoConnect: false },
     { extensionAutoConnect: true, extensionSetup: { status: 'FLOW_REQUIRED' } },

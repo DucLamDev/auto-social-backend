@@ -34,6 +34,21 @@ describe('PlatformAccountsService credential updates', () => {
     expect(saved.data).toMatchObject({ status: AccountStatus.RECONNECT_REQUIRED, settings: { delivery: 'extension', extensionEngine: 'xenforo' } });
     expect(upsert).not.toHaveBeenCalled();
   });
+  it('switches a platform on when an account is added for it, and leaves an enabled one alone', async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      platform: { findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'platform-1', enabled: false, mode: PlatformMode.MANUAL, defaultSettings: {} }), update },
+      platformAccount: { create: jest.fn().mockResolvedValue({ id: 'account-1' }), findFirstOrThrow: jest.fn().mockResolvedValue({ id: 'account-1' }) },
+    } as unknown as PrismaService;
+    const service = new PlatformAccountsService(prisma, { upsert: jest.fn() } as unknown as CredentialsService);
+    await service.create('owner-1', { platformSlug: 'medium', name: 'Medium manual' });
+    expect(update).toHaveBeenCalledWith({ where: { id: 'platform-1' }, data: { enabled: true } });
+    (prisma.platform.findUniqueOrThrow as jest.Mock).mockResolvedValue({ id: 'platform-1', enabled: true, mode: PlatformMode.MANUAL, defaultSettings: {} });
+    update.mockClear();
+    await service.create('owner-1', { platformSlug: 'medium', name: 'Medium manual 2' });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('merges safe catalog defaults into a newly created account', async () => {
     const created = { id: 'account-1' };
     const safeAccount = { id: 'account-1', settings: { manualUrl: 'https://medium.com/new-story', locale: 'vi' } };

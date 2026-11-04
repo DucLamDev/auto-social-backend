@@ -222,6 +222,9 @@ export class PlatformAccountsService {
       },
       select: { id: true },
     });
+    // Adding an account switches its platform on: the Platforms page with its switches is gone,
+    // and accounts of a switched-off platform are left out of posting.
+    if (platform.enabled === false) await this.prisma.platform.update({ where: { id: platform.id }, data: { enabled: true } });
     if (dto.credential) await this.credentials.upsert(account.id, dto.credential);
     return this.get(ownerId, account.id);
   }

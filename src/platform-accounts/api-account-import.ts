@@ -31,6 +31,8 @@ export interface ImportPlatform {
   id: string;
   slug: string;
   name: string;
+  /** A switched-off platform is switched on when an account is imported for it. */
+  enabled?: boolean;
   connectorKey: string;
   defaultSettings: Record<string, unknown>;
 }

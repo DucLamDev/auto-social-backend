@@ -30,14 +30,24 @@ const definitions: Array<[string, string, ExtensionEngine, string]> = [
   ['cloudpanel-forum', 'CloudPanel Forum', 'xenforo', 'https://www.cloudpanelforum.org'],
 ];
 
+// Boxes the owner chose (04/11/2026) for forums whose new-thread page belongs to
+// one box: the general technical discussion of each site. An account can still
+// set its own box in "Tiện ích"; other XenForo forums have no default.
+const XENFORO_DEFAULT_BOXES: Record<string, string> = {
+  'directadmin-forums': 'https://forum.directadmin.com/forums/general-technical-discussion-troubleshooting.32/post-thread',
+  'cloudpanel-forum': 'https://www.cloudpanelforum.org/forums/install-config/post-thread',
+};
+
 // These profiles identify the site and editor, not the user's posting rights.
-// Category, tags and login belong to each account; no category is guessed.
+// Category, tags and login belong to each account.
 const forumFlows: ExtensionFlow[] = definitions.map(([id, name, engine, forumUrl]) => ({
   id, name, engine, forumUrl, revision: 1,
-  targetUrl: engine === 'discourse' ? `${forumUrl}/new-topic` : '',
+  targetUrl: engine === 'discourse' ? `${forumUrl}/new-topic` : XENFORO_DEFAULT_BOXES[id] ?? '',
   setupHint: engine === 'discourse'
     ? 'Đăng nhập diễn đàn trong Chrome, chọn chuyên mục được phép đăng và tag có sẵn của chuyên mục. Cấu hình này chỉ áp dụng cho diễn đàn này.'
-    : 'Đăng nhập diễn đàn trong Chrome, vào đúng box rồi bấm tạo chủ đề. Sao chép URL kết thúc bằng /post-thread vào Trang tạo chủ đề.',
+    : XENFORO_DEFAULT_BOXES[id]
+      ? `Mặc định đăng vào box ${XENFORO_DEFAULT_BOXES[id].replace(/\/post-thread$/, '')}. Muốn box khác thì vào box đó, bấm tạo chủ đề và dán URL kết thúc bằng /post-thread vào Trang tạo chủ đề.`
+      : 'Đăng nhập diễn đàn trong Chrome, vào đúng box rồi bấm tạo chủ đề. Sao chép URL kết thúc bằng /post-thread vào Trang tạo chủ đề.',
 }));
 
 export const EXTENSION_FLOWS: readonly ExtensionFlow[] = [...forumFlows,
@@ -68,8 +78,8 @@ export const EXTENSION_FLOWS: readonly ExtensionFlow[] = [...forumFlows,
     setupHint: 'Đính kèm một file PDF tối đa 20 MiB cho nội dung trên web trước khi tạo chiến dịch, rồi chọn category. SlideShare thông báo tạm ngừng upload ngày 06/10/2026; luồng chỉ gửi khi màn hình upload hoạt động.' },
   { id: 'aws-community', name: 'AWS Builder Center', engine: 'aws-builder', forumUrl: 'https://builder.aws.com', targetUrl: 'https://builder.aws.com/create/content', revision: 1,
     setupHint: 'AWS Community dùng AWS Builder Center. Đăng nhập bằng Builder ID, hoàn tất hồ sơ; bài được gửi qua editor và có thể chờ nền tảng kiểm duyệt.' },
-  { id: 'tinhte', name: 'Tinhte.vn', engine: 'tinhte', forumUrl: 'https://tinhte.vn', targetUrl: '', revision: 1,
-    setupHint: 'Vào chuyên mục Tinhte muốn đăng, bấm viết bài rồi sao chép URL dạng https://tinhte.vn/editorv2/create/ID-CHUYEN-MUC/. Tiện ích dùng chuyên mục trong URL và editor CKEditor của Tinhte.' },
+  { id: 'tinhte', name: 'Tinhte.vn', engine: 'tinhte', forumUrl: 'https://tinhte.vn', targetUrl: 'https://tinhte.vn/editorv2/create/795/', revision: 1,
+    setupHint: 'Mặc định đăng vào chuyên mục AI, App, Dịch vụ (795). Muốn chuyên mục khác thì vào chuyên mục đó, bấm viết bài rồi dán URL dạng https://tinhte.vn/editorv2/create/ID-CHUYEN-MUC/. Tiện ích dùng chuyên mục trong URL và editor CKEditor của Tinhte.' },
   { id: 'daily-dev', name: 'daily.dev', engine: 'dailydev', forumUrl: 'https://daily.dev', targetUrl: 'https://daily.dev/squads/create', revision: 1,
     setupHint: 'Đăng bài viết (tiêu đề + nội dung) lên hồ sơ daily.dev đang đăng nhập, qua trang https://daily.dev/squads/create. Chưa hỗ trợ đăng vào Squad.' },
   { id: 'pixelfed-social', name: 'pixelfed.social', engine: 'pixelfed', forumUrl: 'https://pixelfed.social', targetUrl: 'https://pixelfed.social/i/web', revision: 1,

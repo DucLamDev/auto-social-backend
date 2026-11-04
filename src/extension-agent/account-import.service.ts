@@ -6,8 +6,8 @@ import { PrismaService } from '../database/prisma.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { CredentialEncryptionService } from '../credentials/credential-encryption.service';
 import { generateTotp } from '../auth/totp-provider';
-import { extensionFlowForPlatform, validateExtensionFlow } from '../connectors/extension/extension-flows';
-import { parseExtensionDeliverySettings } from '../connectors/extension/extension-delivery';
+import { extensionFlowForPlatform } from '../connectors/extension/extension-flows';
+import { defaultExtensionDelivery } from './extension-delivery-defaults';
 import { ExtensionLoginCheckService } from './extension-login-check.service';
 import { object, sessionOf } from './extension-account-session.service';
 
@@ -53,6 +53,9 @@ export function importLogin(row: AccountImportRow) {
   return { provider, username: row.loginUsername.trim() } as const;
 }
 
+/** Settings that decide where and how an account posts; a change here is a real update. */
+const ROUTE_KEYS = ['delivery', 'extensionEngine', 'extensionTargetUrl', 'extensionTags', 'extensionCategory', 'extensionAutoSubmit'] as const;
+
 @Injectable()
 export class AccountImportService {
   constructor(private readonly prisma: PrismaService, private readonly credentials: CredentialsService,
@@ -61,9 +64,16 @@ export class AccountImportService {
   async import(ownerId: string, deviceId: string, rows: AccountImportRow[]) {
     const device = await this.prisma.extensionDevice.findFirst({ where: { id: deviceId, ownerId, revokedAt: null } });
     if (!device) throw new BadRequestException('Chọn Chrome đã ghép nối của bạn.');
-    const platforms = new Map((await this.prisma.platform.findMany({ where: { enabled: true } })).map(p => [p.slug, p]));
+    // Every catalog platform: adding an account turns a switched-off platform on (the
+    // Platforms page with its switches is gone).
+    const platforms = new Map((await this.prisma.platform.findMany()).map(p => [p.slug, p]));
     const result: Array<{ id?: string; row: string; name: string; setup?: string; issue?: string }> = [];
+    // Only accounts that are new or now sign in differently get a login check; the
+    // ones already in place keep their session, state and switch.
     const ids: string[] = [];
+    let saved = 0;
+    let skipped = 0;
+    const switchedOn = new Set<string>();
     await this.prisma.$transaction(async tx => {
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${ownerId}, 7301))::text`;
       const owned = await tx.platformAccount.findMany({ where: { ownerId }, include: { credential: true } });
@@ -79,8 +89,6 @@ export class AccountImportService {
         importedKeys.add(key);
         const old = owned.find(a => a.platformId === platform.id && (object(object(a.settings).extensionImport).uploadKey === key
           || (sessionOf(a.settings)?.loginUsername.toLowerCase() === login.username.toLowerCase() && sessionOf(a.settings)?.profileUrl === row.profileUrl.trim())));
-        if (old && (await tx.extensionLoginCheck.count({ where: { platformAccountId: old.id, status: { in: ['RUNNING', 'QUEUED'] } } })
-          || await tx.publishJob.count({ where: { platformAccountId: old.id, status: { in: ['PROCESSING', 'QUEUED', 'SCHEDULED'] } } }))) { result.push({ id: old.id, row: row.source, name: old.name, issue: 'ACCOUNT_BUSY' }); continue; }
         const previous = object(old?.settings), previousSession = sessionOf(previous);
         const stored = old?.credential?.status === 'ACTIVE' ? this.encryption.decrypt(old.credential.encryptedPayload) : {};
         const sameLogin = previousSession?.provider === login.provider && previousSession.loginUsername.toLowerCase() === login.username.toLowerCase();
@@ -98,24 +106,33 @@ export class AccountImportService {
           autoLogin: login.provider === 'google' || Boolean(password), autoTotp: Boolean(seed) && object(previousSession).totpNeedsReview !== true,
           totpNeedsReview: object(previousSession).totpNeedsReview === true,
           discoverIdentity: !username, allowIdentityByEmail: true, allowedOrigins: previousSession?.allowedOrigins ?? (platform.slug === 'vivaldi-social' ? ['https://login.vivaldi.net'] : []) };
-        let setup = flow ? 'DESTINATION_REQUIRED' : 'FLOW_REQUIRED';
         const settings: Record<string, unknown> = { ...previous, extensionSession: session, extensionAutoConnect: true,
           extensionImport: { ...object(previous.extensionImport), selected: true, uploadKey: key, sources: [row.source], issues: [] },
           extensionLoginTarget: { url: loginUrl.replace(/\/login\/?$/, ''), engine: flow?.engine ?? 'generic' } };
-        const targetUrl = row.targetUrl?.trim() || previous.extensionTargetUrl || flow?.targetUrl;
-        if (flow && targetUrl) {
-          try {
-            const target = parseExtensionDeliverySettings({ extensionEngine: flow.engine, extensionTargetUrl: targetUrl, extensionAutoSubmit: true,
-              extensionTags: row.tags ? row.tags.split(',').map(t => t.trim()).filter(Boolean) : previous.extensionTags ?? [], extensionCategory: row.category || previous.extensionCategory });
-            validateExtensionFlow(platform.slug, target);
-            Object.assign(settings, { delivery: 'extension', extensionEngine: target.engine, extensionTargetUrl: target.targetUrl, extensionAutoSubmit: true,
-              extensionTags: target.tags ?? [], extensionCategory: target.category ?? '', extensionFlowId: flow.id, extensionFlowRevision: flow.revision });
-            setup = 'READY';
-          } catch { result.push({ row: row.source, name: platform.name, issue: 'INVALID_POST_DESTINATION' }); continue; }
-        }
-        settings.extensionSetup = { status: setup };
+        const route = defaultExtensionDelivery(platform.slug, previous, {
+          targetUrl: row.targetUrl, category: row.category, ...(row.tags ? { tags: row.tags.split(',').map(t => t.trim()).filter(Boolean) } : {}),
+        });
+        if (route.status === 'INVALID') { result.push({ row: row.source, name: platform.name, issue: 'INVALID_POST_DESTINATION' }); continue; }
+        const setup = route.status;
+        Object.assign(settings, route.status === 'READY' ? route.settings : { extensionSetup: { status: route.status } });
         const name = `${platform.name} · ${username || login.username}`;
-        const account = old ? await tx.platformAccount.update({ where: { id: old.id }, data: { name, enabled: false, status: 'RECONNECT_REQUIRED', settings: settings as Prisma.InputJsonObject } })
+        // Same login, same Chrome: the session is still valid, so a re-uploaded file
+        // must neither switch the account off nor sign it in again.
+        const relogin = !old || !sameLogin || previousSession?.deviceId !== deviceId;
+        const newSecret = Boolean((row.password && row.password !== priorSecret.password) || (row.totpSecret && row.totpSecret !== priorSecret.totpSecret));
+        const routeChanged = ROUTE_KEYS.some(field => JSON.stringify(previous[field] ?? null) !== JSON.stringify(settings[field] ?? null));
+        if (old && !relogin && !newSecret && !routeChanged) { skipped++; result.push({ id: old.id, row: row.source, name: old.name, setup: 'UNCHANGED' }); continue; }
+        if (old && (await tx.extensionLoginCheck.count({ where: { platformAccountId: old.id, status: { in: ['RUNNING', 'QUEUED'] } } })
+          || await tx.publishJob.count({ where: { platformAccountId: old.id, status: { in: ['PROCESSING', 'QUEUED', 'SCHEDULED'] } } }))) { result.push({ id: old.id, row: row.source, name: old.name, issue: 'ACCOUNT_BUSY' }); continue; }
+        if (platform.enabled === false && !switchedOn.has(platform.id)) {
+          await tx.platform.update({ where: { id: platform.id }, data: { enabled: true } });
+          switchedOn.add(platform.id);
+        }
+        // A route just gained by an account whose last check signed in connects it now.
+        const newlyRouted = old && !relogin && previous.delivery !== 'extension' && settings.delivery === 'extension'
+          && (await tx.extensionLoginCheck.findFirst({ where: { platformAccountId: old.id }, orderBy: { createdAt: 'desc' }, select: { status: true } }))?.status === 'AUTHENTICATED';
+        const state = relogin ? { enabled: false, status: 'RECONNECT_REQUIRED' as const } : newlyRouted ? { enabled: true, status: 'CONNECTED' as const } : {};
+        const account = old ? await tx.platformAccount.update({ where: { id: old.id }, data: { name, ...state, settings: settings as Prisma.InputJsonObject } })
           : await tx.platformAccount.create({ data: { ownerId, platformId: platform.id, name, username: username || null, enabled: false, status: 'RECONNECT_REQUIRED', settings: settings as Prisma.InputJsonObject } });
         const credential = { username: login.username, ...(password ? { password } : {}), ...(seed ? { totpSecret: seed } : {}) };
         const methods = { ...object(stored.extensionLoginMethods), [login.provider]: credential };
@@ -124,10 +141,12 @@ export class AccountImportService {
         } };
         await this.credentials.upsert(account.id, { ...stored, extensionLogin: credential, extensionLoginMethods: methods }, null, tx);
         await tx.platformAccount.update({ where: { id: account.id }, data: { settings: { ...settings, extensionLoginMethods: methodSettings } as Prisma.InputJsonObject } });
-        ids.push(account.id); result.push({ id: account.id, row: row.source, name, setup });
+        saved++;
+        if (relogin) ids.push(account.id);
+        result.push({ id: account.id, row: row.source, name, setup });
       }
     }, { timeout: 30_000 });
-    const batch = await this.checks.queue(ownerId, ids, false, true);
-    return { imported: ids.length, queued: batch.queued, batchId: batch.batchId, rows: result };
+    const batch = ids.length ? await this.checks.queue(ownerId, ids, false, true) : { queued: 0, batchId: null };
+    return { imported: saved, skipped, queued: batch.queued, batchId: batch.batchId, rows: result };
   }
 }
