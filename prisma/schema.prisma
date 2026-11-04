@@ -361,6 +361,8 @@ model ContentVariant {
   recommended         Boolean          @default(true)
   reason              String?
   mediaRecommendation Json?
+  /// Last "rewrite with AI" request on this draft: status generating | done | failed, instruction, times, error.
+  aiRevision          Json?
   status              VariantStatus    @default(GENERATED)
   version             Int              @default(1)
   createdAt           DateTime         @default(now())

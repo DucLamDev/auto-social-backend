@@ -7,6 +7,9 @@ PostgreSQL là nguồn sự thật. Prisma schema ở `prisma/schema.prisma`; mi
 - Identity: `User`, `Role`, `UserRole`, `RefreshTokenSession`.
 - Destination: `Platform`, `PlatformCapability`, `PlatformAccount`, `PlatformCredential`, `OAuthToken`, `OAuthState`.
 - Content: `ContentSource`, `SourceArticle`, `Content`, `ContentVariant`, `MediaAsset`, `PromptTemplate`.
+  `ContentVariant.aiRevision` (JSON, có thể trống) giữ lần "viết lại bằng AI" gần nhất: `status`
+  generating/done/failed, `instruction`, `startedAt`, `finishedAt`, `error`; migration
+  `20261104160000_content_variant_ai_revision`.
 - Delivery: `Campaign`, `CampaignTarget`, `PublishJob`, `PublishAttempt`, `PublishedPost`.
 - Operations: `AuditLog`, `SystemSetting`.
 - Agents: `ExtensionDevice` (tiện ích Chrome đã ghép nối), `McpToken` (token MCP cho Codex: chỉ lưu SHA-256, `scopes`

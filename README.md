@@ -92,8 +92,22 @@ sinh nội dung, hạn mức), dán địa chỉ hiện trong mục đó vào `V
 lượt; backend đưa khuôn JSON vào lời dặn hệ thống, cắt phần nhập quá dài, bóc JSON khỏi khối code và kiểm tra lại như
 các provider khác. Mỗi lượt chạy một phiên Claude/Codex nên chậm: backend giới hạn `VPSTTT_AI_MAX_CONCURRENCY` lượt cùng
 lúc và rải đều `VPSTTT_AI_RPM` lượt mỗi phút, đặt hai số này không vượt hạn mức của key (mặc định của IDE: 2 và 10). Một
-bài cho mỗi nền tảng cần 2–4 lượt (viết, chấm, viết lại khi chưa đạt), nên với 10 lượt/phút nên chọn khoảng 8 nền tảng
-trở xuống mỗi lần tạo tự động. Model: `claude:haiku` (nhanh), `claude:sonnet`, `claude:opus`, `gpt:`.
+bài cho mỗi nền tảng cần 2–6 lượt (viết, chấm, viết lại tối đa 2 lần khi chưa đạt; giữ bản điểm cao nhất), nên với 10
+lượt/phút nên chọn khoảng 6–8 nền tảng mỗi lần tạo tự động. Model: `claude:haiku` (nhanh), `claude:sonnet`, `claude:opus`, `gpt:`.
+
+**Chấm điểm và viết lại từng bài.** Người viết được dặn đúng thang chấm của biên tập AI:
+- mở bài giữ chân người đọc;
+- chi tiết cụ thể;
+- hợp cộng đồng nơi đăng;
+- tự nhiên, không câu sáo;
+- riêng Stack Exchange là câu hỏi kỹ thuật thật.
+
+Bài đạt từ 7/10. Ở Content đợi duyệt:
+- bài chưa đạt (hoặc bất kỳ bài chờ duyệt nào) có thể **viết lại bằng AI** kèm hướng dẫn của bạn qua
+  `POST /api/v1/content-variants/{id}/rewrite` (`instruction`, tuỳ chọn `aiProvider`);
+- việc này chạy nền 1–3 phút. Trạng thái nằm ở trường `aiRevision` của biến thể (`generating`, `done`, `failed`);
+- bài mới thay bài cũ tại chỗ, được chấm lại; bài đã duyệt nhưng chưa vào chiến dịch quay về chờ duyệt;
+- bạn sửa tay trong lúc AI đang viết thì giữ bản bạn sửa.
 
 **Ảnh AI cho chiến dịch** (từ backend 1.7.0) dùng cùng địa chỉ và key VPSTTT AI, gọi `POST /images/generations` với
 model `vpsttt-image`; key phải được quản trị cấp thêm quyền **image**. Chỉ kênh mà đường đăng gửi được ảnh mới có ảnh,
@@ -103,7 +117,8 @@ trong bài chữ. AI viết bài viết luôn mô tả ảnh (tiếng Anh, khôn
 của kênh (vuông cho Pixelfed, Instagram, Threads; ngang cho các kênh còn lại), rồi backend tạo ảnh và gắn vào biến thể
 trước khi chờ duyệt. Ảnh lỗi không làm mất bài chữ; riêng kênh bắt buộc ảnh thì bài chờ duyệt tay. Bạn tự tải ảnh lên thì
 ảnh đó dùng thay ảnh AI. Ở tab Content đợi duyệt có thể tạo lại (`POST /api/v1/content-variants/{id}/image`, chạy nền),
-bỏ (`DELETE /api/v1/content-variants/{id}/image/{mediaId}`) hoặc thay ảnh. Trạng thái: `GET /api/v1/ai/image-status`.
+bỏ (`DELETE /api/v1/content-variants/{id}/image/{mediaId}`) hoặc thay ảnh. Bài chưa có ảnh cũng tạo được bằng lệnh tạo lại
+đó: không gửi `prompt` thì AI tự thiết kế mô tả ảnh từ nội dung bài rồi tạo ảnh. Trạng thái: `GET /api/v1/ai/image-status`.
 Mỗi ảnh mất khoảng 30 giây đến 2 phút; `VPSTTT_AI_IMAGE_CONCURRENCY` (mặc định 1) và `VPSTTT_AI_IMAGE_RPM` giữ trong hạn
 mức của key; `AI_IMAGE_ENABLED=false` tắt hẳn ảnh AI.
 

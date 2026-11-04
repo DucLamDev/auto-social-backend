@@ -1,13 +1,15 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { RoleName, VariantStatus } from '@prisma/client';
-import { ArrayMaxSize, IsArray, IsBoolean, IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsEnum, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { AI_PROVIDER_IDS, AiProvider } from '../ai/ai-provider';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { ApiCreatedEnvelope, ApiOkEnvelope, ContentVariantContractDto } from '../common/swagger/api-contract.dto';
 import { ContentVariantsService } from './content-variants.service';
 import { VariantImageService } from './variant-image.service';
+import { MAX_REWRITE_INSTRUCTION_LENGTH, VariantRewriteService } from './variant-rewrite.service';
 import { CreateContentVariantDto } from './dto/create-content-variant.dto';
 
 class UpdateVariantStatusDto {
@@ -46,15 +48,27 @@ class VariantPreviewDto {
 }
 
 class RegenerateVariantImageDto {
-  @ApiPropertyOptional({ description: 'New image description; the stored one is reused when omitted.', maxLength: 4000 })
+  @ApiPropertyOptional({ description: 'New image description; the stored one is reused when omitted, and the AI designs one from the post when there is none.', maxLength: 4000 })
   @IsOptional() @IsString() @MaxLength(4_000) prompt?: string;
+}
+
+class RewriteVariantDto {
+  @ApiPropertyOptional({ description: 'What to change, in the operator\'s words; the last review notes are added automatically.', maxLength: MAX_REWRITE_INSTRUCTION_LENGTH })
+  @IsOptional() @IsString() @MaxLength(MAX_REWRITE_INSTRUCTION_LENGTH) instruction?: string;
+
+  @ApiPropertyOptional({ enum: AI_PROVIDER_IDS, description: 'AI provider; the default one when omitted.' })
+  @IsOptional() @IsIn(AI_PROVIDER_IDS) aiProvider?: AiProvider;
 }
 
 @ApiTags('content-variants')
 @ApiBearerAuth()
 @Controller('content-variants')
 export class ContentVariantsController {
-  constructor(private readonly variants: ContentVariantsService, private readonly images: VariantImageService) {}
+  constructor(
+    private readonly variants: ContentVariantsService,
+    private readonly images: VariantImageService,
+    private readonly rewrites: VariantRewriteService,
+  ) {}
 
   @Post()
   @ApiCreatedEnvelope(ContentVariantContractDto)
@@ -97,6 +111,14 @@ export class ContentVariantsController {
   @Roles(RoleName.ADMIN, RoleName.EDITOR)
   regenerateImage(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: RegenerateVariantImageDto) {
     return this.images.regenerate(user.id, id, dto);
+  }
+
+  /** Starts an AI rewrite of a draft variant; the review screen follows `aiRevision.status`. */
+  @Post(':id/rewrite')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  rewrite(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: RewriteVariantDto) {
+    return this.rewrites.start(user.id, id, dto);
   }
 
   @Delete(':id/image/:mediaId')

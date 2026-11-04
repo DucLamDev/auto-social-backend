@@ -3,6 +3,8 @@ import { countChars, detectLanguage, PlatformContract } from '../platforms/platf
 import { publishedLength } from '../platforms/post-text';
 
 export const QUALITY_PASS_SCORE = 7;
+/** Rewrites after a failing first draft; the best-scoring attempt is kept. */
+export const QUALITY_MAX_REWRITES = 2;
 
 /** Filler that makes posts read as generic AI copy. Checked case-insensitively. */
 export const CLICHES = [
@@ -126,6 +128,28 @@ export function reviewInstructions(contract: PlatformContract): string {
   ].join('\n');
 }
 
+/**
+ * The editor's rubric, given to the writer up front: first drafts aim at the
+ * same criteria they are scored on, so fewer need a rewrite.
+ */
+export function qualityInstructions(contract: PlatformContract, engine?: string): string {
+  return [
+    `Quality bar: an editor scores this ${contract.name} draft from 1 to 10 for hook, specificity, platform fit and naturalness. ${QUALITY_PASS_SCORE} is publishable; aim for 9.`,
+    `- Hook: the first line makes a ${contract.name} reader stop: a concrete problem, result, number or sharp question. No greeting and no generic opener.`,
+    '- Specificity: concrete details instead of adjectives: steps, commands or settings, numbers, before and after, one short real example. Every statement about the brand, its products, prices or results comes from the brief or the brand facts.',
+    `- Platform fit: write the way ${contract.name} members write for each other. In forums, communities and developer sites, teach or ask something useful first and mention the brand at most once, where it is relevant; never write an advertisement.`,
+    engine === 'stackexchange'
+      ? '- Stack Exchange: one precise, answerable technical question: what you are trying to do, the exact commands or configuration tried, the expected and the actual result, versions. No promotion, no product links, no greeting or thanks.'
+      : '',
+    `- Naturalness: an experienced practitioner talking to peers, varied sentence length, no filler. Never use: ${CLICHES.map((phrase) => `"${phrase}"`).join(', ')}.`,
+  ].filter(Boolean).join('\n');
+}
+
+/** Higher is better: a passing draft beats any failing one, then the editor's score, then fewer machine issues. */
+export function draftRank(passed: boolean, review: ContentReview | null, issues: readonly string[]): number {
+  return (passed ? 1_000 : 0) + (review?.score ?? 0) * 10 - issues.length;
+}
+
 export function reviewPassed(review: ContentReview): boolean {
   return review.score >= QUALITY_PASS_SCORE && review.languageOk && review.unsupportedClaims.length === 0;
 }
@@ -137,5 +161,9 @@ export function rewriteFeedback(issues: string[], review: ContentReview | null):
     ...(review?.unsupportedClaims.map((claim) => `Remove or ground this claim: ${claim}`) ?? []),
     ...(review?.issues ?? []),
   ];
-  return [...new Set(lines)].slice(0, 10).map((line) => `- ${line}`).join('\n');
+  // The sub-scores tell the writer which criterion pulled the draft down.
+  const scores = review && !reviewPassed(review)
+    ? [`Editor scores (1-10): overall ${review.score}, hook ${review.hook}, specificity ${review.specificity}, platform fit ${review.platformFit}, naturalness ${review.naturalness}. Raise the lowest first.`]
+    : [];
+  return [...[...new Set(lines)].slice(0, 10), ...scores].map((line) => `- ${line}`).join('\n');
 }

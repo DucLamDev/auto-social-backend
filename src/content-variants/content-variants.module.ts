@@ -4,6 +4,7 @@ import { MediaModule } from '../media/media.module';
 import { ContentVariantsController } from './content-variants.controller';
 import { ContentVariantsService } from './content-variants.service';
 import { VariantImageService } from './variant-image.service';
+import { VariantRewriteService } from './variant-rewrite.service';
 
-@Module({ imports: [AiModule, MediaModule], controllers: [ContentVariantsController], providers: [ContentVariantsService, VariantImageService] })
+@Module({ imports: [AiModule, MediaModule], controllers: [ContentVariantsController], providers: [ContentVariantsService, VariantImageService, VariantRewriteService] })
 export class ContentVariantsModule {}

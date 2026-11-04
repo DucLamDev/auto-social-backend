@@ -16,7 +16,11 @@ import {
   clampReview,
   ContentReview,
   deterministicIssues,
+  DraftForCheck,
+  draftRank,
+  QUALITY_MAX_REWRITES,
   QUALITY_PASS_SCORE,
+  qualityInstructions,
   reviewInstructions,
   reviewJsonSchema,
   reviewPassed,
@@ -151,8 +155,29 @@ interface ModelOptions {
   contract?: PlatformContract;
   brand?: BrandProfile | null;
   feedback?: string;
+  /** Operator-requested revision of a stored draft (see revisionBrief). */
+  revision?: string;
+  /** Extension engine of the destination, for engine-specific quality rules. */
+  engine?: string;
   /** Set when this destination's post carries one AI image; absent means text only. */
   image?: PlatformImagePlan | null;
+}
+
+/** An operator's "rewrite this post" request for one stored draft. */
+export interface DraftRevision {
+  previous: DraftForCheck;
+  instruction: string;
+  /** The last review of the stored draft ("Cần xem lại …"), if any. */
+  notes?: string | null;
+}
+
+function revisionBrief(revision: DraftRevision): string {
+  return [
+    'Revise your previous draft for this destination: keep what works, follow the operator\'s instructions and fix the editor\'s notes. Return the complete new post.',
+    `Previous draft:\n${JSON.stringify({ title: revision.previous.title, body: revision.previous.body.slice(0, 20_000), hashtags: revision.previous.hashtags })}`,
+    revision.instruction ? `Operator's instructions (highest priority, within the destination contract):\n${revision.instruction}` : '',
+    revision.notes ? `Editor's notes from the last review:\n${revision.notes}` : '',
+  ].filter(Boolean).join('\n\n');
 }
 
 const LANGUAGE_NAMES = { vi: 'Vietnamese', en: 'English' } as const;
@@ -571,30 +596,41 @@ export class AiContentService {
     content: SourceContent,
     brand: BrandProfile | null,
     image: PlatformImagePlan | null = null,
+    revision?: DraftRevision,
   ): Promise<GeneratedVariant> {
     const contract = platformContract(platform, {
       sourceText: content.body,
       defaultLanguage: brand?.defaultLanguage,
       platformLanguages: brand?.platformLanguages,
     });
+    const engine = extensionFlowForPlatform(platform)?.engine;
     // Plain-text destinations get clean paragraphs whatever the route (API or
     // extension), so stray Markdown never reaches readers.
-    const write = async (feedback?: string) => {
+    const write = async (feedback?: string, revisionText?: string) => {
       const generated = await this.withGenerationRetry(() => (
-        this.callModel(provider, platform, systemPrompt, userTemplate, content, { contract, brand, feedback, image })
+        this.callModel(provider, platform, systemPrompt, userTemplate, content, { contract, brand, feedback, image, engine, revision: revisionText })
       ));
       const media = mediaForPlan(generated, image);
       return contract.format === 'plain' ? { ...generated, media, body: markdownToPlain(generated.body) } : { ...generated, media };
     };
-    let draft = await write();
+    let draft = await write(undefined, revision ? revisionBrief(revision) : undefined);
     let assessment = await this.assess(provider, draft, contract, content, brand);
+    let best = { draft, assessment };
     // A draft the writer itself flags as off-topic for this audience
     // (recommended=false) is not fixed by rewriting; it goes to the operator.
-    if (!assessment.passed) {
-      draft = await write(rewriteFeedback(assessment.issues, assessment.review));
+    // Each rewrite answers the latest review; the best-scoring attempt is kept,
+    // since a rewrite can also score lower than the draft before it.
+    const standing = revision?.instruction ? `\n- The operator's instructions still apply: ${revision.instruction}` : '';
+    for (let rewrite = 0; rewrite < QUALITY_MAX_REWRITES && !assessment.passed; rewrite += 1) {
+      draft = await write(`${rewriteFeedback(assessment.issues, assessment.review)}${standing}`);
       assessment = await this.assess(provider, draft, contract, content, brand);
+      if (draftRank(assessment.passed, assessment.review, assessment.issues) >= draftRank(best.assessment.passed, best.assessment.review, best.assessment.issues)) {
+        best = { draft, assessment };
+      }
     }
-    if (image) draft = { ...draft, media: await this.directImage(provider, contract, draft, content, brand, image) };
+    ({ draft, assessment } = best);
+    // A revision keeps the post's current image; only new drafts get one designed.
+    if (image && !revision) draft = { ...draft, media: await this.directImage(provider, contract, draft, content, brand, image) };
     const hashtags = [...new Set(draft.hashtags.map((tag) => tag.trim().replace(/^#+/, '')).filter(Boolean))];
     const scoreText = assessment.review ? `AI chấm ${assessment.review.score}/10` : 'AI chưa chấm được';
     const recommended = assessment.passed && draft.recommended;
@@ -611,7 +647,7 @@ export class AiContentService {
       ...draft,
       // A planned image is created after the post is saved: until then the
       // post is not ready to approve or publish.
-      media: image ? { ...draft.media, status: 'pending' } : draft.media,
+      media: image && !revision ? { ...draft.media, status: 'pending' } : draft.media,
       hashtags: contract.hashtagMode === 'inline' ? hashtags : hashtags.slice(0, contract.maxHashtags),
       recommended,
       reason: reason.slice(0, MAX_REASON_LENGTH),
@@ -632,22 +668,80 @@ export class AiContentService {
     image: PlatformImagePlan,
   ): Promise<GeneratedVariant['media']> {
     try {
-      const brief = await this.withGenerationRetry(() => this.requestStructured(
-        provider,
-        imageBriefInstructions(contract.name, image, contract.language),
-        [
-          brandProfileBlock(brand),
-          `Brief or source:\n${content.body.slice(0, 6_000)}`,
-          `Finished ${contract.name} post:\n${JSON.stringify({ title: draft.title, body: draft.body.slice(0, 4_000) })}`,
-          draft.media.prompt ? `The writer's first idea for the image (improve on it, keep what fits):\n${draft.media.prompt}` : '',
-        ].filter(Boolean).join('\n\n'),
-        IMAGE_BRIEF_SPEC,
-      ));
+      const brief = await this.imageBrief(provider, contract, draft, content, brand, image, draft.media.prompt);
       return { type: 'image', prompt: composeImagePrompt(brief, contract.name, image), altText: brief.altText.slice(0, 300) };
     } catch (error) {
       this.logger.warn(`AI image brief unavailable for ${contract.slug}: ${error instanceof Error ? error.message : String(error)}`);
       return draft.media;
     }
+  }
+
+  private imageBrief(
+    provider: AiProvider,
+    contract: PlatformContract,
+    post: { title: string | null; body: string },
+    content: SourceContent,
+    brand: BrandProfile | null,
+    image: PlatformImagePlan,
+    writerIdea?: string | null,
+  ): Promise<ImageBrief> {
+    return this.withGenerationRetry(() => this.requestStructured(
+      provider,
+      imageBriefInstructions(contract.name, image, contract.language),
+      [
+        brandProfileBlock(brand),
+        `Brief or source:\n${content.body.slice(0, 6_000)}`,
+        `Finished ${contract.name} post:\n${JSON.stringify({ title: post.title, body: post.body.slice(0, 4_000) })}`,
+        writerIdea ? `The writer's first idea for the image (improve on it, keep what fits):\n${writerIdea}` : '',
+      ].filter(Boolean).join('\n\n'),
+      IMAGE_BRIEF_SPEC,
+    ));
+  }
+
+  /**
+   * Image description for a post that already exists (one without an image),
+   * designed from its text by the art director. Unlike new drafts there is no
+   * writer idea to fall back on, so a failure is reported to the caller.
+   */
+  async designImage(
+    ownerId: string,
+    input: { contentId: string; platformSlug: string; post: { title: string | null; body: string }; image: PlatformImagePlan },
+    requestedProvider?: AiProvider,
+  ): Promise<{ prompt: string; altText: string }> {
+    const provider = this.resolveProvider(requestedProvider);
+    await this.assertConfigured(provider);
+    const content = await this.prisma.content.findFirstOrThrow({ where: { id: input.contentId, ownerId } });
+    const brand = await this.brandProfiles?.load() ?? null;
+    const contract = platformContract(input.platformSlug, {
+      sourceText: content.body,
+      defaultLanguage: brand?.defaultLanguage,
+      platformLanguages: brand?.platformLanguages,
+    });
+    const brief = await this.imageBrief(provider, contract, input.post, content, brand, input.image);
+    return { prompt: composeImagePrompt(brief, contract.name, input.image), altText: brief.altText.slice(0, 300) };
+  }
+
+  /**
+   * A new version of one platform's stored draft: the writer revises it from the
+   * operator's instruction and the last review, then it is checked (and
+   * rewritten if needed) like a new draft. The caller stores the result.
+   */
+  async reviseDraft(
+    ownerId: string,
+    input: { contentId: string; platformSlug: string; revision: DraftRevision; image?: PlatformImagePlan | null },
+    requestedProvider?: AiProvider,
+  ): Promise<GeneratedVariant> {
+    const provider = this.resolveProvider(requestedProvider);
+    await this.assertConfigured(provider);
+    const content = await this.prisma.content.findFirstOrThrow({ where: { id: input.contentId, ownerId } });
+    const platform = await this.prisma.platform.findFirst({
+      where: { slug: input.platformSlug },
+      include: { prompts: { where: { active: true }, orderBy: { version: 'desc' }, take: 1 } },
+    });
+    const prompt = platform?.prompts[0];
+    if (!prompt) throw new ApplicationException(ErrorCode.RESOURCE_NOT_FOUND, `No active AI prompt for ${input.platformSlug}`, HttpStatus.NOT_FOUND);
+    const brand = await this.brandProfiles?.load() ?? null;
+    return this.generateChecked(provider, input.platformSlug, prompt.systemPrompt, prompt.userTemplate, content, brand, input.image ?? null, input.revision);
   }
 
   private async assess(
@@ -708,11 +802,13 @@ export class AiContentService {
       brief ? 'Input type: a short marketing brief, not a finished article. Expand it into a complete post using the brand facts and widely known domain knowledge; never invent brand facts.' : '',
       filled,
       brandProfileBlock(options.brand ?? null),
+      options.revision ?? '',
       options.feedback ? `Your previous draft was rejected by the editor. Rewrite it from scratch and fix:\n${options.feedback}` : '',
     ].filter(Boolean).join('\n\n');
     const instructions = [
       systemPrompt,
       options.contract ? contractInstructions(options.contract) : '',
+      options.contract ? qualityInstructions(options.contract, options.engine) : '',
       options.contract ? imageInstructions(options.contract.name, options.image) : '',
     ].filter(Boolean).join('\n\n');
     return this.requestStructured(provider, instructions, input, VARIANT_SPEC);
