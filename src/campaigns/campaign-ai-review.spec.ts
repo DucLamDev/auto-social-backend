@@ -244,3 +244,62 @@ describe('Persistent AI queue recovery', () => {
     expect(prisma.campaign.findFirst).not.toHaveBeenCalled();
   });
 });
+
+
+describe('Restore rejected AI content', () => {
+  it('restores legacy bulk rejections, retaining content and never publishing or regenerating', async () => {
+    const { service, prisma, campaign, ai, campaigns } = setup();
+    prisma.campaign.findFirst.mockResolvedValue({ ...campaign, automationState: 'REJECTED' });
+    await service.restore('owner-1', 'campaign-1');
+    expect(prisma.campaign.findFirst).toHaveBeenCalledWith({ where: { id: 'campaign-1', ownerId: 'owner-1' } });
+    expect(prisma.campaign.updateMany).toHaveBeenCalledWith({ where: { id: 'campaign-1', ownerId: 'owner-1', automationState: 'REJECTED', updatedAt: campaign.updatedAt }, data: { automationState: 'WAITING_REVIEW' } });
+    expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith({ where: {
+      id: { in: ['variant-1'] }, contentId: 'content-1', content: { ownerId: 'owner-1' },
+      status: { in: ['REJECTED', 'GENERATED', 'APPROVED'] }, targets: { none: {} },
+    }, data: { status: 'GENERATED' } });
+    expect(prisma.publishJob.create).not.toHaveBeenCalled();
+    expect(prisma.campaignTarget.create).not.toHaveBeenCalled();
+    expect(campaigns.publish).not.toHaveBeenCalled();
+    expect(ai.generate).not.toHaveBeenCalled();
+  });
+
+  it.each(['WAITING_REVIEW', 'APPROVED', 'REJECTED'])('restores only a rejected, unused platform in a %s review', async (automationState) => {
+    const { service, prisma, campaign } = setup();
+    prisma.campaign.findFirst.mockResolvedValue({ ...campaign, automationState, status: CampaignStatus.COMPLETED, automationVariantIds: ['variant-1', 'variant-2'] });
+    await service.restore('owner-1', 'campaign-1', 'variant-2');
+    expect(prisma.$queryRaw).toHaveBeenCalled();
+    expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith({ where: {
+      id: { in: ['variant-2'] }, contentId: 'content-1', content: { ownerId: 'owner-1' }, status: { in: ['REJECTED'] }, targets: { none: {} },
+    }, data: { status: 'GENERATED' } });
+    expect(prisma.campaign.updateMany).toHaveBeenCalledWith({ where: expect.any(Object) as unknown, data: { automationState: 'WAITING_REVIEW' } });
+    expect(prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses another owner or a variant outside the campaign', async () => {
+    const { service, prisma, campaign } = setup();
+    await expect(service.restore('other-owner', 'campaign-1')).rejects.toThrow('not found');
+    expect(prisma.campaign.findFirst).toHaveBeenCalledWith({ where: { id: 'campaign-1', ownerId: 'other-owner' } });
+    prisma.campaign.findFirst.mockResolvedValue(campaign);
+    await expect(service.restore('owner-1', 'campaign-1', 'foreign-variant')).rejects.toThrow('not part');
+    expect(prisma.contentVariant.updateMany).not.toHaveBeenCalled();
+    expect(prisma.campaign.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each(['PROCESSING', 'QUEUED', 'FAILED', null])('refuses restoration in state %s', async (automationState) => {
+    const { service, prisma, campaign } = setup();
+    prisma.campaign.findFirst.mockResolvedValue({ ...campaign, automationState });
+    await expect(service.restore('owner-1', 'campaign-1')).rejects.toThrow('Only rejected');
+    expect(prisma.contentVariant.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale decision and an already restored or assigned variant', async () => {
+    const { service, prisma, campaign } = setup();
+    prisma.campaign.findFirst.mockResolvedValue(campaign);
+    prisma.campaign.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(service.restore('owner-1', 'campaign-1', 'variant-1')).rejects.toThrow('already changed');
+    expect(prisma.contentVariant.updateMany).not.toHaveBeenCalled();
+    prisma.contentVariant.updateMany.mockResolvedValue({ count: 0 });
+    await expect(service.restore('owner-1', 'campaign-1', 'variant-1')).rejects.toThrow('No rejected, unpublished');
+    expect(prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+});

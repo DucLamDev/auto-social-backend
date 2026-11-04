@@ -527,6 +527,45 @@ export class CampaignAutomationService {
     return this.result(ownerId, id);
   }
 
+  /** Returns rejected drafts to review without regenerating content or creating publish jobs. */
+  async restore(ownerId: string, id: string, variantId?: string) {
+    await this.prisma.$transaction(async (tx) => {
+      // Share the per-platform decision lock; the conditional update also locks out bulk decisions.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 7311))::text`;
+      const current = await tx.campaign.findFirst({ where: { id, ownerId } });
+      if (!current) throw new NotFoundException('Campaign not found');
+      if (!['REJECTED', 'WAITING_REVIEW', 'APPROVED'].includes(current.automationState ?? '')) {
+        throw new ConflictException('Only rejected content can be restored for review');
+      }
+      if (variantId && !current.automationVariantIds.includes(variantId)) {
+        throw new NotFoundException('This draft is not part of the campaign');
+      }
+      const claimed = await tx.campaign.updateMany({
+        where: { id, ownerId, automationState: current.automationState, updatedAt: current.updatedAt },
+        data: { automationState: 'WAITING_REVIEW' },
+      });
+      if (!claimed.count) throw new ConflictException('Campaign review has already changed');
+      // Older bulk rejections changed only the campaign state, leaving drafts GENERATED/APPROVED.
+      const statuses = !variantId && current.automationState === 'REJECTED'
+        ? [VariantStatus.REJECTED, VariantStatus.GENERATED, VariantStatus.APPROVED]
+        : [VariantStatus.REJECTED];
+      const restored = await tx.contentVariant.updateMany({
+        where: {
+          id: { in: variantId ? [variantId] : current.automationVariantIds },
+          contentId: current.contentId, content: { ownerId },
+          status: { in: statuses }, targets: { none: {} },
+        },
+        data: { status: VariantStatus.GENERATED },
+      });
+      if (!restored.count) throw new ConflictException('No rejected, unpublished draft is available to restore');
+    });
+    await this.audit.recordBestEffort({
+      actorId: ownerId, action: 'CAMPAIGN_AI_RESTORED', entityType: 'campaigns', entityId: id,
+      after: { variantId: variantId ?? null, scope: variantId ? 'platform' : 'rejected' },
+    });
+    return this.result(ownerId, id);
+  }
+
   async retry(ownerId: string, id: string) {
     const updated = await this.prisma.campaign.updateMany({
       where: { id, ownerId, automationState: 'FAILED', targets: { none: {} } },

@@ -1,6 +1,11 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.12.0 · 04/11/2026
+### Tính năng
+- Khôi phục nội dung đã từ chối
+  Thêm lệnh khôi phục cả lượt AI hoặc từng bài bị từ chối về chờ duyệt, hỗ trợ cả lượt từ chối cũ. Giữ nguyên nội dung, không tạo lại AI hay tạo việc đăng. Chỉ chủ sở hữu có quyền biên tập được khôi phục bài chưa gắn với việc đăng.
+
 ## 1.11.0 · 04/11/2026
 ### Tính năng
 - Duyệt hoặc từ chối từng bài theo nền tảng
