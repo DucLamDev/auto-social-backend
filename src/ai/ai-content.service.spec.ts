@@ -643,10 +643,25 @@ describe('AiContentService quality-checked generation', () => {
     expect(created[0]).toMatchObject({ body: shortBody, recommended: true, reason: 'Hợp người đọc (AI chấm 8/10)', hashtags: ['vps'] });
   });
 
+  const artBrief = {
+    subject: 'a sleek NVMe server node with glowing cyan drive bays, three identical VPS instances spinning up from it',
+    scene: 'a dark, minimal data-centre aisle fading into depth',
+    composition: 'three-quarter isometric hero view, server centred with safe margins, empty space on the right',
+    lighting: 'cool rim light with soft cyan glow from the drive bays',
+    palette: 'deep navy, indigo, cyan, violet accents',
+    style: 'Premium 3D render.',
+    mood: 'fast, reliable, calm',
+    details: ['light trails from the server to three instance cubes', 'a stopwatch-like ring of light suggesting 60-second setup'],
+    avoid: ['coffee cups', 'cartoon servers'],
+    altText: 'Máy chủ NVMe phát sáng tạo ba máy ảo cùng lúc trong phòng dữ liệu tối.',
+  };
+  const artDirected = (brief: Record<string, unknown> = artBrief) => ({ output_text: JSON.stringify(brief) });
+
   it('asks for an image description only where the post carries an image, and stores the image request', async () => {
     const create = jest.fn()
       .mockResolvedValueOnce(variant(shortBody, { media: { type: 'none', altText: 'Máy chủ VPS trong phòng dữ liệu', prompt: 'A bright NVMe server rack, soft blue light' } }))
-      .mockResolvedValueOnce(reviewed());
+      .mockResolvedValueOnce(reviewed())
+      .mockRejectedValueOnce(Object.assign(new Error('bad request'), { status: 400 }));
     const { service, created } = setup(create);
     const plan = new Map([['bluesky', { need: 'optional' as const, size: '1536x1024' as const, style: 'a simple editorial illustration' }]]);
 
@@ -659,7 +674,50 @@ describe('AiContentService quality-checked generation', () => {
     expect(request(create, 0).instructions).toContain('Look: modern technology');
     expect(request(create, 0).instructions).toContain('60 to 150 words, written like a brief to a designer');
     expect(request(create, 0).instructions).toMatch(/Do not use lifestyle props \(coffee cups, plants/);
+    // The art director failed here, so the writer's own description is kept.
     expect(created[0]!.mediaRecommendation).toEqual({ type: 'image', altText: 'Máy chủ VPS trong phòng dữ liệu', prompt: 'A bright NVMe server rack, soft blue light' });
+  });
+
+  it('has an art director design the image from the finished post and stores the assembled prompt', async () => {
+    const create = jest.fn()
+      .mockResolvedValueOnce(variant(shortBody, { media: { type: 'image', altText: 'Ảnh', prompt: 'A server rack' } }))
+      .mockResolvedValueOnce(reviewed())
+      .mockResolvedValueOnce(artDirected());
+    const { service, created } = setup(create);
+    const plan = new Map([['bluesky', { need: 'optional' as const, size: '1536x1024' as const, style: 'a simple editorial technology illustration' }]]);
+
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai', undefined, plan);
+
+    expect(create).toHaveBeenCalledTimes(3);
+    const director = request(create, 2);
+    expect(director.instructions).toContain('art director');
+    expect(director.instructions).toContain('landscape 3:2');
+    expect(director.instructions).toContain('No clichés');
+    expect(director.text.format.name).toBe('image_brief');
+    expect(director.input).toContain(shortBody);
+    expect(director.input).toContain("The writer's first idea for the image (improve on it, keep what fits):\nA server rack");
+    expect(director.input).toContain('<brand_facts>');
+    const media = created[0]!.mediaRecommendation as { type: string; prompt: string; altText: string };
+    expect(media.type).toBe('image');
+    expect(media.altText).toBe(artBrief.altText);
+    expect(media.prompt.split('\n')).toEqual([
+      'Premium 3D render for a Bluesky post, landscape 3:2 frame.',
+      `Subject: ${artBrief.subject}.`,
+      `Scene: ${artBrief.scene}.`,
+      `Composition: ${artBrief.composition}.`,
+      `Lighting: ${artBrief.lighting}.`,
+      `Colour palette: ${artBrief.palette}.`,
+      `Mood: ${artBrief.mood}.`,
+      `Details: ${artBrief.details.join('; ')}.`,
+      'Avoid: coffee cups, cartoon servers, any text, letters, numbers, logos or watermarks.',
+    ]);
+  });
+
+  it('does not ask the art director when the destination carries no image', async () => {
+    const create = jest.fn().mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed());
+    const { service } = setup(create);
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+    expect(create).toHaveBeenCalledTimes(2);
   });
 
   it('tells a text-only destination not to mention an image and drops any image request', async () => {

@@ -12,6 +12,13 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   mạng…), nhìn kiểu công nghệ hiện đại (nền xanh đậm, ánh sáng xanh / tím, 3D hoặc isometric), mô tả 60–150 từ như brief
   cho designer; không dùng cảnh đời thường (cốc cà phê, cây cảnh) hay phong cảnh. Mọi ảnh, kể cả khi tạo lại với mô tả
   sửa tay, được thêm phần dặn chất lượng (bố cục, ánh sáng, chi tiết, không chữ, không logo).
+- Bước "giám đốc mỹ thuật" thiết kế ảnh từ bài đã viết xong
+  Với kênh có ảnh, sau khi bài viết xong và được chấm, AI làm thêm một lượt riêng để thiết kế ảnh theo khung chuẩn: chủ
+  thể cụ thể của bài, bối cảnh, bố cục hợp khổ ảnh của kênh (chủ thể ở giữa, chừa lề vì feed cắt mép), ánh sáng, bảng màu,
+  phong cách (3D cao cấp, isometric 3D hoặc ảnh sản phẩm điện ảnh), không khí, 3–6 chi tiết gắn với nội dung bài và danh
+  sách cần tránh (chữ, logo, người thật, hình sáo mòn như hacker trùm đầu, mưa mã nhị phân, tên lửa). Mô tả ảnh lưu lại là
+  bản ghép đầy đủ đó (sửa được trước khi Tạo lại ảnh). Lượt thiết kế lỗi thì giữ mô tả do AI viết bài đưa ra, bài không bị
+  lỗi theo.
 - Tạo ảnh bằng GPT Image của OpenAI (tuỳ chọn)
   `AI_IMAGE_PROVIDER=openai` tạo ảnh thẳng bằng OpenAI với `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL` (mặc định `gpt-image-1`)
   và `OPENAI_IMAGE_QUALITY` (mặc định `high`); tính phí theo tài khoản OpenAI. Mặc định vẫn là VPSTTT AI (Codex).

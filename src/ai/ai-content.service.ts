@@ -111,6 +111,26 @@ export interface StructuredSpec<T> {
 }
 
 const VARIANT_SPEC: StructuredSpec<GeneratedVariant> = { name: 'content_variant', jsonSchema: outputSchema, zod: VariantSchema };
+
+const briefText = z.string().trim().min(1);
+const briefList = z.array(z.string().trim().min(1)).transform((items) => items.slice(0, 6));
+/** The art director's design of one image, assembled into the generator prompt by composeImagePrompt. */
+export const ImageBriefSchema = z.object({
+  subject: briefText, scene: briefText, composition: briefText, lighting: briefText,
+  palette: briefText, style: briefText, mood: briefText, details: briefList, avoid: briefList, altText: briefText,
+});
+export type ImageBrief = z.infer<typeof ImageBriefSchema>;
+const IMAGE_BRIEF_FIELDS = ['subject', 'scene', 'composition', 'lighting', 'palette', 'style', 'mood', 'details', 'avoid', 'altText'] as const;
+const IMAGE_BRIEF_SPEC: StructuredSpec<ImageBrief> = {
+  name: 'image_brief',
+  jsonSchema: {
+    type: 'object',
+    additionalProperties: false,
+    required: [...IMAGE_BRIEF_FIELDS],
+    properties: Object.fromEntries(IMAGE_BRIEF_FIELDS.map((field) => [field, field === 'details' || field === 'avoid' ? { type: 'array', items: { type: 'string' } } : { type: 'string' }])),
+  },
+  zod: ImageBriefSchema,
+};
 const REVIEW_SPEC: StructuredSpec<ContentReview> = { name: 'content_review', jsonSchema: reviewJsonSchema, zod: ReviewSchema };
 
 type SourceContent = {
@@ -185,6 +205,47 @@ export function imageInstructions(platformName: string, image?: PlatformImagePla
 function isBrief(content: SourceContent): boolean {
   const analysis = content.aiAnalysis;
   return analysis !== null && typeof analysis === 'object' && !Array.isArray(analysis) && analysis.kind === 'brief';
+}
+
+const shapeOf = (image: PlatformImagePlan) => image.size === '1024x1024' ? 'square 1:1' : image.size === '1536x1024' ? 'landscape 3:2' : 'portrait 2:3';
+
+/**
+ * Instructions for the art director: a second, dedicated pass that designs the
+ * image from the finished post, instead of the one line the writer adds while
+ * writing. Image generators follow a structured brief far more faithfully.
+ */
+export function imageBriefInstructions(platformName: string, image: PlatformImagePlan, language: string): string {
+  return [
+    `You are the art director of a technology company's social media team. Design ONE image for a ${platformName} post so that a reader connects it at a glance to the product being promoted and to this exact post.`,
+    'Return JSON with these fields:',
+    '- subject: the main subject, concrete and specific to the post: the product or service and the technical idea (servers, racks, cloud regions, proxy routes between nodes, network traffic, a terminal or dashboard drawn as abstract shapes). Describe real object types and their details, not metaphors.',
+    '- scene: the environment and background around the subject.',
+    `- composition: framing for a ${shapeOf(image)} image in a feed: one focal point, the camera angle or view (for example three-quarter isometric, low-angle hero shot, close-up with shallow depth of field), depth layers and where the empty space is. Keep the subject centred with safe margins: feeds crop the edges.`,
+    '- lighting: direction, quality and accents of the light.',
+    '- palette: 3 to 5 colours. Use the brand colours if the brand profile names them; otherwise deep navy or indigo with cyan and violet accents.',
+    `- style: one rendering style that fits ${image.style}: a premium 3D render, an isometric 3D illustration or a cinematic product photograph. Never flat clip-art or cartoon.`,
+    '- mood: two or three words.',
+    '- details: 3 to 6 small concrete details tying the image to this post. Turn figures into visible quantities (three server nodes, a doubled data stream), never written digits.',
+    '- avoid: what would look cheap or mislead for this post.',
+    `- altText: one sentence in ${language === 'vi' ? 'Vietnamese' : 'English'} describing the image for screen readers.`,
+    'Rules: write every field except altText in English. No text, letters, numbers, logos, brand marks, interface text, real people or faces. No clichés: hooded hacker, binary-code rain, glowing brain, handshake, rocket launch, generic gears, a padlock unless the post is about security. No lifestyle props (coffee cups, plants, wooden desks, printed photos) and no landscapes or nature metaphors. Hardware must look physically plausible and modern.',
+  ].join('\n');
+}
+
+/** The prompt sent to the image generator, built from the art director's brief. */
+export function composeImagePrompt(brief: ImageBrief, platformName: string, image: PlatformImagePlan): string {
+  const line = (label: string, text: string) => `${label}: ${text.replace(/\s+/g, ' ').trim().replace(/[.;]+$/, '')}.`;
+  return [
+    `${brief.style.replace(/[.;]+$/, '')} for a ${platformName} post, ${shapeOf(image)} frame.`,
+    line('Subject', brief.subject),
+    line('Scene', brief.scene),
+    line('Composition', brief.composition),
+    line('Lighting', brief.lighting),
+    line('Colour palette', brief.palette),
+    line('Mood', brief.mood),
+    brief.details.length ? line('Details', brief.details.join('; ')) : '',
+    line('Avoid', [...brief.avoid, 'any text, letters, numbers, logos or watermarks'].join(', ')),
+  ].filter(Boolean).join('\n').slice(0, 3_000);
 }
 
 /**
@@ -526,6 +587,7 @@ export class AiContentService {
       draft = await write(rewriteFeedback(assessment.issues, assessment.review));
       assessment = await this.assess(provider, draft, contract, content, brand);
     }
+    if (image) draft = { ...draft, media: await this.directImage(provider, contract, draft, content, brand, image) };
     const hashtags = [...new Set(draft.hashtags.map((tag) => tag.trim().replace(/^#+/, '')).filter(Boolean))];
     const scoreText = assessment.review ? `AI chấm ${assessment.review.score}/10` : 'AI chưa chấm được';
     const recommended = assessment.passed && draft.recommended;
@@ -544,6 +606,38 @@ export class AiContentService {
       recommended,
       reason: reason.slice(0, MAX_REASON_LENGTH),
     };
+  }
+
+  /**
+   * Designs the image from the finished post. If the art director is
+   * unavailable, the writer's own description is kept: the post never fails
+   * because of its image.
+   */
+  private async directImage(
+    provider: AiProvider,
+    contract: PlatformContract,
+    draft: GeneratedVariant,
+    content: SourceContent,
+    brand: BrandProfile | null,
+    image: PlatformImagePlan,
+  ): Promise<GeneratedVariant['media']> {
+    try {
+      const brief = await this.withGenerationRetry(() => this.requestStructured(
+        provider,
+        imageBriefInstructions(contract.name, image, contract.language),
+        [
+          brandProfileBlock(brand),
+          `Brief or source:\n${content.body.slice(0, 6_000)}`,
+          `Finished ${contract.name} post:\n${JSON.stringify({ title: draft.title, body: draft.body.slice(0, 4_000) })}`,
+          draft.media.prompt ? `The writer's first idea for the image (improve on it, keep what fits):\n${draft.media.prompt}` : '',
+        ].filter(Boolean).join('\n\n'),
+        IMAGE_BRIEF_SPEC,
+      ));
+      return { type: 'image', prompt: composeImagePrompt(brief, contract.name, image), altText: brief.altText.slice(0, 300) };
+    } catch (error) {
+      this.logger.warn(`AI image brief unavailable for ${contract.slug}: ${error instanceof Error ? error.message : String(error)}`);
+      return draft.media;
+    }
   }
 
   private async assess(
