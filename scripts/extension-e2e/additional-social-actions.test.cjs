@@ -37,7 +37,8 @@ test('Minds refuses a group destination and preserves existing drafts', async ()
   const page = await pageAt('https://www.minds.com/newsfeed/subscriptions');
   const job = { recipe: EXTENSION_RECIPES.minds, targetOrigin: 'https://www.minds.com', openUrl: page.url(), post, autoSubmit: true };
   await page.setContent('<m-composer__modal>Another Group<m-composer__textarea><textarea class="m-composerTextarea__message">Existing draft</textarea></m-composer__textarea><button>Post</button></m-composer__modal>');
-  assert.equal((await page.evaluate(fill, job)).status, 'notReady');
+  // A wrong destination waits for the operator (NEEDS_ACTION); the editor itself was found.
+  assert.equal((await page.evaluate(fill, job)).status, 'filled');
   assert.equal(await page.locator('textarea').inputValue(), 'Existing draft');
   await page.close();
 });
@@ -76,16 +77,28 @@ test('DZone opens More and submits to moderation without saving a draft or publi
   await page.close();
 });
 
-test('Differ selects a keyword chip and clicks its unique Publish control', async () => {
+test('Differ pastes a multi-line Markdown post as rich content, selects a keyword chip and clicks its unique Publish control', async () => {
   const page = await pageAt('https://differ.blog/new-story');
+  // Differ's editor is MDXEditor (Lexical): it builds headings, lists and code
+  // blocks from pasted HTML, while typed text would stay raw Markdown on one line.
+  const body = '## Bước 1: cài Nginx\n\nCài gói từ kho chính thức rồi bật dịch vụ.\n\n- Mở cổng 80 và 443\n- Kiểm tra bằng `nginx -t`\n\n```bash\nsudo systemctl enable --now nginx\n```\n\nĐọc thêm [hướng dẫn](https://nginx.org/en/docs/) khi cần.';
+  const bodyHtml = '<h2>Bước 1: cài Nginx</h2><p>Cài gói từ kho chính thức rồi bật dịch vụ.</p><ul><li>Mở cổng 80 và 443</li><li>Kiểm tra bằng <code>nginx -t</code></li></ul>'
+    + '<pre><code class="language-bash">sudo systemctl enable --now nginx\n</code></pre><p>Đọc thêm <a href="https://nginx.org/en/docs/">hướng dẫn</a> khi cần.</p>';
   await page.evaluate(() => {
-    window.sent = 0;
+    window.sent = [];
     document.body.innerHTML = '<textarea name="title"></textarea><div contenteditable="true" aria-label="editable markdown"></div><input class="rs__input" role="combobox"><button>Publish</button><button id="post-submit-button">Publish</button>';
+    const editor = document.querySelector('[contenteditable]');
+    editor.addEventListener('paste', event => { event.preventDefault(); editor.innerHTML = event.clipboardData.getData('text/html'); });
     document.querySelector('input').oninput = () => { const option = document.createElement('div'); option.setAttribute('role', 'option'); option.textContent = 'nginx'; document.body.append(option); option.onclick = () => { option.removeAttribute('role'); option.className = 'rs__multi-value'; }; };
-    document.querySelector('#post-submit-button').onclick = () => window.sent++;
+    document.querySelector('#post-submit-button').onclick = () => window.sent.push(editor.innerHTML);
   });
-  const result = await page.evaluate(fill, { recipe: EXTENSION_RECIPES.differ, targetOrigin: 'https://differ.blog', post, autoSubmit: true, options: { tags: ['nginx'] } });
-  assert.equal(result.status, 'submitted', JSON.stringify(result)); assert.equal(await page.evaluate(() => window.sent), 1); await page.close();
+  const result = await page.evaluate(fill, { recipe: { ...EXTENSION_RECIPES.differ, inputMode: 'pasteHtml' }, targetOrigin: 'https://differ.blog', autoSubmit: true, options: { tags: ['nginx'] },
+    post: { title: 'Cài Nginx trên Ubuntu 24.04', body, bodyHtml, maxChars: null, length: body.length, language: 'vi' } });
+  assert.equal(result.status, 'submitted', JSON.stringify(result));
+  const sent = await page.evaluate(() => window.sent);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0], bodyHtml, 'the editor holds the rendered post, not raw Markdown');
+  await page.close();
 });
 
 for (const engine of ['lemmy', 'discuit']) test(`${engine} selects the configured community before publishing`, async () => {
@@ -260,7 +273,7 @@ test('daily.dev keeps a saved draft and stops before Post when auto-submit is of
   const page = await pageAt('https://daily.dev/squads/create');
   await dailyDevComposer(page, 'My own unfinished draft');
   const job = { recipe: EXTENSION_RECIPES.dailydev, targetOrigin: 'https://daily.dev', openUrl: 'https://daily.dev/squads/create', post, autoSubmit: true };
-  assert.equal((await page.evaluate(fill, job)).status, 'notReady');
+  assert.equal((await page.evaluate(fill, job)).status, 'draft');
   assert.equal(await page.locator('textarea').inputValue(), 'My own unfinished draft');
   await dailyDevComposer(page);
   assert.equal((await page.evaluate(fill, { ...job, autoSubmit: false })).status, 'filled');

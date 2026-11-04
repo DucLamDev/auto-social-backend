@@ -13,11 +13,12 @@ import { AiModule } from '../ai/ai.module';
 import { QueueModule } from '../queue/queue.module';
 import { ExtensionUiRecoveryService } from './ui-recovery/ui-recovery.service';
 import { ExtensionSelectorSuggestionService } from './ui-recovery/selector-suggestion.service';
+import { ExtensionFormFillService } from './ui-recovery/form-fill.service';
 
 @Module({
   imports: [CampaignsModule, StorageModule, AiModule, QueueModule],
   controllers: [ExtensionController, ExtensionAgentController, ExtensionLoginCheckController, ExtensionLoginCheckAgentController, AccountImportController],
-  providers: [ExtensionAgentService, ExtensionDeviceGuard, ExtensionAccountSessionService, ExtensionLoginCheckService, AccountImportService, ExtensionUiRecoveryService, ExtensionSelectorSuggestionService],
+  providers: [ExtensionAgentService, ExtensionDeviceGuard, ExtensionAccountSessionService, ExtensionLoginCheckService, AccountImportService, ExtensionUiRecoveryService, ExtensionSelectorSuggestionService, ExtensionFormFillService],
   exports: [ExtensionAgentService, ExtensionLoginCheckService, ExtensionSelectorSuggestionService],
 })
 export class ExtensionAgentModule {}

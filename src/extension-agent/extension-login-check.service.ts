@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { freshTotp } from '../auth/totp-provider';
-import { movedUrl, object, sessionOf, sessionScope } from './extension-account-session.service';
+import { isRegistrationPage, movedUrl, object, sessionOf, sessionScope } from './extension-account-session.service';
 import type { AuthenticatedDevice } from './extension-agent.service';
 import { ExtensionAuthStepDto } from './extension-agent.dto';
 import { extensionFlowAudit } from '../connectors/extension/extension-flow-audit';
@@ -24,7 +25,8 @@ export function loginSession(settings: unknown, method = 'configured') {
 
 @Injectable()
 export class ExtensionLoginCheckService {
-  constructor(private readonly prisma: PrismaService, private readonly credentials: CredentialsService) {}
+  constructor(private readonly prisma: PrismaService, private readonly credentials: CredentialsService,
+    @Optional() private readonly config?: ConfigService) {}
 
   async deviceStatus(device: AuthenticatedDevice) {
     const checks = await this.prisma.extensionLoginCheck.findMany({ where: { deviceId: device.id, account: { ownerId: device.ownerId } },
@@ -36,11 +38,12 @@ export class ExtensionLoginCheckService {
     const accounts = await this.prisma.platformAccount.findMany({ where: { ownerId },
       select: { id: true, name: true, settings: true, platform: { select: { name: true, slug: true } },
         extensionLoginChecks: { orderBy: { createdAt: 'desc' }, take: 50 } }, orderBy: { name: 'asc' } });
+    const formFill = this.config?.get<boolean>('EXTENSION_AI_FORM_FILL_ENABLED') === true;
     return accounts.filter(a => object(object(a.settings).extensionImport).selected !== false && (object(a.settings).extensionImport || sessionOf(a.settings))).map(a => ({
       id: a.id, name: a.name, platform: a.platform.name, configured: Boolean(sessionOf(a.settings)), autoLogin: Boolean(sessionOf(a.settings)?.autoLogin),
       issues: object(object(a.settings).extensionImport).issues ?? [],
       deviceId: sessionOf(a.settings)?.deviceId, check: a.extensionLoginChecks[0] ?? null,
-      posting: extensionFlowAudit(a.platform.slug, a.settings),
+      posting: extensionFlowAudit(a.platform.slug, a.settings, { formFill }),
       attempts: ['password', 'google'].map(method => ({ method,
         available: object(object(object(a.settings).extensionLoginMethods)[method]).available === true,
         check: a.extensionLoginChecks.find(c => !c.verifyOnly && c.method === method) ?? null,
@@ -140,6 +143,7 @@ export class ExtensionLoginCheckService {
     try { url = new URL(dto.pageUrl); } catch { throw new BadRequestException('Invalid login URL'); }
     const allowed = auth.provider === 'google' ? ['https://accounts.google.com'] : [auth.origin, ...(auth.allowedOrigins ?? [])];
     if (!auth.autoLogin || url.username || url.password || !allowed.includes(url.origin)) throw new BadRequestException('Login origin does not match this account');
+    if (isRegistrationPage(url)) throw new BadRequestException('This page is a sign-up form, not a login form; sign in manually in this Chrome profile');
     if (dto.step === 'totp' && !auth.autoTotp) throw new BadRequestException('No TOTP configured');
     const stored = await this.credentials.resolve(check.platformAccountId);
     const secret = !check.method || check.method === 'configured' ? object(stored.extensionLogin) : object(object(stored.extensionLoginMethods)[check.method]);

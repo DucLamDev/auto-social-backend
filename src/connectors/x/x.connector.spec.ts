@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
-import { POST_MEDIA_MANAGED_STORAGE, PostMedia } from '../core/connector.types';
+import { POST_MEDIA_MANAGED_STORAGE, PostMedia, PostPayload } from '../core/connector.types';
 import { XConnector } from './x.connector';
+
+/** validate() throws synchronously; run it as the publisher does, inside a promise. */
+const validated = (connector: { validate(post: PostPayload): Promise<void> }, post: PostPayload) => Promise.resolve().then(() => connector.validate(post));
+
 
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]);
 const account = { id: 'account-1', username: 'vpsttt', settings: {}, credentials: { accessToken: 'x-token' } }; // vpsttt-secretscan: ignore (token giả cho test)
@@ -50,5 +54,19 @@ describe('X connector images', () => {
     jest.spyOn(global, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({ title: 'Forbidden' }), { status: 403, headers: { 'content-type': 'application/json' } }));
     const connector = new XConnector({ get: jest.fn().mockResolvedValue(png) } as never);
     await expect(connector.publish(account, { body: 'VPS NVMe', media: [image()], idempotencyKey: 'job-4' })).rejects.toMatchObject({ code: expect.stringMatching(/PLATFORM_/) as unknown });
+  });
+});
+
+describe('X connector length check', () => {
+  const connector = new XConnector();
+
+  it('counts the way X does: links are 23 and letters with Vietnamese diacritics are 2', async () => {
+    // 300 UTF-16 units, but X counts the link as 23.
+    await expect(validated(connector, { body: `${'a'.repeat(200)} https://vpsttt.vn/${'b'.repeat(80)}`, idempotencyKey: 'k' })).resolves.toBeUndefined();
+    await expect(validated(connector, { body: 'ạ'.repeat(141), idempotencyKey: 'k' })).rejects.toMatchObject({
+      code: 'PLATFORM_CONTENT_REJECTED',
+      message: 'Bài X dài 282/280 ký tự, vượt giới hạn của nền tảng. Rút gọn trước khi duyệt hoặc đăng.',
+    });
+    await expect(validated(connector, { body: '  ', idempotencyKey: 'k' })).rejects.toMatchObject({ code: 'PLATFORM_CONTENT_REJECTED' });
   });
 });

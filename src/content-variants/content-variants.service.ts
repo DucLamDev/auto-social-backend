@@ -1,9 +1,21 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { ContentStatus, Prisma, VariantStatus } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
-import { isExtensionDelivery, parseExtensionDeliverySettings, type ExtensionEngine } from '../connectors/extension/extension-delivery';
-import { variantPreview } from './variant-preview';
+import { platformContract } from '../platforms/platform-contract';
+import { checkPostLength, postLengthMessage } from '../platforms/post-length';
+import type { PostTextInput } from '../platforms/post-text';
+import { previewRoute, variantPreview, type PreviewRoute } from './variant-preview';
 import { CreateContentVariantDto } from './dto/create-content-variant.dto';
+
+/**
+ * Refuses a post its platform would not take. A variant is written per
+ * platform, so it is checked the way the platform's default posting route
+ * counts it; approval checks again for each account's own route.
+ */
+function assertFitsPlatform(platformSlug: string, post: PostTextInput, canonicalUrl: string | null): void {
+  const length = checkPostLength({ ...post, platformSlug, canonicalUrl });
+  if (length.over) throw new BadRequestException(postLengthMessage(platformContract(platformSlug).name, length));
+}
 
 const variantInclude = {
   platform: { select: { slug: true, name: true } },
@@ -25,12 +37,14 @@ export class ContentVariantsService {
     return this.prisma.$transaction(async (transaction) => {
       const content = await transaction.content.findFirstOrThrow({
         where: { id: dto.contentId, ownerId },
-        select: { id: true },
+        select: { id: true, canonicalUrl: true },
       });
       const platform = await transaction.platform.findFirstOrThrow({
         where: { slug: platformSlug, enabled: true },
         select: { id: true },
       });
+      const title = dto.title?.trim() || null;
+      assertFitsPlatform(platformSlug, { title, body, hashtags }, content.canonicalUrl);
 
       // Updating the parent row serializes concurrent manual creates for the
       // same content before calculating the next per-platform version.
@@ -47,7 +61,7 @@ export class ContentVariantsService {
         data: {
           contentId: content.id,
           platformId: platform.id,
-          title: dto.title?.trim() || null,
+          title,
           body,
           hashtags,
           recommended: true,
@@ -74,6 +88,7 @@ export class ContentVariantsService {
     id: string,
     data: Prisma.ContentVariantUpdateManyMutationInput,
   ) {
+    await this.assertEditFits(ownerId, id, data);
     const updated = await this.prisma.contentVariant.updateMany({
       where: {
         id,
@@ -93,6 +108,25 @@ export class ContentVariantsService {
   }
 
   /**
+   * An edit of the text or hashtags, or an approval, must leave a post its
+   * platform accepts. Other edits (summary, a rejection) are not blocked by
+   * an older post that is too long.
+   */
+  private async assertEditFits(ownerId: string, id: string, data: Prisma.ContentVariantUpdateManyMutationInput): Promise<void> {
+    const body = typeof data.body === 'string' ? data.body : undefined;
+    const hashtags = Array.isArray(data.hashtags) ? data.hashtags : undefined;
+    if (body === undefined && hashtags === undefined && data.status !== VariantStatus.APPROVED) return;
+    const variant = await this.prisma.contentVariant.findFirst({
+      where: { id, content: { ownerId } },
+      select: { title: true, body: true, hashtags: true, platform: { select: { slug: true } }, content: { select: { canonicalUrl: true } } },
+    });
+    // A missing or foreign variant is reported by the update itself.
+    if (!variant) return;
+    const title = typeof data.title === 'string' || data.title === null ? data.title : variant.title;
+    assertFitsPlatform(variant.platform.slug, { title, body: body ?? variant.body, hashtags: hashtags ?? variant.hashtags }, variant.content.canonicalUrl);
+  }
+
+  /**
    * The post as its destination will show it, for the review preview. Unsaved
    * edits can be passed in; an account of the same platform picks its posting
    * route (for example the Chrome extension flow) when it has one.
@@ -102,21 +136,20 @@ export class ContentVariantsService {
       where: { id, content: { ownerId } },
       select: { title: true, body: true, hashtags: true, platformId: true, platform: { select: { slug: true } }, content: { select: { canonicalUrl: true } } },
     });
-    let engine: ExtensionEngine | undefined;
+    let route: PreviewRoute | undefined;
     if (input.platformAccountId) {
       const account = await this.prisma.platformAccount.findFirst({
         where: { id: input.platformAccountId, ownerId, platformId: variant.platformId },
         select: { settings: true },
       });
-      if (account && isExtensionDelivery(account.settings)) {
-        try { engine = parseExtensionDeliverySettings(account.settings).engine; } catch { /* invalid route: platform default */ }
-      }
+      // An invalid extension route falls back to the platform default.
+      if (account) route = previewRoute(account.settings);
     }
     return variantPreview({
       title: input.title ?? variant.title,
       body: input.body ?? variant.body,
       hashtags: input.hashtags ? this.normalizeHashtags(input.hashtags) : variant.hashtags,
-    }, variant.platform.slug, engine, variant.content.canonicalUrl);
+    }, variant.platform.slug, undefined, variant.content.canonicalUrl, route);
   }
 
   private normalizeHashtags(values: string[]): string[] {

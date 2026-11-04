@@ -20,6 +20,7 @@ import { CredentialsService } from '../credentials/credentials.service';
 import { hasUsableBrowserStorageState } from '../connectors/browser/browser-session-readiness';
 import { ConnectorRegistryService } from '../connectors/core/connector-registry.service';
 import { isExtensionDelivery } from '../connectors/extension/extension-delivery';
+import { checkPostLength, deliveryEngine, postLengthMessage } from '../platforms/post-length';
 import { CONTENT_REVIEW_REQUIRED_CODE } from '../publishing/publishing.constants';
 import { MediaService } from '../media/media.service';
 import { rewriteRunning } from '../content-variants/variant-rewrite.service';
@@ -71,10 +72,36 @@ type ReviewAccount = ConnectedAccount & { name: string; platform: ConnectedAccou
 /** A campaign account left out of an approval, with the reason shown to the reviewer. */
 type SkippedAccount = { id: string; name: string; platform: string; reason: AccountBlocker; reasonLabel: string };
 
-type ReviewOutcome = { skippedAccounts: SkippedAccount[]; waitingVariantIds: string[] };
+/** A draft one of its accounts could not post because it is over the character limit. */
+type OverLimitVariant = { id: string; platform: string; length: number; maxChars: number; message: string };
+
+type ReviewOutcome = { skippedAccounts: SkippedAccount[]; waitingVariantIds: string[]; overLimitVariants?: OverLimitVariant[] };
 
 function skippedAccount(account: ReviewAccount, reason: AccountBlocker): SkippedAccount {
   return { id: account.id, name: account.name, platform: account.platform.name, reason, reasonLabel: ACCOUNT_BLOCKER_LABELS[reason] };
+}
+
+type LengthDraft = { id: string; platformId: string; title: string | null; body: string; hashtags: string[] };
+
+/**
+ * Drafts too long for at least one of the accounts that would post them,
+ * each counted the way that account's route counts (an extension account
+ * like its engine), with the source line the system adds.
+ */
+function overLimitDrafts(drafts: readonly LengthDraft[], accounts: readonly ReviewAccount[], canonicalUrl: string | null): OverLimitVariant[] {
+  const result: OverLimitVariant[] = [];
+  for (const draft of drafts) {
+    for (const account of accounts.filter((item) => item.platformId === draft.platformId)) {
+      const length = checkPostLength({
+        title: draft.title ?? null, body: draft.body, hashtags: draft.hashtags ?? [],
+        platformSlug: account.platform.slug, engine: deliveryEngine(account.settings), canonicalUrl,
+      });
+      if (!length.over) continue;
+      result.push({ id: draft.id, platform: account.platform.name, length: length.length, maxChars: length.maxChars!, message: postLengthMessage(account.platform.name, length) });
+      break;
+    }
+  }
+  return result;
 }
 
 /** "Chưa có tài khoản nào sẵn sàng…" naming every account of the held platforms and why. */
@@ -469,6 +496,13 @@ export class CampaignAutomationService {
     const { ready: accounts, blocked } = await this.reviewAccounts(ownerId, request.platformAccountIds);
     // An account went offline since the run: post with the others, leave it out (or keep its draft waiting).
     if (blocked.length || accounts.length !== new Set(request.platformAccountIds).size) return this.decideVariants(ownerId, id, 'approve', dto);
+    const canonicalUrl = await this.canonicalUrlOf(ownerId, campaign.contentId);
+    const drafts = await this.prisma.contentVariant.findMany({
+      where: { id: { in: campaign.automationVariantIds }, contentId: campaign.contentId },
+      select: { id: true, platformId: true, title: true, body: true, hashtags: true },
+    });
+    // A post too long for one of its accounts keeps waiting; the others are posted.
+    if (overLimitDrafts(drafts, accounts, canonicalUrl).length) return this.decideVariants(ownerId, id, 'approve', dto);
     await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.campaign.updateMany({
         where: { id, ownerId, status: CampaignStatus.DRAFT, automationState: 'WAITING_REVIEW' },
@@ -482,6 +516,9 @@ export class CampaignAutomationService {
       if (variants.length !== campaign.automationVariantIds.length || accounts.some((account) => !byPlatform.get(account.platformId)?.body.trim())) {
         throw new ConflictException('Every destination needs a non-empty generated variant. Review the content again.');
       }
+      // Edited since the check above: refuse rather than send a post the site rejects.
+      const tooLong = overLimitDrafts(variants, accounts, canonicalUrl);
+      if (tooLong.length) throw new BadRequestException(tooLong.map((variant) => variant.message).join(' '));
       await tx.contentVariant.updateMany({ where: { id: { in: variants.map((variant) => variant.id) } }, data: { status: VariantStatus.APPROVED } });
       for (const account of accounts) {
         const variant = byPlatform.get(account.platformId)!;
@@ -554,7 +591,7 @@ export class CampaignAutomationService {
           : rewriteRunning(undecidedDrafts[0]!.aiRevision) ? 'AI đang viết lại bài này; duyệt khi bài mới xong.' : 'Ảnh của bài này đang được tạo; duyệt khi ảnh xong.');
       }
       if (action === 'approve') {
-        const approvable = pending.filter((variant) => accounts.some((account) => account.platformId === variant.platformId));
+        let approvable = pending.filter((variant) => accounts.some((account) => account.platformId === variant.platformId));
         const held = pending.filter((variant) => !approvable.includes(variant));
         if (!approvable.length) {
           const heldPlatforms = new Set(held.map((variant) => variant.platformId));
@@ -562,6 +599,17 @@ export class CampaignAutomationService {
         }
         for (const variant of approvable) {
           if (!variant.body.trim()) throw new ConflictException('A draft is empty. Edit it before approving.');
+        }
+        // A post the site would refuse as too long is never sent: approving it
+        // alone is refused, "approve all" leaves it waiting and posts the others.
+        const { canonicalUrl } = await tx.content.findFirstOrThrow({ where: { id: current.contentId, ownerId }, select: { canonicalUrl: true } });
+        const tooLong = overLimitDrafts(approvable, accounts, canonicalUrl ?? null);
+        if (tooLong.length) {
+          if (variantId || tooLong.length === approvable.length) throw new BadRequestException(tooLong.map((variant) => variant.message).join(' '));
+          const tooLongIds = new Set(tooLong.map((variant) => variant.id));
+          held.push(...approvable.filter((variant) => tooLongIds.has(variant.id)));
+          approvable = approvable.filter((variant) => !tooLongIds.has(variant.id));
+          outcome.overLimitVariants = tooLong;
         }
         const approvedPlatforms = new Set(approvable.map((variant) => variant.platformId));
         outcome.skippedAccounts = blocked.filter((account) => approvedPlatforms.has(account.platformId))
@@ -608,6 +656,7 @@ export class CampaignAutomationService {
         variantId: variantId ?? null, scope: variantId ? 'platform' : 'remaining', trigger,
         ...(outcome.skippedAccounts.length ? { skippedAccountIds: outcome.skippedAccounts.map((account) => account.id) } : {}),
         ...(outcome.waitingVariantIds.length ? { waitingVariantIds: outcome.waitingVariantIds } : {}),
+        ...(outcome.overLimitVariants?.length ? { overLimitVariantIds: outcome.overLimitVariants.map((variant) => variant.id) } : {}),
       },
     });
     if (publishDraft) {
@@ -1037,6 +1086,11 @@ export class CampaignAutomationService {
       requestId,
     });
     return this.result(ownerId, campaign.id);
+  }
+
+  private async canonicalUrlOf(ownerId: string, contentId: string): Promise<string | null> {
+    const content = await this.prisma.content.findFirstOrThrow({ where: { id: contentId, ownerId }, select: { canonicalUrl: true } });
+    return content.canonicalUrl ?? null;
   }
 
   private async result(ownerId: string, campaignId: string, review?: ReviewOutcome) {

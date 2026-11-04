@@ -1,6 +1,7 @@
 // Service worker: polls the backend for posts, drives forum tabs and reports
-// the outcome. One publishing flow runs at a time, with a bounded number of
-// owned tabs waiting for the operator (CAPTCHA, "check then click Post").
+// the outcome. Up to two publishing flows run at once, always on different
+// sites. Tabs left for the operator (CAPTCHA, "check then click Post", a failed
+// post kept open) do not hold a flow and are released after 10 minutes.
 // State lives in chrome.storage because MV3 service workers stop when idle.
 import { canFillPage, fillAndSubmit, readErrors, readModeration, readPublishedPost } from './page-actions.js';
 import { fillSocialAndSubmit, readSocialPublishedPost } from './social-actions.js';
@@ -8,6 +9,7 @@ import { accountAuthStep } from './auth-actions.js';
 import { submitDiscoursePost } from './discourse-session.js';
 import { showPublishNotice } from './publish-notice.js';
 import { collectUiCandidates, verifyUiSelectors } from './ui-recovery.js';
+import { applyFormActions, collectFormControls } from './form-fill.js';
 import { applyProxy, PROXY_STORAGE_KEY, registerProxyAuth } from './proxy.js';
 
 // The proxy's login prompt can arrive before anything else wakes the worker.
@@ -23,15 +25,20 @@ const PROFILE_VERIFY_MS = 60_000;
 const ERROR_CHECK_AFTER_MS = 12_000;
 // An error banner must still be there this long after it was first seen.
 const ERROR_CONFIRM_MS = 8_000;
-const WAIT_USER_MS = 30 * 60_000;
-// After a submission the tab is only kept for a late confirmation.
-const AFTER_SUBMIT_WAIT_MS = 10 * 60_000;
-// Keep drafts/challenges available, but stop claiming when the tab budget is
-// exhausted. Never release an open tab and then keep opening replacements.
-const MAX_OWNED_TABS = 3;
+// A tab waiting for the operator (draft to check, CAPTCHA, sign-in, a failed or
+// unconfirmed post kept open) is tracked this long, then closed and forgotten so
+// its site no longer blocks the queue. The post stays on the web under "Cần thao tác".
+const WAIT_USER_MS = 10 * 60_000;
+// Waiting tabs do not hold a flow; this only bounds how many tabs one Chrome owns.
+const MAX_OWNED_TABS = 8;
 const MAX_REPORT_MESSAGE = 450;
-const MAX_ACTIVE_FLOWS = 1;
+// Concurrent publishing flows, each on a different site (origin).
+const MAX_ACTIVE_FLOWS = 2;
+// Phases that hold one of the MAX_ACTIVE_FLOWS slots. Waiting tabs never do.
+const FLOW_PHASES = ['loading', 'authenticating', 'filling', 'submitted', 'verifying', 'reporting'];
 const MAX_LOGIN_CHECKS = 1;
+// Fields reported back for a publish job; the backend refuses unknown ones.
+const TASK_RESULT_FIELDS = ['url', 'reason', 'message', 'detectedUsername', 'googleBlocked'];
 // When a post finishes or is handed to the operator, ask for the next one
 // shortly instead of waiting up to 30 seconds for the alarm.
 const NEXT_JOB_DELAY_MS = 1_000;
@@ -41,6 +48,13 @@ const MAX_UI_HINT_ROUNDS = 2;
 const UI_HINT_POLL_MS = 2_000;
 const UI_HINT_WAIT_MS = 90_000;
 const UI_HINT_FIELDS = ['title', 'body', 'submit', 'opener'];
+// AI form-fill for required controls the recipe does not know (community,
+// language, rules checkbox…): ask, poll, apply, then verify once more.
+const MAX_FORM_FILL_ROUNDS = 2;
+const FORM_FILL_POLL_MS = 2_000;
+const FORM_FILL_WAIT_MS = 60_000;
+const FORM_FILL_UNSURE = 'AI chưa điền chắc chắn các mục bắt buộc; mở tab để kiểm và bấm Đăng.';
+const FORM_ACTIONS = { select: ['select'], checkbox: ['check', 'uncheck'], radio: ['check'], combobox: ['select', 'type'], text: ['type'] };
 // A Google-login account on a page that only offers the site's own form: give a
 // late-rendered Google button this long before reporting it.
 const NO_GOOGLE_GRACE_MS = 6_000;
@@ -80,7 +94,14 @@ function isPostSubmit(task) {
 function isWaiting(task) {
   return task.phase === 'waitingUser' || task.phase === 'waitingAuth';
 }
+
+/** Holds one of the MAX_ACTIVE_FLOWS slots: not waiting, not already reported as failed. */
+function occupiesFlow(task) {
+  return FLOW_PHASES.includes(task.phase);
+}
 const authenticating = new Set();
+// Publish jobs signing in through Google right now (one at a time per Chrome).
+const googleSignIns = new Set();
 
 // ---- storage helpers --------------------------------------------------------
 
@@ -173,6 +194,21 @@ async function api(path, body, method = 'POST') {
 }
 
 /**
+ * The result body of a publish job: only the fields the backend accepts, and
+ * optional ones only when they carry something (an empty username or
+ * `googleBlocked: false` made older backends refuse the whole report).
+ */
+function taskResult(outcome, extra) {
+  const body = { outcome };
+  for (const field of TASK_RESULT_FIELDS) {
+    const value = extra[field];
+    if (field === 'googleBlocked') { if (value === true) body.googleBlocked = true; continue; }
+    if (typeof value === 'string' && value.trim()) body[field] = field === 'detectedUsername' ? value.trim().slice(0, 200) : value;
+  }
+  return body;
+}
+
+/**
  * True once retrying is pointless: delivered, or refused by the backend (4xx,
  * e.g. the job was already finished on the web). False on transient failures.
  */
@@ -184,7 +220,7 @@ async function report(task, outcome, extra = {}) {
     if (task.job.kind === 'LOGIN_CHECK') {
       await api(`login-checks/${task.job.jobId}/result`, { outcome, message: extra.message,
         detectedUsername: extra.detectedUsername, googleBlocked: extra.googleBlocked });
-    } else await api(`tasks/${task.job.jobId}/result`, { outcome, ...extra });
+    } else await api(`tasks/${task.job.jobId}/result`, taskResult(outcome, extra));
     await log({ jobId: task.job.jobId, account: task.job.account.name, platform: task.job.account.platform, outcome, ...extra });
     return true;
   } catch (error) {
@@ -222,6 +258,14 @@ async function start(job, waitForFill = true) {
     await report({ job }, 'FAILED', { reason: 'PERMISSION_REQUIRED', message: `Tiện ích chưa được cấp quyền cho ${job.targetOrigin}. Mở Cài đặt → Cấp quyền diễn đàn.` });
     return;
   }
+  // The backend counts the body the way the destination does. A post over the
+  // limit is never typed (the site would cut or refuse it): no tab is opened.
+  const post = job.kind === 'LOGIN_CHECK' ? null : job.post;
+  if (post && post.maxChars != null && typeof post.length === 'number' && post.length > post.maxChars) {
+    await report({ job }, 'NEEDS_ACTION', { reason: 'WAITING_USER', message: `Nội dung dài ${post.length}/${post.maxChars} ký tự, vượt giới hạn của kênh này. Cần rút gọn trên web.` });
+    tickSoon();
+    return;
+  }
   job = { ...job, openUrl: composerUrl(job) };
   // Discourse opens its composer after client-side navigation. Keep that tab
   // visible so background-tab rendering does not leave it on the category list.
@@ -244,6 +288,16 @@ async function tryFill(task) {
     let current = (await getTasks())[task.tabId];
     if (current?.phase !== 'loading' || current.job.jobId !== task.job.jobId) return;
     if (current.job.auth && !current.authVerified) {
+      // Two flows can run at once; sign-ins through the one Google session of
+      // this Chrome still go one at a time. Wait (on a later tab event or sweep)
+      // while another flow is signing in with Google.
+      const others = Object.values(await getTasks()).filter(other => other.tabId !== current.tabId);
+      // Checked after the last await, right before authenticateTask() marks this job: no race.
+      if (current.job.auth.provider === 'google' && ([...googleSignIns].some(jobId => jobId !== current.job.jobId)
+        || others.some(other => other.phase === 'authenticating' && other.job.auth?.provider === 'google'))) {
+        await setTask(task.tabId, { ...current, deadline: Date.now() + LOAD_TIMEOUT_MS });
+        return;
+      }
       if (!await authenticateTask(current)) return;
       current = (await getTasks())[task.tabId];
       if (!current) return;
@@ -274,11 +328,15 @@ async function closeLoginCheckTabs(...tabIds) {
 async function authenticateTask(task) {
   if (authenticating.has(task.job.jobId)) return false;
   authenticating.add(task.job.jobId);
+  if (task.job.auth.provider === 'google') googleSignIns.add(task.job.jobId);
   let current = { ...task, phase: 'authenticating', authDeadline: task.authDeadline ?? Date.now() + (task.job.kind === 'LOGIN_CHECK' ? task.job.auth.provider === 'google' ? 75_000 : 40_000 : 180_000) };
   await setTask(task.tabId, current);
   // The third argument (close tabs) is kept for call sites; login checks always close now.
   const stop = async (message, reason = 'AUTH_REQUIRED', _closeOwnedTabs = false, googleBlocked = false, detectedUsername) => {
-    await report(current, 'NEEDS_ACTION', { reason, message, detectedUsername, googleBlocked: task.job.auth.provider === 'google' && googleBlocked });
+    // Optional fields only when they mean something; report() drops anything else for publish jobs.
+    await report(current, 'NEEDS_ACTION', { reason, message,
+      ...(typeof detectedUsername === 'string' && detectedUsername.trim() ? { detectedUsername: detectedUsername.trim().slice(0, 200) } : {}),
+      googleBlocked: task.job.auth.provider === 'google' && googleBlocked === true });
     if (task.job.kind === 'LOGIN_CHECK') {
       await setTask(task.tabId, null);
       // Whatever the outcome, the result is on the web ("Hướng dẫn kết nối" reopens
@@ -286,7 +344,7 @@ async function authenticateTask(task) {
       await closeLoginCheckTabs(task.tabId, current?.authTabId);
       return false;
     }
-    await setTask(task.tabId, { ...current, phase: 'waitingAuth', deadline: Date.now() + WAIT_USER_MS });
+    await setTask(task.tabId, { ...current, phase: 'waitingAuth', waitingSince: Date.now(), deadline: Date.now() + WAIT_USER_MS });
     await focusTab(current.authTabId ?? task.tabId);
     tickSoon();
     return false;
@@ -430,6 +488,8 @@ async function authenticateTask(task) {
     return stop('Chưa xác nhận được đúng tài khoản sau đăng nhập. Kiểm tra username/URL hồ sơ hoặc CSS nhận diện trong cấu hình trên web.');
   } finally {
     authenticating.delete(task.job.jobId);
+    // A flow deferred behind this Google sign-in is picked up by the next sweep.
+    if (googleSignIns.delete(task.job.jobId) && task.job.kind !== 'LOGIN_CHECK') tickSoon();
     if (task.job.kind === 'LOGIN_CHECK' && !(await getTasks())[task.tabId]) void tick();
   }
 }
@@ -481,20 +541,27 @@ async function fill(task) {
       if (result?.status === 'fallback') result = null;
     }
     if (!result) [{ result }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: task.job.recipe.workflow === 'social' ? fillSocialAndSubmit : fillAndSubmit,
-      args: [{ ...effectiveJob(task), ...(attachments ? { attachments } : {}) }], injectImmediately: true });
+      args: [runnerJob(task, attachments)], injectImmediately: true });
   } catch (error) {
     result = { status: 'uncertain', message: `Không xác nhận được thao tác trong tab: ${error.message ?? error}` };
   }
   // Outside the try: a recovery problem must never look like a possible submit.
+  if (result?.status === 'needsForm') result = await formFill(task, result, attachments);
   if (result?.missing?.length && task.job.uiRecovery?.enabled && !task.submittedAt && ['notReady', 'filled'].includes(result.status)) {
     result = await recoverUi(task, result, attachments) ?? result;
     // Keep the selectors used in this tab for a later "continue" from the web.
     const stored = (await getTasks())[task.tabId];
     if (stored) task = { ...task, uiHintRounds: stored.uiHintRounds, uiOverride: stored.uiOverride };
+    if (result?.status === 'needsForm') result = await formFill(task, result, attachments);
   }
   if (finishing.has(task.job.jobId) || !(await getTasks())[task.tabId]) return;
+  // Stored after the form-fill rounds (and kept for a later "continue" from the web).
+  task = { ...task, formFillRounds: (await getTasks())[task.tabId]?.formFillRounds ?? task.formFillRounds };
   const now = Date.now();
-  switch (result?.status) {
+  const known = ['published', 'moderation', 'restricted', 'submitted', 'captcha', 'uncertain', 'rejected', 'filled', 'draft', 'tooLong', 'login', 'notReady', 'contentMismatch', 'mediaRequired', 'unavailable'];
+  // No (or an unknown) answer from the tab: it may have got as far as Post, so never call it "nothing sent".
+  if (!known.includes(result?.status)) result = { status: 'uncertain', message: result?.message ?? 'Không nhận được kết quả rõ ràng từ tab. Kiểm tra tab và bài trên nền tảng trước khi thử lại.' };
+  switch (result.status) {
     case 'published':
       await published(task, result.url);
       return;
@@ -509,38 +576,123 @@ async function fill(task) {
       if (task.job.recipe.workflow === 'social') void checkPublished((await getTasks())[task.tabId]);
       void watchSubmitted(task.tabId, task.job.jobId);
       return;
+    case 'tooLong':
+      // Nothing was typed and the fix is on the web (a shorter version): no tab to keep.
+      await finishReport(task, 'NEEDS_ACTION', { reason: 'WAITING_USER', message: result.message }, true);
+      return;
     case 'captcha':
     case 'uncertain':
     case 'rejected':
-    case 'filled': {
+    case 'filled':
+    case 'draft': {
       const captcha = result.status === 'captcha';
+      const waitingReason = captcha ? 'CAPTCHA_REQUIRED' : ['filled', 'draft'].includes(result.status) ? 'WAITING_USER' : result.status === 'rejected' ? 'SUBMIT_REJECTED' : 'SUBMIT_UNCONFIRMED';
       await report(task, 'NEEDS_ACTION', {
-        reason: captcha ? 'CAPTCHA_REQUIRED' : result.status === 'uncertain' ? 'SUBMIT_UNCONFIRMED' : result.status === 'rejected' ? 'SUBMIT_REJECTED' : 'WAITING_USER',
+        reason: waitingReason,
         message: result.message ?? (captcha ? 'Hoàn thành CAPTCHA rồi bấm Đăng trong tab vừa mở' : 'Kiểm tra nội dung rồi bấm Đăng trong tab vừa mở'),
       });
-      const waitingReason = captcha ? 'CAPTCHA_REQUIRED' : result.status === 'filled' ? 'WAITING_USER' : result.status === 'rejected' ? 'SUBMIT_REJECTED' : 'SUBMIT_UNCONFIRMED';
       await setTask(task.tabId, { ...task, beforeUrls: result.beforeUrls ?? [], phase: 'waitingUser', waitingMessage: result.message, waitingReason,
-        waitingSince: now, deadline: now + (['SUBMIT_REJECTED', 'SUBMIT_UNCONFIRMED'].includes(waitingReason) ? AFTER_SUBMIT_WAIT_MS : WAIT_USER_MS) });
+        waitingSince: now, deadline: now + WAIT_USER_MS });
       await focusTab(task.tabId);
       tickSoon();
       return;
     }
-    case 'login':
-      await report(task, 'FAILED', { reason: 'LOGIN_REQUIRED', message: result.message });
-      await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'LOGIN_REQUIRED', deadline: now + WAIT_USER_MS });
-      await focusTab(task.tabId);
-      tickSoon();
-      return;
     case 'mediaRequired':
     case 'unavailable':
       await finishReport(task, 'FAILED', { reason: result.status === 'mediaRequired' ? 'MEDIA_REQUIRED' : 'PLATFORM_UNAVAILABLE', message: result.message }, true);
       return;
-    default:
-      await report(task, 'FAILED', { reason: 'EDITOR_NOT_FOUND', message: result?.message ?? 'Không nhận diện được trang' });
-      await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'EDITOR_NOT_FOUND', deadline: now + WAIT_USER_MS });
+    default: {
+      // Nothing was sent. The tab stays open for the operator, without holding a flow.
+      const reason = { login: 'LOGIN_REQUIRED', contentMismatch: 'CONTENT_MISMATCH', notReady: 'EDITOR_NOT_FOUND' }[result.status];
+      const message = result.message ?? (reason === 'EDITOR_NOT_FOUND' ? 'Không thấy khung soạn bài trên trang.' : undefined);
+      await report(task, 'FAILED', { reason, message });
+      await setTask(task.tabId, { ...task, phase: 'waitingUser', reportedOutcome: 'FAILED', waitingReason: reason, waitingMessage: message,
+        waitingSince: now, deadline: now + WAIT_USER_MS });
       await focusTab(task.tabId);
       tickSoon();
+    }
   }
+}
+
+/** The job handed to the page runner, with this tab's AI selectors and form-fill round count. */
+function runnerJob(task, attachments, extra = {}) {
+  return { ...effectiveJob(task), formFillRounds: task.formFillRounds ?? 0, ...(attachments ? { attachments } : {}), ...extra };
+}
+
+/** Only actions on controls collected in this tab, of a kind that fits the control. */
+function formActions(actions, controls) {
+  if (!Array.isArray(actions) || actions.length > controls.length) return [];
+  const byIndex = new Map(controls.map(control => [control.index, control]));
+  const valid = actions.filter(action => {
+    const control = byIndex.get(action?.index);
+    return control && action.selector === control.selector && FORM_ACTIONS[control.kind]?.includes(action.action)
+      && (['check', 'uncheck'].includes(action.action) || (typeof action.value === 'string' && action.value.trim() && action.value.length <= 300));
+  });
+  // One unusable action means the answer is not trustworthy as a whole.
+  return valid.length === actions.length ? valid.map(({ index, selector, action, value }) => ({ index, selector, action, ...(typeof value === 'string' ? { value } : {}) })) : [];
+}
+
+/**
+ * Required controls the recipe does not know (a community, a language, a rules
+ * checkbox…): describe them to the backend AI, poll for its answer, apply the
+ * actions in the tab, then run the composer once more to verify the form and
+ * the approved text and submit when allowed. At most MAX_FORM_FILL_ROUNDS
+ * requests per task. Unlike unapproved ui-hint selectors, form-fill actions do
+ * not turn automatic submit off: the runner re-verifies everything first.
+ * Returns the fill result to act on.
+ */
+async function formFill(task, result, attachments) {
+  const fallback = { status: 'filled', message: result.message ?? 'Còn mục bắt buộc chưa điền. Điền trong tab rồi bấm Đăng.', beforeUrls: result.beforeUrls };
+  const unsure = { status: 'filled', message: FORM_FILL_UNSURE, beforeUrls: result.beforeUrls };
+  if (task.job.recipe.workflow !== 'social') return fallback;
+  let current = result;
+  while (current?.status === 'needsForm') {
+    const saved = (await getTasks())[task.tabId];
+    if (!saved || saved.submittedAt) return unsure;
+    const rounds = saved.formFillRounds ?? 0;
+    if (!task.job.formFill?.enabled || rounds >= MAX_FORM_FILL_ROUNDS) return rounds ? unsure : fallback;
+    const recipe = effectiveJob({ ...task, uiOverride: saved.uiOverride }).recipe;
+    let page;
+    try {
+      [{ result: page }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: collectFormControls,
+        args: [{ recipe: { titleSelectors: recipe.titleSelectors ?? [], bodySelectors: recipe.bodySelectors ?? [] } }] });
+    } catch { return rounds ? unsure : fallback; }
+    const controls = page?.controls ?? [];
+    if (!controls.length) return rounds ? unsure : fallback;
+    await setTask(task.tabId, { ...saved, formFillRounds: rounds + 1, deadline: Date.now() + FORM_FILL_WAIT_MS + LOAD_TIMEOUT_MS });
+    let answer;
+    try {
+      // Each request stays short (MV3 stops a worker on a fetch over ~30 s): ask, then poll.
+      answer = await api(`tasks/${task.job.jobId}/form-fill`, { url: page.url, controls });
+      const until = Date.now() + FORM_FILL_WAIT_MS;
+      while (answer?.status === 'RUNNING' && Date.now() < until) {
+        await new Promise(resolve => setTimeout(resolve, FORM_FILL_POLL_MS));
+        answer = await api(`tasks/${task.job.jobId}/form-fill/${encodeURIComponent(answer.hintId)}`, undefined, 'GET');
+      }
+    } catch (error) {
+      // 404: form-fill is turned off on the backend. Behave as without it.
+      return error.status === 404 && !rounds ? fallback : unsure;
+    }
+    // READY without actions (e.g. LOW_CONFIDENCE): the AI is not sure, the operator decides.
+    const actions = answer?.status === 'READY' ? formActions(answer.actions, controls) : [];
+    if (!actions.length) return unsure;
+    let applied;
+    try {
+      [{ result: applied }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: applyFormActions, args: [{ actions }] });
+    } catch { return unsure; }
+    if (!applied?.results?.length || applied.results.some(item => !item.ok)) return unsure;
+    const latest = (await getTasks())[task.tabId];
+    if (!latest || latest.submittedAt) return unsure;
+    await setTask(task.tabId, { ...latest, deadline: Date.now() + LOAD_TIMEOUT_MS });
+    try {
+      [{ result: current }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: fillSocialAndSubmit,
+        args: [runnerJob({ ...task, uiOverride: latest.uiOverride, formFillRounds: rounds + 1 }, attachments, { formFillResume: true })], injectImmediately: true });
+    } catch (error) {
+      // This run may have clicked Post: never treat it as "nothing sent".
+      return { status: 'uncertain', message: `Không xác nhận được thao tác trong tab: ${error.message ?? error}` };
+    }
+  }
+  return current;
 }
 
 /** Approved-or-suggested selectors in front of the recipe's own ones (copy). */
@@ -609,7 +761,7 @@ async function recoverUi(task, result, attachments) {
     const current = { ...task, uiHintRounds: rounds + 1, uiOverride };
     const job = effectiveJob(current);
     const [{ result: retried }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: job.recipe.workflow === 'social' ? fillSocialAndSubmit : fillAndSubmit,
-      args: [{ ...job, ...(attachments ? { attachments } : {}) }], injectImmediately: true });
+      args: [runnerJob({ ...current, formFillRounds: latest.formFillRounds }, attachments)], injectImmediately: true });
     let outcome = retried;
     // The opener worked; now the composer fields themselves may need a hint.
     if (outcome?.missing?.length && usable.every(([field]) => field === 'opener')) outcome = await recoverUi(current, outcome, attachments) ?? outcome;
@@ -659,7 +811,7 @@ async function finishReport(task, outcome, extra, closeTab = false) {
     closeTab = closeTab || outcome === 'PUBLISHED' || extra.reason === 'MODERATION_PENDING';
     // Retain the verified receipt across transient backend outages. A retry of
     // this phase only reports the result; it never fills or submits again.
-    await setTask(task.tabId, { ...task, phase: 'reporting', pendingReport: { outcome, extra, closeTab } });
+    await setTask(task.tabId, { ...task, phase: 'reporting', pendingReport: { outcome, extra, closeTab }, reportingSince: task.reportingSince ?? Date.now() });
     if (outcome === 'PUBLISHED' || extra.reason === 'MODERATION_PENDING') {
       try {
         await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: showPublishNotice, args: [{
@@ -739,7 +891,7 @@ async function concludeUnconfirmed(task, extra) {
   const now = Date.now();
   await report(task, 'NEEDS_ACTION', extra);
   await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: extra.reason, waitingMessage: extra.message,
-    waitingSince: now, deadline: now + AFTER_SUBMIT_WAIT_MS });
+    waitingSince: now, deadline: now + WAIT_USER_MS });
   await focusTab(task.tabId);
   tickSoon();
 }
@@ -798,11 +950,57 @@ async function watchSubmitted(tabId, jobId) {
   finally { watching.delete(jobId); }
 }
 
+/** When a waiting tab is released; null for a task stored without any deadline. */
+function waitingUntil(task) {
+  const limits = [task.deadline, task.waitingSince != null ? task.waitingSince + WAIT_USER_MS : undefined].filter(Number.isFinite);
+  return limits.length ? Math.min(...limits) : null;
+}
+
+/** The tab still shows this job's site (the operator may have reused it for something else). */
+async function ownsTab(task, tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const origin = new URL(tab.url || tab.pendingUrl).origin;
+    return [task.job.targetOrigin, ...(task.job.auth?.allowedOrigins ?? []), ...(task.job.auth?.provider === 'google' ? ['https://accounts.google.com'] : [])].includes(origin);
+  } catch { return false; }
+}
+
+/**
+ * Stop tracking a task whose time is up: forget it (so its site is no longer
+ * excluded from claims), close its tab and sign-in popup if they are still
+ * ours, and look for the next post. The job keeps its last report on the web.
+ */
+async function releaseTask(task, message, closeTab = true) {
+  const current = (await getTasks())[task.tabId];
+  if (!current || current.job.jobId !== task.job.jobId) return;
+  // Forget first: closing the tab must not report it a second time (onRemoved).
+  await setTask(task.tabId, null);
+  await log({ jobId: task.job.jobId, account: task.job.account.name, platform: task.job.account.platform, outcome: 'RELEASED', message });
+  if (closeTab) {
+    for (const tabId of new Set([task.tabId, current.authTabId].filter(id => id !== undefined && id !== null))) {
+      if (await ownsTab(task, tabId)) { try { await chrome.tabs.remove(tabId); } catch { /* already closed */ } }
+    }
+  }
+  tickSoon();
+}
+
 async function sweep() {
   const now = Date.now();
   for (const task of Object.values(await getTasks())) {
     if (task.phase === 'reporting' && task.pendingReport) {
+      // A verified receipt is kept until the backend has it. Any other report
+      // that still cannot be delivered after the waiting window is dropped.
+      const receipt = task.pendingReport.outcome === 'PUBLISHED' || task.pendingReport.extra?.reason === 'MODERATION_PENDING';
+      if (!receipt && now - (task.reportingSince ?? now) >= WAIT_USER_MS) {
+        await releaseTask(task, 'Không báo được kết quả về hệ thống sau 10 phút; đã ngừng theo dõi tab này.', task.pendingReport.closeTab);
+        continue;
+      }
       await finishReport(task, task.pendingReport.outcome, task.pendingReport.extra, task.pendingReport.closeTab);
+      continue;
+    }
+    if (isWaiting(task) && waitingUntil(task) === null) {
+      // Stored by an older version without a deadline: start the window now.
+      await setTask(task.tabId, { ...task, waitingSince: now, deadline: now + WAIT_USER_MS });
       continue;
     }
     if (task.phase === 'authenticating') {
@@ -810,6 +1008,10 @@ async function sweep() {
       continue;
     }
     if (task.phase === 'waitingAuth') {
+      if (now >= waitingUntil(task)) {
+        await releaseTask(task, 'Chờ đăng nhập quá 10 phút: đã đóng tab và nhận bài tiếp theo. Bài vẫn ở Cần thao tác trên web.');
+        continue;
+      }
       if (now - (task.lastIdentityCheck ?? 0) >= 30_000) {
         await setTask(task.tabId, { ...task, lastIdentityCheck: now });
         try {
@@ -826,14 +1028,17 @@ async function sweep() {
     }
     if (task.phase !== 'loading' && await checkPublished(task)) continue;
     if (task.phase === 'waitingUser' && await checkModeration(task)) continue;
-    if (task.phase === 'submitted') { await checkSubmitted(task); void watchSubmitted(task.tabId, task.job.jobId); }
+    // Checked after the last look for a manually published post.
+    if (task.phase === 'waitingUser') {
+      if (now >= waitingUntil(task)) await releaseTask(task, 'Tab chờ quá 10 phút: đã đóng tab và nhận bài tiếp theo. Bài vẫn ở Cần thao tác trên web.');
+    } else if (task.phase === 'submitted') { await checkSubmitted(task); void watchSubmitted(task.tabId, task.job.jobId); }
     else if (task.phase === 'verifying') await checkVerifying(task);
     else if (task.phase === 'loading') {
       void checkLoading(task);
     } else if (now >= task.deadline && task.phase === 'filling' && !filling.has(task.job.jobId)) {
       await report(task, 'NEEDS_ACTION', { reason: 'SUBMIT_UNCONFIRMED', message: 'Tiện ích khởi động lại khi đang thao tác. Kiểm tra tab và bài đã đăng trước khi thử lại.' });
-      await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'SUBMIT_UNCONFIRMED', waitingSince: now, deadline: now + AFTER_SUBMIT_WAIT_MS });
-    } // Waiting drafts stay tracked until the operator completes or closes them.
+      await setTask(task.tabId, { ...task, phase: 'waitingUser', waitingReason: 'SUBMIT_UNCONFIRMED', waitingSince: now, deadline: now + WAIT_USER_MS });
+    }
   }
 }
 
@@ -890,16 +1095,17 @@ async function runTick() {
     if (loginChecksOnly || Object.values(await getTasks()).some(item => item.job.kind === 'LOGIN_CHECK')) { await updateBadge(); return; }
     for (let picked = 0; !paused && picked < Math.min(MAX_ACTIVE_FLOWS, beat.waiting ?? 0); picked++) {
       const tasks = Object.values(await getTasks());
-      const active = tasks.filter((task) => ['loading', 'authenticating', 'filling', 'submitted', 'verifying', 'reporting'].includes(task.phase));
-      if (active.length >= MAX_ACTIVE_FLOWS || tasks.length >= MAX_OWNED_TABS) break;
-      // A composer waiting before submission owns this forum's draft; a second
-      // tab on the origin could overwrite it. A submitted post has no draft.
-      const reserved = (await getTasks());
-      const excludeOrigins = [...new Set(Object.values(reserved).filter(task => !(isWaiting(task) && isPostSubmit(task))).map((task) => task.job.targetOrigin))];
+      // Waiting tabs (operator, sign-in, failed post kept open) do not hold a
+      // flow; they expire after WAIT_USER_MS. The tab cap is only a safety bound.
+      if (tasks.filter(occupiesFlow).length >= MAX_ACTIVE_FLOWS || tasks.length >= MAX_OWNED_TABS) break;
+      // Never two flows on one site, and a composer waiting before submission
+      // owns this site's draft: a second tab could overwrite it. A submitted
+      // post has no draft left to protect.
+      const excludeOrigins = [...new Set(tasks.filter(task => !(isWaiting(task) && isPostSubmit(task))).map((task) => task.job.targetOrigin))];
       const { task: job } = await api('claim', { excludeOrigins, supportedEngines: SUPPORTED_ENGINES, authProtocol: 1 });
       if (!job) break;
       // The backend skips these origins before claiming, so a second job for a
-      // busy forum cannot prevent another platform from starting.
+      // busy site cannot prevent another platform from starting.
       await start(job, false);
     }
   } catch (error) {

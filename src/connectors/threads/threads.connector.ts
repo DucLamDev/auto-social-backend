@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PlatformMode } from '@prisma/client';
 import { ErrorCode } from '../../common/exceptions/application.exception';
+import { checkTextLength, postLengthMessage } from '../../platforms/post-length';
 import { ConnectorError } from '../core/connector-error';
 import { HttpConnectorBase } from '../core/http-connector.base';
 import { ConnectionTestResult, ConnectorAccount, PostPayload, PublishResult } from '../core/connector.types';
@@ -19,7 +20,8 @@ export class ThreadsConnector extends HttpConnectorBase implements SocialPublish
 
   validate(post: PostPayload): Promise<void> {
     if (!post.body.trim()) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, 'Threads text is required', false);
-    if (post.body.length > 500) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, 'Threads text exceeds 500 characters', false);
+    const length = checkTextLength(this.platform, post.body);
+    if (length.over) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, postLengthMessage('Threads', length), false);
     if ((post.media?.length ?? 0) > 1) throw new ConnectorError(ErrorCode.PLATFORM_MEDIA_INVALID, 'MVP Threads connector accepts one media item', false);
     if (post.media?.some((media) => media.type !== 'image')) throw new ConnectorError(ErrorCode.PLATFORM_MEDIA_INVALID, 'MVP Threads connector supports image media only', false);
     return Promise.resolve();

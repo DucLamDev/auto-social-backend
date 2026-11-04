@@ -9561,6 +9561,178 @@
         ]
       }
     },
+    "/api/v1/extension/agent/tasks/{id}/form-fill": {
+      "post": {
+        "operationId": "ExtensionAgent_formFillRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FormFillRequestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Ask the AI which values the extra controls of the post form need (language, community…); answers within ~8 s or poll",
+        "tags": [
+          "extension-agent"
+        ]
+      }
+    },
+    "/api/v1/extension/agent/tasks/{id}/form-fill/{hintId}": {
+      "get": {
+        "operationId": "ExtensionAgent_formFillStatus",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hintId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Poll an AI form fill: actions the backend checked against the controls the extension sent",
+        "tags": [
+          "extension-agent"
+        ]
+      }
+    },
     "/api/v1/extension/agent/tasks/{id}/auth": {
       "post": {
         "operationId": "ExtensionAgent_authStep",
@@ -11642,7 +11814,7 @@
             "type": "object",
             "additionalProperties": true,
             "nullable": true,
-            "description": "Last \"rewrite with AI\" request: status generating | done | failed, instruction, startedAt, finishedAt, error."
+            "description": "Last \"rewrite with AI\" request: status generating | done | failed, instruction, notes (review points chosen by the operator, when sent), startedAt, finishedAt, error."
           },
           "status": {
             "type": "string",
@@ -11943,16 +12115,42 @@
           "body"
         ]
       },
+      "PreviewDestinationDto": {
+        "type": "object",
+        "properties": {
+          "community": {
+            "type": "string",
+            "description": "Lemmy / Discuit community or Reddit subreddit (r/name) set on the account."
+          },
+          "category": {
+            "type": "string",
+            "description": "Forum category or box set on the account."
+          },
+          "flair": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "vi",
+              "en"
+            ]
+          }
+        },
+        "required": [
+          "language"
+        ]
+      },
       "VariantPreviewDto": {
         "type": "object",
         "properties": {
           "title": {
             "type": "string",
-            "description": "Empty for destinations without a title field."
+            "description": "Empty for destinations without a title field (short-form social, Quora)."
           },
           "body": {
             "type": "string",
-            "description": "Body exactly as the destination receives it."
+            "description": "Body exactly as the destination receives it; for appearance \"rich\" it keeps the Markdown the extension turns into HTML."
           },
           "format": {
             "type": "string",
@@ -11962,12 +12160,24 @@
               "html"
             ]
           },
+          "appearance": {
+            "type": "string",
+            "enum": [
+              "markdown",
+              "plain",
+              "rich"
+            ],
+            "description": "How to show the body: rendered Markdown, plain paragraphs, or rich text (pasted HTML editor or HTML field)."
+          },
           "tags": {
-            "description": "Tags sent in the destination tag field.",
+            "description": "Tags really sent in the destination tag field (for a Chrome extension account: its own tags, then the AI tags the site accepts); empty when hashtags stay in the text.",
             "type": "array",
             "items": {
               "type": "string"
             }
+          },
+          "destination": {
+            "$ref": "#/components/schemas/PreviewDestinationDto"
           },
           "group": {
             "type": "string",
@@ -11992,7 +12202,9 @@
           "title",
           "body",
           "format",
+          "appearance",
           "tags",
+          "destination",
           "group",
           "length",
           "overLimit"
@@ -12090,6 +12302,14 @@
             "type": "string",
             "description": "What to change, in the operator's words; the last review notes are added automatically.",
             "maxLength": 2000
+          },
+          "notes": {
+            "maxItems": 20,
+            "description": "Review recommendations the operator chose to apply (\"Sửa theo khuyến nghị\"). When sent, they replace the automatic review notes: the AI fixes only these.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "aiProvider": {
             "type": "string",
@@ -12432,6 +12652,39 @@
           "reasonLabel"
         ]
       },
+      "OverLimitVariantContractDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "platform": {
+            "type": "string",
+            "description": "Platform display name."
+          },
+          "length": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Characters the destination counts."
+          },
+          "maxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "message": {
+            "type": "string",
+            "description": "Vietnamese explanation shown to the reviewer."
+          }
+        },
+        "required": [
+          "id",
+          "platform",
+          "length",
+          "maxChars",
+          "message"
+        ]
+      },
       "AutomatedCampaignContractDto": {
         "type": "object",
         "properties": {
@@ -12465,6 +12718,13 @@
             "type": "array",
             "items": {
               "type": "string"
+            }
+          },
+          "overLimitVariants": {
+            "description": "Review decisions only: drafts left waiting because they exceed their destination character limit.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OverLimitVariantContractDto"
             }
           }
         },
@@ -13563,6 +13823,105 @@
           "candidates"
         ]
       },
+      "FormOptionDto": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label"
+        ]
+      },
+      "FormControlDto": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "select",
+              "checkbox",
+              "radio",
+              "combobox",
+              "text"
+            ]
+          },
+          "tag": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "invalid": {
+            "type": "boolean",
+            "description": "The page marks the control invalid (aria-invalid, :invalid)"
+          },
+          "checked": {
+            "type": "boolean"
+          },
+          "selected": {
+            "type": "string",
+            "description": "Label of the option currently chosen"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FormOptionDto"
+            }
+          },
+          "selector": {
+            "type": "string",
+            "description": "Unique CSS path of the control in its document or shadow root"
+          }
+        },
+        "required": [
+          "index",
+          "kind",
+          "tag",
+          "required",
+          "invalid",
+          "selector"
+        ]
+      },
+      "FormFillRequestDto": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Current page URL; must be on the task destination"
+          },
+          "controls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FormControlDto"
+            }
+          }
+        },
+        "required": [
+          "url",
+          "controls"
+        ]
+      },
       "ExtensionAuthStepDto": {
         "type": "object",
         "properties": {}
@@ -13610,12 +13969,21 @@
               "PAGE_LOAD_FAILED",
               "CANCELLED",
               "MEDIA_REQUIRED",
-              "PLATFORM_UNAVAILABLE"
+              "PLATFORM_UNAVAILABLE",
+              "CONTENT_MISMATCH"
             ]
           },
           "message": {
             "type": "string",
             "description": "Short text shown to the operator (forum error banner, etc.)"
+          },
+          "detectedUsername": {
+            "type": "string",
+            "description": "Username the sign-in check found in Chrome (account mismatch); kept in the attempt details only"
+          },
+          "googleBlocked": {
+            "type": "boolean",
+            "description": "Google asked for a verification the extension cannot complete; kept in the attempt details only"
           }
         },
         "required": [

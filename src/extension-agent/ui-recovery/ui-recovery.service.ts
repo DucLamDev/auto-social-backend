@@ -12,10 +12,14 @@ import { UiHintField, UiHintRequestDto } from './ui-hint.dto';
 import { sanitizeCandidates, UI_HINT_INSTRUCTIONS, UI_HINT_SPEC, UiCandidate, validateHint } from './ui-hint.rules';
 
 const MAX_HINTS_PER_JOB = 2;
-const HINTS_PER_DEVICE_PER_HOUR = 20;
+/** Shared by UI hints and AI form filling: one hourly budget per Chrome profile. */
+export const HINTS_PER_DEVICE_PER_HOUR = 20;
+export const uiHintRateKey = (deviceId: string) => `rate_limit:ui-hint:${deviceId}`;
 /** The extension's single fetch must stay short (MV3); later answers are polled. */
-const INLINE_WAIT_MS = 8_000;
-const STALE_AFTER_MS = 120_000;
+export const INLINE_WAIT_MS = 8_000;
+export const STALE_AFTER_MS = 120_000;
+/** `missing` value of the hint rows AI form filling stores; they have their own cap. */
+export const FORM_FILL_HINT = 'form';
 
 export interface UiHintSelector { selector: string; approved: boolean; suggestionId: string }
 export interface UiHintView {
@@ -72,10 +76,10 @@ export class ExtensionUiRecoveryService {
     const origin = new URL(settings.targetUrl).origin;
     const page = new URL(dto.url);
     if (page.origin !== origin) throw new BadRequestException('The page is not on this task destination');
-    if (await this.prisma.extensionUiHint.count({ where: { publishJobId: job.id } }) >= MAX_HINTS_PER_JOB) {
+    if (await this.prisma.extensionUiHint.count({ where: { publishJobId: job.id, NOT: { missing: { has: FORM_FILL_HINT } } } }) >= MAX_HINTS_PER_JOB) {
       throw new HttpException('This task already used its AI hints', HttpStatus.TOO_MANY_REQUESTS);
     }
-    const usage = await this.redis?.consumeRateLimit(`rate_limit:ui-hint:${device.id}`, HINTS_PER_DEVICE_PER_HOUR, 3_600);
+    const usage = await this.redis?.consumeRateLimit(uiHintRateKey(device.id), HINTS_PER_DEVICE_PER_HOUR, 3_600);
     if (usage && !usage.allowed) throw new HttpException('Too many AI hints from this Chrome profile; try again later', HttpStatus.TOO_MANY_REQUESTS);
     let candidates: UiCandidate[];
     try { candidates = sanitizeCandidates(dto.candidates); } catch (error) { throw new BadRequestException(error instanceof Error ? error.message : 'Invalid candidates'); }

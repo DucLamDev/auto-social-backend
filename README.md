@@ -92,8 +92,23 @@ sinh nội dung, hạn mức), dán địa chỉ hiện trong mục đó vào `V
 lượt; backend đưa khuôn JSON vào lời dặn hệ thống, cắt phần nhập quá dài, bóc JSON khỏi khối code và kiểm tra lại như
 các provider khác. Mỗi lượt chạy một phiên Claude/Codex nên chậm: backend giới hạn `VPSTTT_AI_MAX_CONCURRENCY` lượt cùng
 lúc và rải đều `VPSTTT_AI_RPM` lượt mỗi phút, đặt hai số này không vượt hạn mức của key (mặc định của IDE: 2 và 10). Một
-bài cho mỗi nền tảng cần 2–6 lượt (viết, chấm, viết lại tối đa 2 lần khi chưa đạt; giữ bản điểm cao nhất), nên với 10
+bài cho mỗi nền tảng cần 2–7 lượt (viết, chấm, viết lại tối đa 2 lần khi chưa đạt, thêm 1 lượt rút gọn khi còn quá dài; giữ bản điểm cao nhất), nên với 10
 lượt/phút nên chọn khoảng 6–8 nền tảng mỗi lần tạo tự động. Model: `claude:haiku` (nhanh), `claude:sonnet`, `claude:opus`, `gpt:`.
+
+**Giới hạn ký tự (từ backend 1.17.0).** Một hàm đếm chung (`src/platforms/post-length.ts`) được dùng ở mọi chỗ:
+khi AI viết, khi duyệt, khi sửa, khi giao bài cho tiện ích và trong connector API. Nên bài vừa ở đây là vừa trên trang:
+- Ngân sách trong lời nhắc đã trừ dòng "Nguồn"; hashtag và link đều được tính.
+- Mastodon / Vivaldi tính mỗi link 23 ký tự. X tính cả tên miền viết trần (`example.com/x`) là 23.
+- Dòng "Nguồn" không thêm lần nữa khi bài đã có link đó. Nơi không có ô tiêu đề (Quora) thì không lấy dòng đầu làm tiêu đề.
+- Viết lại 2 lần mà vẫn dài: AI rút gọn thêm 1 lần theo đúng số ký tự. Vẫn dài thì máy cắt:
+  1. bỏ bớt hashtag cuối bài;
+  2. cắt sau câu trọn vẹn cuối cùng còn vừa;
+  3. bất đắc dĩ thì cắt sau từ, thêm "…".
+- Bài bị máy cắt luôn chờ người duyệt, có ghi chú trong lý do. Bản dài hơn giới hạn luôn xếp dưới mọi bản vừa.
+- Duyệt / sửa / tạo tay một bài vượt giới hạn: trả 400 kèm số ký tự. "Duyệt tất cả" giữ bài quá dài ở chờ duyệt, trả về
+  `overLimitVariants`, các bài khác vẫn đăng.
+- Tiện ích không bao giờ nhận bài quá dài: job chuyển "Tiện ích cần bạn" (`EXTENSION_CONTENT_TOO_LONG`), các bài sau vẫn
+  chạy. Rút gọn rồi bấm **Giao lại cho tiện ích**.
 
 **Chấm điểm và viết lại từng bài.** Người viết được dặn đúng thang chấm của biên tập AI:
 - mở bài giữ chân người đọc;

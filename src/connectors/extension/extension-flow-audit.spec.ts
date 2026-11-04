@@ -1,4 +1,4 @@
-import { extensionFlowAudit } from './extension-flow-audit';
+import { AI_COMMUNITY_NOTE, extensionFlowAudit } from './extension-flow-audit';
 
 describe('posting flow status shown after a login check', () => {
   it('says Warrior Forum is manual only because its terms forbid automated access', () => {
@@ -22,5 +22,20 @@ describe('posting flow status shown after a login check', () => {
     expect(extensionFlowAudit('daily-dev', {})).toMatchObject({ status: 'CONFIGURATION_REQUIRED', implemented: true, engine: 'dailydev' });
     expect(extensionFlowAudit('daily-dev', { delivery: 'extension', extensionEngine: 'dailydev', extensionTargetUrl: 'https://daily.dev/squads/create', extensionAutoSubmit: true }))
       .toMatchObject({ status: 'CONFIGURED', implemented: true, engine: 'dailydev' });
+  });
+
+  it('asks for a Lemmy / Discuit community only while AI form filling is off', () => {
+    const lemmy = { delivery: 'extension', extensionEngine: 'lemmy', extensionTargetUrl: 'https://lemmy.world/create_post', extensionAutoSubmit: true };
+    expect(extensionFlowAudit('lemmy-world', lemmy)).toMatchObject({ status: 'DESTINATION_REQUIRED', engine: 'lemmy' });
+    expect(extensionFlowAudit('lemmy-world', lemmy).message).toContain('community đích');
+    const withAi = extensionFlowAudit('lemmy-world', lemmy, { formFill: true });
+    expect(withAi).toMatchObject({ status: 'CONFIGURED', implemented: true, engine: 'lemmy' });
+    expect(withAi.message).toContain(AI_COMMUNITY_NOTE);
+    const discuit = { delivery: 'extension', extensionEngine: 'discuit', extensionTargetUrl: 'https://discuit.org/new', extensionAutoSubmit: true };
+    expect(extensionFlowAudit('discuit', discuit, { formFill: true })).toMatchObject({ status: 'CONFIGURED', engine: 'discuit' });
+    // A configured community needs no note.
+    expect(extensionFlowAudit('lemmy-world', { ...lemmy, extensionCategory: 'selfhosted' }, { formFill: true }).message).not.toContain(AI_COMMUNITY_NOTE);
+    // Other gaps still block.
+    expect(extensionFlowAudit('lemmy-world', {}, { formFill: true })).toMatchObject({ status: 'CONFIGURATION_REQUIRED' });
   });
 });

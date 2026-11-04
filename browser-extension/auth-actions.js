@@ -311,6 +311,24 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     }
   }
 
+  // A registration page is never a login form: filling it could create a second
+  // account (a Discourse /signup page was once filled). Stop as "not signed in".
+  if (!google) {
+    const describe = node => `${node.name || ''} ${node.id || ''} ${node.getAttribute('autocomplete') || ''} ${node.placeholder || ''} ${node.getAttribute('aria-label') || ''} ${[...(node.labels ?? [])].map(label => label.innerText).join(' ')}`;
+    const passwords = all('input[type="password"]').filter(visible);
+    const emailField = node => node.type === 'email' || /e-?mail/i.test(describe(node));
+    const usernameField = node => !['email', 'password', 'hidden', 'checkbox', 'radio', 'submit', 'button'].includes(node.type)
+      && !emailField(node) && /user\s*name|username|handle|tên\s*(?:đăng\s*nhập|người\s*dùng|tài\s*khoản)/i.test(describe(node));
+    const registration = /(?:^|\/)(?:sign[-_]?up|register|registration|join|create[-_]?account|new[-_]?account)(?:\/|\.|$)/i.test(location.pathname)
+      || passwords.some(node => /confirm|repeat|retype|again|verify|xác\s*nhận|nhập\s*lại/i.test(describe(node)))
+      || [...new Set(passwords.map(node => node.closest('form, [role="dialog"]')).filter(Boolean))].some(container => {
+        const fields = [...container.querySelectorAll('input')].filter(visible);
+        return fields.filter(node => node.type === 'password').length >= 2 || (fields.some(emailField) && fields.some(usernameField));
+      });
+    if (registration) {
+      return challenge(`Trang đang mở (${location.origin}${location.pathname}) là trang đăng ký tài khoản mới, không phải trang đăng nhập. Tiện ích không điền hay gửi form đăng ký. Đăng nhập tay trong Chrome, hoặc sửa URL đăng nhập ở Phiên Chrome / 2FA rồi chạy lại.`);
+    }
+  }
   const otp = one(['#totpPin', 'input[name="totpPin"]', 'input[name="second_factor_token"]', 'input[autocomplete="one-time-code"]', 'form[action*="two-step"] input[name="code"]']);
   if (/incorrect password|wrong password|username and password do not match|invalid (?:email or password|password|credentials|code)|incorrect code|mật khẩu không đúng|mã không đúng|sai mã|mã không hợp lệ|code incorrect|mot de passe incorrect/i.test(text)) {
     return challenge(otp ? 'Google hoặc nền tảng đã từ chối mã TOTP. Kiểm tra khóa 2FA trong cấu hình; chưa gửi lại mã.' : 'Thông tin đăng nhập bị từ chối; không tự thử lại.', google);

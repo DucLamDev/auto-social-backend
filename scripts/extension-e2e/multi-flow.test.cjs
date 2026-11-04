@@ -102,7 +102,9 @@ test('web queues three independent forum flows; CAPTCHA in one does not block th
       assert.equal(submission.title, expected.find(job => job.jobId === submission.id).post.title);
       assert.equal(submission.body, expected.find(job => job.jobId === submission.id).post.body);
     }
-    assert.equal(claimRequests[2].excludeOrigins.length, 1);
+    // Two flows run at once (1.12.0); the CAPTCHA draft keeps its forum reserved in every later claim.
+    const nginx = expected.find(job => job.jobId === 'nginx-fixture').targetOrigin;
+    assert.ok(claimRequests.slice(1).every(request => request.excludeOrigins.includes(nginx)));
     const { tasks } = await worker.evaluate(() => chrome.storage.session.get('tasks'));
     assert.deepEqual(Object.values(tasks).map(task => task.job.jobId), ['nginx-fixture']);
     assert.ok(context.pages().every(page => !page.url().includes('/popup.html')));

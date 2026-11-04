@@ -37,4 +37,18 @@ describe('extension delivery settings', () => {
     expect(matches('phpbb', 'https://forum.mikrotik.com/viewtopic.php?f=3&t=99')).toBe(true);
     expect(matches('phpbb', 'https://forum.mikrotik.com/posting.php?mode=post&f=3')).toBe(false);
   });
+
+  it('pastes HTML only into rich editors and sets the value of Markdown textareas', () => {
+    const pasteHtml = Object.values(EXTENSION_RECIPES).filter((recipe) => recipe.inputMode === 'pasteHtml').map((recipe) => recipe.engine).sort();
+    expect(pasteHtml).toEqual(['aws-builder', 'dailydev', 'differ', 'dzone', 'medium', 'quora', 'substack', 'tumblr']);
+    for (const engine of ['devto', 'lemmy', 'discuit'] as const) {
+      expect(EXTENSION_RECIPES[engine].inputMode).toBe('value');
+      expect(EXTENSION_RECIPES[engine].bodySelectors.some((selector) => selector.includes('contenteditable'))).toBe(false);
+    }
+    // Plain-text composers and editors whose selector list mixes kinds keep the runner's choice.
+    for (const engine of ['mastodon', 'bluesky', 'minds', 'pixelfed', 'linkedin', 'reddit', 'stackexchange', 'xenforo', 'discourse'] as const) {
+      expect(EXTENSION_RECIPES[engine].inputMode).toBeUndefined();
+    }
+    expect(EXTENSION_RECIPES.lemmy.languageSelectors).toEqual(expect.arrayContaining(['#post-language', 'select[id^="post-language"]']));
+  });
 });

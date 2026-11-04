@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PlatformMode } from '@prisma/client';
 import { ErrorCode } from '../../common/exceptions/application.exception';
+import { checkTextLength, postLengthMessage } from '../../platforms/post-length';
 import { ConnectorError } from '../core/connector-error';
 import { HttpConnectorBase } from '../core/http-connector.base';
 import { ConnectorAccount, ConnectionTestResult, PostPayload, PublishResult } from '../core/connector.types';
@@ -17,6 +18,9 @@ export class MastodonConnector extends HttpConnectorBase implements SocialPublis
 
   validate(post: PostPayload): Promise<void> {
     if (!post.body.trim()) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, 'Status text is required', false);
+    // 500 is Mastodon's default (mastodon.social, social.vivaldi.net); links count as 23.
+    const length = checkTextLength(this.platform, post.body);
+    if (length.over) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, postLengthMessage('Mastodon', length), false);
     if (post.media?.length) throw new ConnectorError(ErrorCode.PLATFORM_MEDIA_INVALID, 'Media upload is outside the MVP Mastodon connector scope', false);
     return Promise.resolve();
   }

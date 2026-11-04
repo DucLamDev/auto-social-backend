@@ -1,5 +1,55 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.17.0 / tiện ích 1.12.0: hàng đợi không kẹt, AI điền mục còn thiếu, giữ định dạng bài
+
+Cần cả backend 1.17.0 và tiện ích 1.12.0. Sau khi cập nhật, nạp lại tiện ích trong `chrome://extensions`.
+
+- **Một bài lỗi không còn chặn bài khác:**
+  - Tiện ích đăng tối đa **2 bài cùng lúc**, luôn ở 2 trang khác nhau.
+  - Tab chờ bạn (bản nháp, CAPTCHA, chưa đăng nhập, bài lỗi để bạn xem) không chiếm chỗ.
+  - Tab chờ quá **10 phút** thì tiện ích đóng tab (nếu tab vẫn ở trang đó), quên tác vụ, ghi `RELEASED` vào lịch sử rồi
+    nhận bài tiếp. Mọi giai đoạn đều có hạn. Giới hạn 8 tab chỉ còn là chốt an toàn.
+- **Báo cáo không còn bị từ chối.** Đăng nhập thất bại lúc đăng (CAPTCHA, sai tài khoản, hết giờ) trước đây bị máy chủ trả
+  400 nên job đứng "Chờ tiện ích" mãi. Nay máy chủ nhận thêm `detectedUsername` / `googleBlocked`, tiện ích chỉ gửi khi có
+  giá trị.
+- **Việc bị nhận rồi im lặng:**
+  - Máy chủ tự hết hạn sau 10 phút bằng lịch chạy mỗi phút (`expireExtensionClaims`), không còn phải chờ lượt nhận việc
+    sau.
+  - Trên trang Publishing, job đã được nhận hiện **Tiện ích đang đăng**. Quá 10 phút thì có nút **Giao lại cho tiện ích**.
+- **Trang đăng ký không bị điền:** đường dẫn `signup` / `register` / `join` / `create-account`…, form có ô nhập lại mật khẩu,
+  hoặc email + username + mật khẩu cùng lúc. Backend không đưa mật khẩu cho trang đó. Tiện ích báo "chưa đăng nhập" ngay.
+- **Bài quá dài không tới tiện ích:**
+  - Máy chủ kiểm độ dài trước khi giao: quá giới hạn thì job chuyển "Tiện ích cần bạn" (`EXTENSION_CONTENT_TOO_LONG`) và
+    giao bài kế tiếp.
+  - Tiện ích cũng kiểm trước khi gõ, theo `post.length` / `post.maxChars` máy chủ gửi; bảng giới hạn cứng trong tiện ích đã
+    bỏ.
+- **Trình soạn thảo có định dạng** nhận bài đã định dạng (`recipe.inputMode = pasteHtml`): aws-builder, daily.dev, Differ,
+  DZone, Medium, Quora, Substack, Tumblr.
+  - Máy chủ gửi `post.bodyHtml` (Markdown chuyển sang HTML, thoát mọi ký tự, link chỉ http/https). Tiện ích dán cả
+    `text/html` và `text/plain`.
+  - DEV, Lemmy, Discuit dùng `value` (ô Markdown). Các trang còn lại gõ từng dòng, giữ xuống dòng.
+- **Kiểm chữ sau khi điền** so dãy từ (≥ 95% theo đúng thứ tự, không dài quá 115%), chấp nhận cả bản Markdown thô lẫn bản
+  đã định dạng. Lệch thì báo `CONTENT_MISMATCH` thay vì `EDITOR_NOT_FOUND`. Bản nháp cũ còn trong khung soạn thì chờ bạn
+  (`WAITING_USER`).
+- **AI điền mục còn thiếu rồi tự Đăng** (`EXTENSION_AI_FORM_FILL_ENABLED=true`, mặc định bật):
+  - **Khi nào chạy:** sau khi điền tiêu đề / nội dung mà nút Đăng còn tắt, còn ô bắt buộc trống hoặc ô báo lỗi.
+  - **Tiện ích gửi gì:** danh sách ô của khung soạn (select, checkbox, radio, combobox, ô chữ ngắn: nhãn, bắt buộc, báo lỗi,
+    tối đa 40 lựa chọn). Không gửi ô mật khẩu, email, ô ẩn, mã một lần, ô tiêu đề / nội dung, chữ đang nhập.
+  - **Máy chủ thêm:** ngôn ngữ, tiêu đề, tag và community / chuyên mục đã cấu hình. AI trả thao tác theo số thứ tự ô.
+  - **Máy chủ kiểm:** giá trị phải nằm trong danh sách lựa chọn; không đụng ô tiêu đề / nội dung / mật khẩu / email / đăng
+    ký bản tin; không tick NSFW trừ khi bắt buộc; độ tin cậy dưới `EXTENSION_UI_HINT_MIN_CONFIDENCE` thì không trả thao
+    tác.
+  - **Kết quả:** tiện ích điền, kiểm lại (nút Đăng bật, hết ô lỗi, chữ bài không đổi) rồi tự bấm Đăng. AI không chắc thì
+    dừng "Tiện ích cần bạn".
+  - **Giới hạn:** tối đa 2 lần mỗi bài, dùng chung hạn mức mỗi giờ với gợi ý giao diện.
+  - **API:** `POST /api/v1/extension/agent/tasks/:id/form-fill`, rồi `GET …/form-fill/:hintId`.
+- **Lemmy / Discuit:**
+  - Ngôn ngữ chọn theo ngôn ngữ bài (`recipe.languageSelectors`).
+  - Community được chọn trước khi gõ bài. Chưa cấu hình community thì AI chọn trong danh sách trang đưa ra; tắt form-fill
+    thì dừng trước khi gõ.
+- **Quora** không còn lặp dòng đầu: nơi không có ô tiêu đề thì tiêu đề rỗng, tiện ích chỉ ghép tiêu đề khi bài chưa bắt
+  đầu bằng nó.
+
 ## Backend 1.15.0: thêm social không đăng nhập lại cả loạt, tự kết nối social đã đăng nhập
 
 - **Nhập lại file chỉ xử lý social mới:**
@@ -386,8 +436,8 @@ Mỗi tài khoản lưu riêng trang tạo bài, chuyên mục, tag và chế đ
 loại diễn đàn của luồng. Danh mục không xác nhận quyền đăng của tài khoản: tài khoản cần được diễn đàn cho phép
 tạo chủ đề. MongoDB trước đó trả `can_create_topic: false`, nên tài khoản này vẫn tắt.
 
-Một chiến dịch có thể chọn nhiều tài khoản diễn đàn. Tiện ích chạy tối đa **3 luồng đang đăng** cùng lúc; các bài
-cùng tên miền chạy lần lượt để giữ riêng bản nháp, kể cả khi một bài đang chờ thao tác. Mỗi bài nhận tiêu đề,
+Một chiến dịch có thể chọn nhiều tài khoản diễn đàn. Tiện ích chạy tối đa **2 luồng đang đăng** cùng lúc (từ 1.12.0); các bài
+cùng tên miền chạy lần lượt để giữ riêng bản nháp, kể cả khi một bài đang chờ thao tác (tối đa 10 phút). Mỗi bài nhận tiêu đề,
 nội dung và kết quả riêng. Bài gặp CAPTCHA chuyển sang chờ thao tác, các diễn đàn khác vẫn tiếp tục.
 Phần còn lại nằm trong hàng đợi.
 
@@ -395,14 +445,14 @@ Phần còn lại nằm trong hàng đợi.
 
 ```text
 Chiến dịch → job → worker → ExtensionConnector: job "Chờ tiện ích Chrome"
-Tiện ích (30 giây/lần) → POST /extension/agent/claim → nhận từng bài, tối đa 3 luồng đang đăng
+Tiện ích (30 giây/lần) → POST /extension/agent/claim → nhận từng bài, tối đa 2 luồng đang đăng ở 2 trang khác nhau
   → mở tab trang tạo chủ đề → điền → bấm Đăng → xác nhận link, tiêu đề và nội dung đầu bài
   → POST /extension/agent/tasks/:id/result {PUBLISHED, url} → job "Đã đăng", lưu link
 ```
 
 - Gặp **CAPTCHA**, hoặc tài khoản tắt **Tự bấm Đăng**: tiện ích điền sẵn, đưa tab lên trước, job hiện "Tiện ích cần
   bạn". Bạn giải CAPTCHA / kiểm tra rồi bấm Đăng; tiện ích tự nhận ra link bài và báo "Đã đăng". Tab đang chờ không
-  làm tắc các bài khác: tiện ích theo dõi tối đa 5 tab chờ, quá số đó thì ngừng theo dõi tab cũ nhất (tab vẫn mở).
+  làm tắc các bài khác: tab chờ không chiếm chỗ, quá 10 phút thì tiện ích đóng tab và nhận bài tiếp (từ 1.12.0).
 - **Chưa đăng nhập diễn đàn**, không thấy form, tab bị đóng trước khi điền, chưa cấp quyền: job "Thất bại" kèm lý
   do. Những lỗi này chắc chắn chưa gửi gì, nên bấm **Retry** trên trang Publishing là an toàn.
 - **Đã bấm Đăng nhưng không thấy bài mới / diễn đàn báo lỗi / tiện ích im lặng quá 10 phút**: không bao giờ tự đăng
@@ -576,7 +626,7 @@ Get-Content scripts/sync-social-api-platforms.cjs -Raw -Encoding UTF8 | docker c
 
 ## Demo / kiểm thử không cần Docker
 
-Từ bản 1.7.5, extension chỉ chạy một lượt đăng tại một thời điểm. Tab đã xác nhận đăng thành công hoặc được nền tảng nhận để kiểm duyệt sẽ tự đóng sau khi báo kết quả về backend. Tab CAPTCHA/bản nháp cần người xử lý vẫn được theo dõi; khi có ba tab tác vụ đang giữ, extension ngừng mở thêm cho đến khi có chỗ trống. Sau khi cập nhật thư mục extension, Reload tại `chrome://extensions` để nạp mã mới; trang `reload.html` của extension chờ lượt đang chạy xong và giữ checkpoint trước khi reload.
+Từ bản 1.12.0, extension chạy tối đa hai lượt đăng cùng lúc ở hai trang khác nhau. Tab đã xác nhận đăng thành công hoặc được nền tảng nhận để kiểm duyệt sẽ tự đóng sau khi báo kết quả về backend. Tab CAPTCHA/bản nháp cần người xử lý không chiếm chỗ và được nhả sau 10 phút. Sau khi cập nhật thư mục extension, Reload tại `chrome://extensions` để nạp mã mới; trang `reload.html` của extension chờ lượt đang chạy xong và giữ checkpoint trước khi reload.
 
 `INLINE_PUBLISH_WORKER=true` (chỉ khi `NODE_ENV` khác `production`) cho API tự chạy worker trong cùng tiến trình;
 kèm `SKIP_INFRA_CONNECT=true` thì chỉ cần PostgreSQL. Bộ kiểm thử đầu-cuối ở `scripts/extension-e2e/`:

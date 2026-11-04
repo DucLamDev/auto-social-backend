@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PlatformMode } from '@prisma/client';
 import { ErrorCode } from '../../common/exceptions/application.exception';
+import { checkTextLength, postLengthMessage } from '../../platforms/post-length';
 import { ConnectorError } from '../core/connector-error';
 import { HttpConnectorBase } from '../core/http-connector.base';
 import { ConnectionTestResult, ConnectorAccount, PostPayload, PublishResult } from '../core/connector.types';
@@ -17,7 +18,10 @@ export class BlueskyConnector extends HttpConnectorBase implements SocialPublish
   readonly capability = { text: true, image: false, video: false, article: false, delete: false, schedule: false, analytics: false, maxText: 300 };
 
   validate(post: PostPayload): Promise<void> {
-    if (!post.body.trim() || post.body.length > 300) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, 'Bluesky post must contain 1-300 characters', false);
+    if (!post.body.trim()) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, 'Bluesky post must contain 1-300 characters', false);
+    // Bluesky counts graphemes: an emoji or an accented letter is one character.
+    const length = checkTextLength(this.platform, post.body);
+    if (length.over) throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, postLengthMessage('Bluesky', length), false);
     if (post.media?.length) throw new ConnectorError(ErrorCode.PLATFORM_MEDIA_INVALID, 'Blob upload is outside the MVP Bluesky connector scope', false);
     return Promise.resolve();
   }

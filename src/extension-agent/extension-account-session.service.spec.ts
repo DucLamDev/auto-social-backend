@@ -2,7 +2,7 @@ import { CredentialStatus } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { CredentialsService } from '../credentials/credentials.service';
 import { CredentialEncryptionService } from '../credentials/credential-encryption.service';
-import { deviceCanRunAccount, ExtensionAccountSessionService, sessionOf } from './extension-account-session.service';
+import { deviceCanRunAccount, ExtensionAccountSessionService, isRegistrationPage, sessionOf } from './extension-account-session.service';
 import { ExtensionSessionDto } from './extension-agent.dto';
 
 const base = { delivery: 'extension', extensionEngine: 'discourse', extensionTargetUrl: 'https://forum.test/new-topic', extensionAutoSubmit: true };
@@ -130,5 +130,28 @@ describe('Chrome account sessions', () => {
     prisma.publishJob.findFirst.mockResolvedValue({ platformAccountId: 'account-a', platformAccount: { settings: { ...base, extensionSession: { ...input, provider: 'google', origin: 'https://forum.test' } } } });
     await expect(service.authStep(device, 'job-a', { step: 'password', pageUrl: 'https://forum.test/login' })).rejects.toThrow('origin');
     await expect(service.authStep(device, 'job-a', { step: 'password', pageUrl: 'https://accounts.google.com/v3/signin/challenge/pwd' })).resolves.toEqual({ username: input.loginUsername, password: input.password });
+  });
+
+  it('never hands a login secret to a sign-up page on the right origin', async () => {
+    const { service, prisma, credentials } = setup();
+    prisma.publishJob.findFirst.mockResolvedValue({ platformAccountId: 'account-a', platformAccount: { settings: { ...base, extensionSession: { ...input, origin: 'https://forum.test' } } } });
+    for (const pageUrl of ['https://forum.test/signup', 'https://forum.test/users/sign_up', 'https://forum.test/u/Register?next=/', 'https://forum.test/join',
+      'https://forum.test/account/create-account', 'https://forum.test/registration.php', 'https://forum.test/ucp.php?mode=register']) {
+      for (const step of ['identifier', 'password', 'totp'] as const) {
+        await expect(service.authStep(device, 'job-a', { step, pageUrl })).rejects.toThrow('sign-up form');
+      }
+    }
+    expect(credentials.resolve).not.toHaveBeenCalled();
+    expect(prisma.publishJob.updateMany).not.toHaveBeenCalled();
+    await expect(service.authStep(device, 'job-a', { step: 'password', pageUrl: 'https://forum.test/login?return=/signup' })).resolves.toMatchObject({ password: input.password });
+  });
+
+  it('tells sign-up pages from login pages', () => {
+    for (const url of ['https://meta.discourse.org/signup', 'https://mastodon.social/auth/sign_up', 'https://x.test/sign-up/', 'https://x.test/new-account', 'https://accounts.google.com/lifecycle/steps/signup/name']) {
+      expect(isRegistrationPage(new URL(url))).toBe(true);
+    }
+    for (const url of ['https://meta.discourse.org/login', 'https://x.test/session/sso_login', 'https://accounts.google.com/v3/signin/identifier', 'https://x.test/joint-venture', 'https://x.test/ucp.php?mode=login', 'https://x.test/c/join-us']) {
+      expect(isRegistrationPage(new URL(url))).toBe(false);
+    }
   });
 });

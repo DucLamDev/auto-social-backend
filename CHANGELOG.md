@@ -1,6 +1,44 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.17.0 · 04/11/2026
+### Tính năng
+- Tiện ích Chrome 1.12.0: hàng đợi không kẹt, AI điền mục còn thiếu rồi tự Đăng, bài không vượt giới hạn ký tự
+  Cần nạp lại tiện ích 1.12.0. Hướng dẫn đầy đủ ở đầu `BROWSER_EXTENSION_CHROME.md`.
+  - **Một bài lỗi không chặn bài khác.**
+    - Trước đây tiện ích giữ mãi các tab lỗi / chờ và ngừng nhận việc khi đủ 3 tab, nên mọi bài đứng "Chờ tiện ích".
+    - Nay tiện ích đăng 2 bài cùng lúc ở 2 trang khác nhau. Tab chờ không chiếm chỗ và tự đóng sau 10 phút.
+    - Máy chủ cho việc treo hết hạn theo lịch mỗi phút. Bài đã được nhận mà im lặng quá 10 phút thì giao lại được.
+  - **Báo đăng nhập thất bại không còn bị trả 400.** Kết quả có `detectedUsername` / `googleBlocked` được nhận, nên job
+    không đứng mãi. Trang đăng ký (`/signup`, `/register`…) không bao giờ nhận mật khẩu và không bị điền.
+  - **AI điền mục còn thiếu** (`EXTENSION_AI_FORM_FILL_ENABLED`, mặc định bật).
+    - Nút Đăng còn tắt hoặc form báo thiếu mục thì tiện ích gửi cấu trúc form (không mật khẩu, không chữ đang nhập).
+    - AI chọn ngôn ngữ, community, chuyên mục, tag… trong danh sách lựa chọn. Máy chủ kiểm từng thao tác.
+    - Tiện ích điền, kiểm lại rồi tự bấm Đăng; AI không chắc thì dừng chờ bạn.
+    - Lệnh mới `POST /extension/agent/tasks/:id/form-fill`.
+    - Lemmy chọn ngôn ngữ theo bài. Chưa cấu hình community thì AI chọn community trong danh sách trang đưa ra.
+  - **Bài không vượt giới hạn ký tự.**
+    - Một hàm đếm chung dùng cho mọi bước: AI viết, duyệt, sửa, giao cho tiện ích, connector API. Mastodon tính link
+      23 ký tự; X tính cả tên miền trần.
+    - AI được báo đúng ngân sách đã trừ dòng "Nguồn". Viết lại 2 lần vẫn dài thì AI rút gọn thêm 1 lần, cuối cùng máy cắt
+      ở cuối câu; bài bị máy cắt luôn chờ duyệt.
+    - Bản quá dài luôn xếp dưới bản vừa.
+    - Duyệt, sửa hay tạo tay bài quá dài thì trả 400. "Duyệt tất cả" giữ bài quá dài ở chờ duyệt (`overLimitVariants`),
+      các bài khác vẫn đăng.
+    - Tiện ích không bao giờ nhận bài quá dài (`EXTENSION_CONTENT_TOO_LONG`) và kiểm trước khi gõ. Tiêu đề Lemmy tối đa 200.
+  - **Trình soạn thảo có định dạng giữ đúng bài.**
+    - Differ, Medium, Substack, daily.dev, Quora, Tumblr, DZone, AWS Builder nhận bài đã định dạng: Markdown chuyển sang
+      HTML an toàn, tự viết, không thêm thư viện.
+    - Các trang khác giữ xuống dòng.
+    - Kiểm chữ so dãy từ thay vì đòi giống hệt. Lệch thì báo `CONTENT_MISMATCH`, không còn gọi nhầm là
+      `EDITOR_NOT_FOUND`.
+  - **Bản xem trước khớp bài thật.** `POST /content-variants/:id/preview` trả thêm:
+    - `appearance` (`markdown` | `plain` | `rich`);
+    - tag thật sự gửi;
+    - `destination` (community / chuyên mục / ngôn ngữ);
+    - độ dài theo cách đếm mới.
+    Quora không còn lặp dòng đầu; dòng "Nguồn" không lặp khi bài đã có link đó.
+
 ## 1.16.0 · 04/11/2026
 ### Tính năng
 - Sửa bài theo khuyến nghị của AI, chọn được từng mục

@@ -55,7 +55,12 @@ export interface ExtensionRecipe {
   /** Page must show one of these before the runner touches anything. */
   readySelectors: string[];
   titleSelectors: string[];
-  /** Tried in order; contenteditable editors get HTML paragraphs, textareas plain text. */
+  /**
+   * Tried in order. How the body goes in follows `inputMode`; without it the
+   * runner picks by element: a textarea gets its value set, a social-network
+   * contenteditable gets the plain text typed (`insertText`; Slate and CKEditor
+   * a text/plain paste), and a forum contenteditable gets escaped `<p>` paragraphs.
+   */
   bodySelectors: string[];
   submitSelectors: string[];
   /** Regex source matched against the tab URL once the post exists. */
@@ -67,6 +72,15 @@ export interface ExtensionRecipe {
   captchaSelectors: string[];
   /** How the body is written: markdown/BBCode-free plain paragraphs for every engine. */
   bodyFormat: 'paragraphs';
+  /**
+   * How the extension puts the body into the editor: `value` sets a textarea,
+   * `insertText` types plain text keeping line breaks, `pasteHtml` pastes
+   * `post.bodyHtml` (with `post.body` as text/plain) so rich editors keep
+   * headings, lists and code blocks. Absent: the runner picks by element type.
+   */
+  inputMode?: 'value' | 'insertText' | 'pasteHtml';
+  /** `<select>` (or combobox) of the post language; the runner picks the option matching `post.language`. */
+  languageSelectors?: string[];
 }
 
 const CAPTCHA_SELECTORS = [

@@ -331,3 +331,43 @@ test('recognizes a social "submitted to moderation" toast but not help text abou
     assert.equal(await page.evaluate(readModeration, recipe), null);
   } finally { await page.close(); }
 });
+
+// ---- 1.12.0: a found editor is never reported as "editor not found" ---------
+test('a forum editor that loses part of the post is a content mismatch, never submitted', async () => {
+  // The editor keeps only the first 20 characters of whatever is typed.
+  const mangled = editor.replace('<textarea class="d-editor-input"></textarea>', '<textarea class="d-editor-input" oninput="this.value = this.value.slice(0, 20)"></textarea>');
+  const { result, state } = await runForum(mangled, { ...task, autoSubmit: true });
+  assert.equal(result.status, 'contentMismatch');
+  assert.equal(state.submits, 0);
+});
+
+test('a filled forum post whose Post button is disabled waits for the operator instead of failing', async () => {
+  const locked = editor.replace('<button class="create"', '<button class="create" disabled');
+  const { result, state } = await runForum(locked, { ...task, autoSubmit: true });
+  assert.equal(result.status, 'filled');
+  assert.deepEqual(result.missing, ['submit']);
+  assert.equal(state.body, task.post.body);
+  assert.equal(state.submits, 0);
+});
+
+test('a forum post over the destination limit is not typed', async () => {
+  const { result, state } = await runForum(editor, { ...task, autoSubmit: true, post: { ...task.post, maxChars: 20, length: 42 } });
+  assert.deepEqual(result, { status: 'tooLong', message: 'Nội dung dài 42/20 ký tự, vượt giới hạn của kênh này. Cần rút gọn trên web.' });
+  assert.equal(state.body, '');
+  assert.equal(state.submits, 0);
+});
+
+test('the forum content check accepts an editor that renders the Markdown (same words, no symbols or URLs)', async () => {
+  const markdownTask = { ...task, recipe: { ...EXTENSION_RECIPES.xenforo }, autoSubmit: false,
+    post: { title: 'Rendered Markdown topic', body: '## Setup\n\n- Install the package\n- Run `nginx -t`\n\nSee [the docs](https://nginx.org/) first.' } };
+  const page = await browser.newPage();
+  try {
+    await page.route('http://forum.test/**', route => route.fulfill({ contentType: 'text/html', body: '<form action="/forums/general.1/post-thread"><input name="title"><div class="fr-element fr-view" contenteditable="true"></div><button type="submit" class="button--primary">Post</button></form>'
+      // The editor renders the Markdown it receives (heading, list, inline code, link text only).
+      + '<script>document.querySelector(".fr-element").addEventListener("input", event => { event.target.innerHTML = "<h2>Setup</h2><ul><li>Install the package</li><li>Run <code>nginx -t</code></li></ul><p>See <a href=\\"https://nginx.org/\\">the docs</a> first.</p>"; });</script>' }));
+    await page.goto('http://forum.test/forums/general.1/post-thread');
+    const result = await page.evaluate(fillAndSubmit, markdownTask);
+    assert.equal(result.status, 'filled', JSON.stringify(result));
+    assert.match(await page.locator('.fr-element').innerHTML(), /<h2>Setup<\/h2>/);
+  } finally { await page.close(); }
+});

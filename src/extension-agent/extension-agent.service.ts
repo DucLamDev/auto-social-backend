@@ -14,8 +14,10 @@ import {
   parseExtensionDeliverySettings,
 } from '../connectors/extension/extension-delivery';
 import { PrismaService } from '../database/prisma.service';
-import { renderForExtension } from '../platforms/post-text';
-import { platformContract } from '../platforms/platform-contract';
+import { renderForExtension, renderPostText, type PostTextInput } from '../platforms/post-text';
+import { detectLanguage, platformContract, type AudienceLanguage } from '../platforms/platform-contract';
+import { checkPostLength, contractFor, postLengthMessage } from '../platforms/post-length';
+import { markdownToHtml } from '../platforms/markdown-html';
 import { destinationTags } from '../connectors/extension/extension-tags';
 import { EXTENSION_FAILED_REASONS, ExtensionDeliveryDto, ExtensionTaskResultDto } from './extension-agent.dto';
 import { extensionFlowForPlatform, validateExtensionFlow } from '../connectors/extension/extension-flows';
@@ -23,12 +25,17 @@ import { deviceCanRunAccount, sessionOf } from './extension-account-session.serv
 import { repairEscapedNewlines } from '../common/utils/escaped-text';
 import { mergeApprovedSelectors } from './ui-recovery/selector-merge';
 import { ExtensionSelectorSuggestionService } from './ui-recovery/selector-suggestion.service';
+import { EXTENSION_ACCOUNT, EXTENSION_CLAIM_TIMEOUT_MS, EXTENSION_RESULT_UNKNOWN, expireStaleExtensionClaims } from './stale-claims';
 
+export { EXTENSION_CLAIM_TIMEOUT_MS, EXTENSION_RESULT_UNKNOWN };
 export const EXTENSION_TOKEN_PREFIX = 'spx_';
-/** A claimed task without any report after this long is treated as "result unknown". */
-export const EXTENSION_CLAIM_TIMEOUT_MS = 10 * 60_000;
-export const EXTENSION_RESULT_UNKNOWN = 'EXTENSION_RESULT_UNKNOWN';
+/** The post is longer than the destination accepts; the operator shortens it, then requeues. */
+export const EXTENSION_CONTENT_TOO_LONG = 'EXTENSION_CONTENT_TOO_LONG';
 const SEEN_WRITE_INTERVAL_MS = 30_000;
+/** Compare-and-set losses to another Chrome before giving up for this poll. */
+const MAX_CLAIM_RACES = 3;
+/** Over-long posts set aside in one poll; each is parked for the operator, so the next poll moves on. */
+const MAX_SET_ASIDE_PER_CLAIM = 20;
 
 export interface AuthenticatedDevice {
   id: string;
@@ -40,8 +47,17 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-/** Prisma JSON filter: accounts switched to Chrome extension delivery. */
-const EXTENSION_ACCOUNT = { settings: { path: ['delivery'], equals: EXTENSION_CONNECTOR_KEY } } satisfies Prisma.PlatformAccountWhereInput;
+/** Raised while preparing a task whose post the destination would refuse. */
+class PostTooLongError extends Error {}
+
+/**
+ * Language the post is written in (what a language selector should show):
+ * detected from the text sent, else the destination contract's language.
+ */
+export function taskPostLanguage(renderedBody: string, input: PostTextInput, platformSlug: string, engine: ExtensionEngine): AudienceLanguage {
+  const detected = detectLanguage(renderedBody);
+  return detected === 'unknown' ? contractFor({ platformSlug, engine, body: input.body }).language : detected;
+}
 
 /** Best-effort stable id from a forum thread URL (XenForo `.123`, Discourse `/t/slug/123`, phpBB `t=123`). */
 export function threadIdFromUrl(url: string): string {
@@ -230,7 +246,9 @@ export class ExtensionAgentService {
       try { const settings = parseExtensionDeliverySettings(account.settings); return !supportedEngines.includes(settings.engine) || excluded.has(new URL(settings.targetUrl).origin); }
       catch { return true; }
     }).map((account) => account.id);
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    let races = 0;
+    let setAside = 0;
+    while (races < MAX_CLAIM_RACES && setAside < MAX_SET_ASIDE_PER_CLAIM) {
       const job = await this.prisma.publishJob.findFirst({
         where: { ...this.claimableWhere(device.ownerId), ...(excludedAccountIds.length ? { platformAccountId: { notIn: excludedAccountIds } } : {}) },
         orderBy: [{ scheduledAt: 'asc' }, { createdAt: 'asc' }],
@@ -241,8 +259,19 @@ export class ExtensionAgentService {
         where: { id: job.id, status: PublishJobStatus.NEEDS_ACTION, lockedAt: null, lastErrorCode: null },
         data: { lockedAt: new Date(), extensionClaimDeviceId: device.id, extensionPasswordIssuedAt: null, extensionTotpIssuedAt: null },
       });
-      if (!claimed.count) continue; // another device won the race
-      return this.task(job.id, device);
+      if (!claimed.count) { races += 1; continue; } // another device won the race
+      try {
+        return await this.task(job.id, device);
+      } catch (error) {
+        if (!(error instanceof PostTooLongError)) throw error;
+        // The site would refuse or cut it: never hand it out. Park it for the
+        // operator and release the claim, then look at the next post.
+        await this.prisma.publishJob.updateMany({
+          where: { id: job.id, status: PublishJobStatus.NEEDS_ACTION, extensionClaimDeviceId: device.id, lastErrorCode: null },
+          data: { lockedAt: null, extensionClaimDeviceId: null, lastErrorCode: EXTENSION_CONTENT_TOO_LONG, lastErrorMessage: error.message },
+        });
+        setAside += 1;
+      }
     }
     return null;
   }
@@ -290,6 +319,7 @@ export class ExtensionAgentService {
           lastErrorMessage: dto.message ?? null,
         },
       });
+      await this.recordReportDetails(jobId, dto);
       await this.campaignStatus.refresh(job.target.campaignId);
       return { recorded: 'FAILED' };
     }
@@ -299,18 +329,49 @@ export class ExtensionAgentService {
       where: { id: jobId, status: PublishJobStatus.NEEDS_ACTION },
       data: { lastErrorCode: `EXTENSION_${dto.reason ?? 'SUBMIT_UNCONFIRMED'}`, lastErrorMessage: dto.message ?? null },
     });
+    await this.recordReportDetails(jobId, dto);
     return { recorded: 'NEEDS_ACTION' };
   }
 
-  /** Operator confirmed nothing was posted: put the job back in the extension queue. */
+  /**
+   * Sign-in details the extension adds to a stop (which account Chrome is
+   * signed in to, Google blocking the login) go to the attempt details for the
+   * operator; they never change the job.
+   */
+  private async recordReportDetails(jobId: string, dto: ExtensionTaskResultDto) {
+    const detectedUsername = dto.detectedUsername?.trim().slice(0, 200);
+    if (!detectedUsername && dto.googleBlocked !== true) return;
+    const attempt = await this.prisma.publishAttempt.findFirst({ where: { publishJobId: jobId }, orderBy: { attemptNumber: 'desc' }, select: { id: true, responseMetadata: true } });
+    if (!attempt) return;
+    const extensionReport = { ...(detectedUsername ? { detectedUsername } : {}), ...(dto.googleBlocked === true ? { googleBlocked: true } : {}) };
+    await this.prisma.publishAttempt.update({
+      where: { id: attempt.id },
+      data: { responseMetadata: { ...asRecord(attempt.responseMetadata), extensionReport } },
+    });
+  }
+
+  /**
+   * Operator confirmed nothing was posted: put the job back in the extension
+   * queue. Covers a job the extension stopped on (any EXTENSION_* code except a
+   * post the site is moderating) and a claim that went silent past the claim
+   * timeout before the scheduler marked it.
+   */
   async requeue(ownerId: string, jobId: string) {
     const result = await this.prisma.publishJob.updateMany({
       where: {
         id: jobId,
         status: PublishJobStatus.NEEDS_ACTION,
-        lastErrorCode: { startsWith: 'EXTENSION_', not: 'EXTENSION_MODERATION_PENDING' },
         target: { campaign: { ownerId } },
         platformAccount: EXTENSION_ACCOUNT,
+        OR: [
+          { lastErrorCode: { startsWith: 'EXTENSION_', not: 'EXTENSION_MODERATION_PENDING' } },
+          {
+            lastErrorCode: null,
+            lockedAt: { lt: new Date(Date.now() - EXTENSION_CLAIM_TIMEOUT_MS) },
+            publishedPost: null,
+            attempts: { some: { responseMetadata: { path: ['extensionQueued'], equals: true } } },
+          },
+        ],
       },
       data: { lastErrorCode: null, lastErrorMessage: null, lockedAt: null, extensionClaimDeviceId: null, extensionPasswordIssuedAt: null, extensionTotpIssuedAt: null },
     });
@@ -331,24 +392,9 @@ export class ExtensionAgentService {
     };
   }
 
-  /**
-   * A claim with no report may mean the extension posted and then crashed.
-   * Never re-claim it automatically: ask the operator to check the forum.
-   */
+  /** Also runs every minute from the scheduler, for a Chrome that stopped polling. */
   private async expireStaleClaims(ownerId: string) {
-    await this.prisma.publishJob.updateMany({
-      where: {
-        status: PublishJobStatus.NEEDS_ACTION,
-        lastErrorCode: null,
-        lockedAt: { lt: new Date(Date.now() - EXTENSION_CLAIM_TIMEOUT_MS) },
-        target: { campaign: { ownerId } },
-        platformAccount: EXTENSION_ACCOUNT,
-      },
-      data: {
-        lastErrorCode: EXTENSION_RESULT_UNKNOWN,
-        lastErrorMessage: 'Tiện ích không báo kết quả trong 10 phút. Kiểm tra diễn đàn: đã có bài thì bấm Đã đăng, chưa có thì Giao lại cho tiện ích.',
-      },
-    });
+    await expireStaleExtensionClaims(this.prisma, ownerId);
   }
 
   private async task(jobId: string, device: AuthenticatedDevice) {
@@ -366,8 +412,18 @@ export class ExtensionAgentService {
     const session = sessionOf(job.platformAccount.settings);
     if (session && session.deviceId !== device.id) throw new UnauthorizedException('Account was assigned to another Chrome profile');
     const variant = job.target.contentVariant;
-    const flow = validateExtensionFlow(job.platformAccount.platform.slug, settings);
-    const post = renderForExtension(variant, job.platformAccount.platform.slug, settings.engine, variant.content.canonicalUrl);
+    const platformSlug = job.platformAccount.platform.slug;
+    const flow = validateExtensionFlow(platformSlug, settings);
+    const canonicalUrl = variant.content.canonicalUrl;
+    // The same count the approval and editing checks use: a post over the limit never reaches the site.
+    const length = checkPostLength({ title: variant.title, body: variant.body, hashtags: variant.hashtags, platformSlug, engine: settings.engine, canonicalUrl });
+    if (length.over) throw new PostTooLongError(postLengthMessage(job.platformAccount.platform.name, length));
+    const post = renderForExtension(variant, platformSlug, settings.engine, canonicalUrl);
+    const baseRecipe = EXTENSION_RECIPES[settings.engine];
+    // Rich editors get the formatted version of the same text (Markdown kept, then turned into HTML).
+    const bodyHtml = baseRecipe.inputMode === 'pasteHtml'
+      ? markdownToHtml(renderPostText(variant, { ...contractFor({ platformSlug, engine: settings.engine, body: variant.body }), format: 'markdown' }, canonicalUrl).body)
+      : undefined;
     // Required media (Pixelfed photo, SlideShare PDF) or one optional image the
     // composer can take; the variant's own file wins over the shared upload.
     const mediaKind = EXTENSION_RECIPES[settings.engine].requiredMedia ?? EXTENSION_RECIPES[settings.engine].optionalMedia;
@@ -387,8 +443,9 @@ export class ExtensionAgentService {
       targetOrigin,
       autoSubmit: settings.autoSubmit,
       ...(session ? { auth: session } : {}),
-      recipe: mergeApprovedSelectors(EXTENSION_RECIPES[settings.engine], approvedSelectors),
+      recipe: mergeApprovedSelectors(baseRecipe, approvedSelectors),
       uiRecovery: { enabled: this.config?.get<boolean>('EXTENSION_UI_RECOVERY_ENABLED') === true },
+      formFill: { enabled: this.config?.get<boolean>('EXTENSION_AI_FORM_FILL_ENABLED') === true },
       options: {
         tags: settings.tags ?? [],
         // The AI's topic tags go to the tag field (not the body) on these destinations;
@@ -398,7 +455,14 @@ export class ExtensionAgentService {
         category: settings.category ?? '', flair: settings.flair ?? '', sendEmail: false,
       },
       media,
-      post: { ...post, summary: variant.summary ?? '' },
+      post: {
+        ...post,
+        summary: variant.summary ?? '',
+        maxChars: length.maxChars,
+        length: length.length,
+        language: taskPostLanguage(post.body, variant, platformSlug, settings.engine),
+        ...(bodyHtml !== undefined ? { bodyHtml } : {}),
+      },
     };
   }
 

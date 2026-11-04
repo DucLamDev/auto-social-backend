@@ -5,7 +5,7 @@ import { sha256 } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { createHash } from 'node:crypto';
-import { EXTENSION_RESULT_UNKNOWN, ExtensionAgentService, forumPost, threadIdFromUrl } from './extension-agent.service';
+import { EXTENSION_CONTENT_TOO_LONG, EXTENSION_RESULT_UNKNOWN, ExtensionAgentService, forumPost, threadIdFromUrl } from './extension-agent.service';
 import { EXTENSION_RECIPES } from '../connectors/extension/extension-delivery';
 import { ExtensionSelectorSuggestionService } from './ui-recovery/selector-suggestion.service';
 
@@ -21,6 +21,7 @@ function setup() {
   const prisma = {
     extensionDevice: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}), create: jest.fn(), updateMany: jest.fn(), count: jest.fn().mockResolvedValue(1) },
     publishJob: { findFirst: jest.fn(), findUniqueOrThrow: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }), count: jest.fn().mockResolvedValue(0) },
+    publishAttempt: { findFirst: jest.fn().mockResolvedValue({ id: 'att-1', responseMetadata: { extensionQueued: true } }), update: jest.fn().mockResolvedValue({}) },
     platformAccount: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn(), update: jest.fn() },
     mediaAsset: { findFirst: jest.fn() },
     $transaction: jest.fn((run: (client: typeof tx) => Promise<unknown>) => run(tx)),
@@ -155,7 +156,8 @@ describe('ExtensionAgentService', () => {
     const task = await service.claim(device);
     expect(task).toMatchObject({ jobId: 'job-1', openUrl: settings.extensionTargetUrl, targetOrigin: 'https://voz.vn', autoSubmit: true, recipe: { engine: 'xenforo' } });
     // Forum topics keep tags in the forum's own tag field; hashtags are not printed in the body.
-    expect(task?.post).toEqual({ title: 'Tiêu đề', body: 'Nội dung', summary: '' });
+    expect(task?.post).toMatchObject({ title: 'Tiêu đề', body: 'Nội dung', summary: '', length: 8, language: 'vi' });
+    expect(task?.post).not.toHaveProperty('bodyHtml');
     const claimCall = (prisma.publishJob.updateMany.mock.calls[1] as [{ where: Record<string, unknown> }])[0];
     expect(claimCall.where).toMatchObject({ id: 'job-1', lockedAt: null, lastErrorCode: null });
     // XenForo has no tag field the extension fills: the AI tag goes nowhere.
@@ -250,8 +252,105 @@ describe('ExtensionAgentService', () => {
     expect(tx.publishedPost.create).not.toHaveBeenCalled();
     prisma.publishJob.updateMany.mockResolvedValueOnce({ count: 0 });
     await expect(service.requeue(device.ownerId, 'job-1')).rejects.toThrow('waiting for the operator');
-    const requeue = (prisma.publishJob.updateMany.mock.calls.at(-1) as [{ where: Record<string, unknown> }])[0];
-    expect(requeue.where.lastErrorCode).toEqual({ startsWith: 'EXTENSION_', not: 'EXTENSION_MODERATION_PENDING' });
+    const requeue = (prisma.publishJob.updateMany.mock.calls.at(-1) as [{ where: { OR: Array<Record<string, unknown>> } }])[0];
+    expect(requeue.where.OR[0]!.lastErrorCode).toEqual({ startsWith: 'EXTENSION_', not: 'EXTENSION_MODERATION_PENDING' });
+  });
+
+  it('lets the operator hand back a claim that went silent past the claim timeout, but not a fresh one', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-11-04T10:00:00Z'));
+    try {
+      const { service, prisma } = setup();
+      await expect(service.requeue('owner-1', 'job-1')).resolves.toEqual({ queued: true });
+      const call = (prisma.publishJob.updateMany.mock.calls[0] as [{ where: Record<string, unknown>; data: Record<string, unknown> }])[0];
+      expect(call.where).toMatchObject({ id: 'job-1', status: PublishJobStatus.NEEDS_ACTION, target: { campaign: { ownerId: 'owner-1' } } });
+      expect((call.where.OR as unknown[])[1]).toEqual({
+        lastErrorCode: null,
+        lockedAt: { lt: new Date('2026-11-04T09:50:00Z') },
+        publishedPost: null,
+        attempts: { some: { responseMetadata: { path: ['extensionQueued'], equals: true } } },
+      });
+      expect(call.data).toMatchObject({ lastErrorCode: null, lockedAt: null, extensionClaimDeviceId: null });
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('accepts the sign-in details of a stop and keeps them in the attempt only', async () => {
+    const { service, prisma } = setup();
+    prisma.publishJob.findFirst.mockResolvedValue(claimedJob);
+    await expect(service.report(device, 'job-1', { outcome: 'NEEDS_ACTION', reason: 'ACCOUNT_MISMATCH', message: 'Chrome đang đăng nhập tài khoản khác', detectedUsername: ' other_user ', googleBlocked: false }))
+      .resolves.toEqual({ recorded: 'NEEDS_ACTION' });
+    expect(prisma.publishJob.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ data: { lastErrorCode: 'EXTENSION_ACCOUNT_MISMATCH', lastErrorMessage: 'Chrome đang đăng nhập tài khoản khác' } }));
+    expect(prisma.publishAttempt.update).toHaveBeenCalledWith({ where: { id: 'att-1' }, data: { responseMetadata: { extensionQueued: true, extensionReport: { detectedUsername: 'other_user' } } } });
+    prisma.publishAttempt.update.mockClear();
+    await service.report(device, 'job-1', { outcome: 'NEEDS_ACTION', reason: 'AUTH_REQUIRED', googleBlocked: true });
+    expect(prisma.publishAttempt.update).toHaveBeenCalledWith({ where: { id: 'att-1' }, data: { responseMetadata: { extensionQueued: true, extensionReport: { googleBlocked: true } } } });
+    prisma.publishAttempt.update.mockClear();
+    await service.report(device, 'job-1', { outcome: 'NEEDS_ACTION', reason: 'AUTH_REQUIRED', googleBlocked: false });
+    expect(prisma.publishAttempt.update).not.toHaveBeenCalled();
+  });
+
+  it('fails a task whose editor did not keep the text as EXTENSION_CONTENT_MISMATCH', async () => {
+    const { service, prisma } = setup();
+    prisma.publishJob.findFirst.mockResolvedValue(claimedJob);
+    await expect(service.report(device, 'job-1', { outcome: 'FAILED', reason: 'CONTENT_MISMATCH', message: 'Trình soạn không giữ đúng nội dung' })).resolves.toEqual({ recorded: 'FAILED' });
+    expect((prisma.publishJob.updateMany.mock.calls.at(-1) as [{ data: Record<string, unknown> }])[0].data).toMatchObject({ status: PublishJobStatus.FAILED, lastErrorCode: 'EXTENSION_CONTENT_MISMATCH' });
+  });
+
+  it('never hands out a post over the destination limit and goes on to the next job', async () => {
+    const { service, prisma } = setup();
+    const blueskySettings = { ...settings, extensionEngine: 'bluesky', extensionTargetUrl: 'https://bsky.app/intent/compose' };
+    const job = (id: string, body: string) => ({ id, platformAccount: { id: 'acc-1', name: 'Bluesky', settings: blueskySettings, platform: { name: 'Bluesky', slug: 'bluesky' } },
+      target: { campaign: { name: 'C' }, contentVariant: { title: null, body, hashtags: [], media: [], content: { canonicalUrl: null, media: [] } } } });
+    const jobs: Record<string, ReturnType<typeof job>> = { 'too-long': job('too-long', 'x '.repeat(200).trim()), fits: job('fits', 'A short post that fits.') };
+    prisma.publishJob.findFirst.mockResolvedValueOnce({ id: 'too-long' }).mockResolvedValueOnce({ id: 'fits' });
+    prisma.publishJob.findUniqueOrThrow.mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(jobs[where.id]));
+    const task = await service.claim(device, [], ['bluesky']);
+    expect(task?.jobId).toBe('fits');
+    expect(task?.post).toMatchObject({ maxChars: 300, length: 23, body: 'A short post that fits.' });
+    const parked = (prisma.publishJob.updateMany.mock.calls as Array<[{ where: Record<string, unknown>; data: Record<string, unknown> }]>)
+      .map(([call]) => call).find((call) => call.data.lastErrorCode === EXTENSION_CONTENT_TOO_LONG)!;
+    expect(parked.where).toMatchObject({ id: 'too-long', extensionClaimDeviceId: device.id, lastErrorCode: null });
+    expect(parked.data).toMatchObject({ lockedAt: null, extensionClaimDeviceId: null });
+    expect(parked.data.lastErrorMessage).toBe('Bài Bluesky dài 399/300 ký tự, vượt giới hạn của nền tảng. Rút gọn trước khi duyệt hoặc đăng.');
+  });
+
+  it('returns nothing when every waiting post is too long', async () => {
+    const { service, prisma } = setup();
+    const blueskySettings = { ...settings, extensionEngine: 'bluesky', extensionTargetUrl: 'https://bsky.app/intent/compose' };
+    prisma.publishJob.findFirst.mockResolvedValueOnce({ id: 'too-long' }).mockResolvedValueOnce(null);
+    prisma.publishJob.findUniqueOrThrow.mockResolvedValue({ id: 'too-long', platformAccount: { id: 'acc-1', name: 'Bluesky', settings: blueskySettings, platform: { name: 'Bluesky', slug: 'bluesky' } },
+      target: { campaign: { name: 'C' }, contentVariant: { title: null, body: 'y'.repeat(301), hashtags: [], media: [], content: { canonicalUrl: null, media: [] } } } });
+    await expect(service.claim(device, [], ['bluesky'])).resolves.toBeNull();
+    expect(prisma.publishJob.findFirst).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends the length, language and form-fill flag, and HTML only to editors that paste it', async () => {
+    const { prisma, campaignStatus, storage } = setup();
+    const service = new ExtensionAgentService(
+      prisma as unknown as PrismaService, campaignStatus as unknown as CampaignStatusService, storage as unknown as StorageService, undefined,
+      { get: (key: string) => key === 'EXTENSION_AI_FORM_FILL_ENABLED' } as unknown as ConfigService,
+    );
+    const body = '## Why it matters\n\nThis guide explains **three** settings:\n\n- cache\n- workers <script>alert(1)</script>';
+    const variant = { title: 'Tuning a small server', body, hashtags: ['nginx'], media: [], content: { canonicalUrl: 'https://vpsttt.com/blog/x', media: [] } };
+    const account = (engine: string, slug: string, targetUrl: string) => ({ id: 'acc-1', name: slug, settings: { ...settings, extensionEngine: engine, extensionTargetUrl: targetUrl }, platform: { name: slug, slug } });
+    prisma.publishJob.findFirst.mockResolvedValue({ id: 'job-1' });
+
+    prisma.publishJob.findUniqueOrThrow.mockResolvedValue({ id: 'job-1', platformAccount: account('medium', 'medium', 'https://medium.com/new-story'), target: { campaign: { name: 'C' }, contentVariant: variant } });
+    const medium = await service.claim(device, [], ['medium']);
+    expect(medium?.formFill).toEqual({ enabled: true });
+    expect(medium?.recipe.inputMode).toBe('pasteHtml');
+    expect(medium?.post).toMatchObject({ language: 'en', maxChars: null });
+    expect(medium?.post.length).toBeGreaterThan(0);
+    // Plain text for the text/plain flavour, the formatted version as HTML.
+    expect(medium?.post.body).not.toContain('**');
+    expect(medium?.post.bodyHtml).toBe('<h2>Why it matters</h2><p>This guide explains <strong>three</strong> settings:</p>'
+      + '<ul><li>cache</li><li>workers &lt;script&gt;alert(1)&lt;/script&gt;</li></ul>'
+      + '<p>Source: <a href="https://vpsttt.com/blog/x">https://vpsttt.com/blog/x</a></p>');
+
+    prisma.publishJob.findUniqueOrThrow.mockResolvedValue({ id: 'job-1', platformAccount: account('devto', 'devto', 'https://dev.to/new'), target: { campaign: { name: 'C' }, contentVariant: variant } });
+    const devto = await service.claim(device, [], ['devto']);
+    expect(devto?.recipe.inputMode).toBe('value');
+    expect(devto?.post).not.toHaveProperty('bodyHtml');
+    expect(devto?.post.body).toContain('**three**');
   });
 });
 

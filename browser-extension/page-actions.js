@@ -65,6 +65,33 @@ export async function fillAndSubmit(task) {
   };
   const escapeHtml = (text) => text.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const normalize = (text) => text.replace(/\s+/g, ' ').trim();
+  // Same words in the same order, Markdown rendered or raw: a rich editor shows
+  // "Heading" for "## Heading" and link text for "[text](url)".
+  const words = (text) => String(text ?? '').normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const plainMarkdown = (text) => String(text ?? '')
+    .replace(/^\s*(?:```|~~~).*$/gm, ' ')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}\[[^\]]+\]:\s+\S.*$/gm, ' ')
+    .replace(/<((?:https?|mailto):[^>\s]+)>/gi, '$1')
+    .replace(/<\/?[a-z][^>]*>/gi, ' ')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s*(?:>\s*)+/gm, '')
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, '');
+  const similar = (expected, actual) => {
+    if (!expected.length) return !actual.length;
+    if (actual.length > Math.ceil(expected.length * 1.15)) return false;
+    if (expected.join(' ') === actual.join(' ')) return true;
+    let previous = new Uint32Array(actual.length + 1), current = new Uint32Array(actual.length + 1);
+    for (const word of expected) {
+      for (let j = 0; j < actual.length; j += 1) current[j + 1] = word === actual[j] ? previous[j] + 1 : Math.max(previous[j + 1], current[j]);
+      [previous, current] = [current, previous];
+    }
+    return previous[actual.length] >= Math.ceil(expected.length * 0.95);
+  };
+  const holds = (expected, actual) => [plainMarkdown(expected), expected].some((text) => similar(words(text), words(actual)));
+  if (task.post?.maxChars != null && typeof task.post.length === 'number' && task.post.length > task.post.maxChars) {
+    return { status: 'tooLong', message: `Nội dung dài ${task.post.length}/${task.post.maxChars} ký tự, vượt giới hạn của kênh này. Cần rút gọn trên web.` };
+  }
   // Which composer controls were not found. A Discourse page without any
   // composer first needs its "New Topic" opener.
   const notFound = ({ title, body }) => {
@@ -127,7 +154,7 @@ export async function fillAndSubmit(task) {
       selection.removeAllRanges();
       selection.addRange(range);
       if (!document.execCommand('insertText', false, task.post.body)) {
-        return { status: 'notReady', message: 'Không điền được trình soạn thảo. Chuyển sang chế độ Markdown rồi thử lại.' };
+        return { status: 'contentMismatch', message: 'Không điền được trình soạn thảo. Chuyển sang chế độ Markdown rồi thử lại.' };
       }
     } else {
       body.innerHTML = task.post.body
@@ -143,8 +170,8 @@ export async function fillAndSubmit(task) {
 
   const keptTitle = normalize(title.value ?? '') === normalize(task.post.title);
   const bodyText = body.isContentEditable ? body.innerText : body.value;
-  const keptBody = normalize(bodyText ?? '') === normalize(task.post.body);
-  if (!keptTitle || !keptBody) return { status: 'notReady', message: 'Trình soạn thảo không giữ được nội dung vừa điền' };
+  const keptBody = holds(task.post.body, bodyText);
+  if (!keptTitle || !keptBody) return { status: 'contentMismatch', message: 'Trình soạn thảo không giữ được tiêu đề/nội dung vừa điền (thiếu chữ, mất đoạn hoặc thừa nội dung); chưa gửi bài.' };
 
   if (shows(recipe.captchaSelectors)) return { status: 'captcha', message: 'Diễn đàn yêu cầu CAPTCHA' };
 
@@ -226,14 +253,15 @@ export async function fillAndSubmit(task) {
 
   const { root: finalComposer, title: finalTitle, body: finalBody } = fields();
   if (normalize(finalTitle?.value ?? '') !== normalize(task.post.title)
-    || normalize(finalBody?.isContentEditable ? finalBody.innerText : finalBody?.value ?? '') !== normalize(task.post.body)) {
+    || !holds(task.post.body, finalBody?.isContentEditable ? finalBody.innerText : finalBody?.value ?? '')) {
     return { status: 'filled', message: 'Nội dung đã thay đổi trong lúc chọn tag. Kiểm tra lại bài trong tab trước khi đăng.' };
   }
 
   const submit = recipe.engine === 'discourse'
     ? find([...recipe.submitSelectors, 'button.create', '.save-or-cancel button.btn-primary'], finalComposer)
     : find(recipe.submitSelectors);
-  if (!submit || submit.disabled || submit.getAttribute('aria-disabled') === 'true') return { status: 'notReady', message: 'Không thấy nút Đăng hoặc nút đang bị khoá', missing: ['submit'] };
+  // The post is in the editor: the operator can finish it, so this is not a missing editor.
+  if (!submit || submit.disabled || submit.getAttribute('aria-disabled') === 'true') return { status: 'filled', message: 'Đã điền bài nhưng không thấy nút Đăng hoặc nút đang bị khoá. Kiểm tra rồi bấm Đăng trong tab.', missing: ['submit'] };
   submit.click();
   return { status: 'submitted' };
 }

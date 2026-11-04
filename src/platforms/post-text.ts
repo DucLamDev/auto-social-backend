@@ -50,23 +50,49 @@ function truncate(text: string, max: number): string {
 }
 
 function hasHashtag(body: string, tag: string): boolean {
-  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escaped = escapeRegExp(tag);
   return new RegExp(`(^|\\s)#${escaped}(?![\\p{L}\\p{N}_])`, 'iu').test(body);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Whether the text already links to `url` (with or without the protocol,
+ * "www." or a trailing slash), so the source line would only repeat it.
+ */
+export function mentionsUrl(text: string, url: string): boolean {
+  const core = url.trim().replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '');
+  if (!core) return false;
+  // The link must end where the URL ends: "…/post" is not "…/post-2".
+  return new RegExp(`(?:^|[^\\w.-])(?:https?://)?(?:www\\.)?${escapeRegExp(core)}/?(?=$|[\\s)\\]>"'»”]|[.,;:!?…](?:\\s|$))`, 'i').test(text);
+}
+
+/** The line the system adds under a post to credit its source. */
+export function sourceLine(language: 'vi' | 'en', canonicalUrl: string): string {
+  return `${language === 'vi' ? 'Nguồn' : 'Source'}: ${canonicalUrl}`;
 }
 
 /**
  * The exact title/body a destination receives. Forums and articles keep tags
  * in their own fields; short-form social keeps hashtags inline and only adds
  * missing ones while the post still fits the character limit.
+ *
+ * A destination without a title field gets an empty title unless one was
+ * written: Quora's flow puts the title above the body, and a title taken from
+ * the first line would print that line twice.
  */
 export function renderPostText(input: PostTextInput, contract: PlatformContract, canonicalUrl?: string | null): { title: string; body: string } {
   const body = contract.format === 'plain' ? markdownToPlain(input.body) : input.body.trim();
-  const rawTitle = input.title?.trim() || firstLine(body);
+  const rawTitle = input.title?.trim() || (contract.titleRequired ? firstLine(body) : '');
   const cleanTitle = contract.format === 'plain' ? markdownToPlain(rawTitle) : rawTitle;
   const title = contract.titleHardLimit ? truncate(cleanTitle, contract.titleHardLimit) : cleanTitle;
   const detected = detectLanguage(body);
   const language = detected === 'unknown' ? contract.language : detected;
-  let text = [body, canonicalUrl ? `${language === 'vi' ? 'Nguồn' : 'Source'}: ${canonicalUrl}` : ''].filter(Boolean).join('\n\n');
+  // A post that already links to its source does not get the line again.
+  const source = canonicalUrl && !mentionsUrl(body, canonicalUrl) ? sourceLine(language, canonicalUrl) : '';
+  let text = [body, source].filter(Boolean).join('\n\n');
   if (contract.hashtagMode === 'inline') {
     const tags = [...new Set(input.hashtags.map((tag) => tag.trim().replace(/^#+/, '')).filter(Boolean))];
     const present = tags.filter((tag) => hasHashtag(body, tag)).length;

@@ -35,11 +35,20 @@ class PreviewVariantDto {
   @ApiPropertyOptional({ description: 'Account of the same platform whose posting route decides the formatting.' }) @IsOptional() @IsUUID() platformAccountId?: string;
 }
 
+class PreviewDestinationDto {
+  @ApiPropertyOptional({ description: 'Lemmy / Discuit community or Reddit subreddit (r/name) set on the account.' }) community?: string;
+  @ApiPropertyOptional({ description: 'Forum category or box set on the account.' }) category?: string;
+  @ApiPropertyOptional() flair?: string;
+  @ApiProperty({ enum: ['vi', 'en'] }) language!: 'vi' | 'en';
+}
+
 class VariantPreviewDto {
-  @ApiProperty({ description: 'Empty for destinations without a title field.' }) title!: string;
-  @ApiProperty({ description: 'Body exactly as the destination receives it.' }) body!: string;
+  @ApiProperty({ description: 'Empty for destinations without a title field (short-form social, Quora).' }) title!: string;
+  @ApiProperty({ description: 'Body exactly as the destination receives it; for appearance "rich" it keeps the Markdown the extension turns into HTML.' }) body!: string;
   @ApiProperty({ enum: ['plain', 'markdown', 'html'] }) format!: string;
-  @ApiProperty({ type: [String], description: 'Tags sent in the destination tag field.' }) tags!: string[];
+  @ApiProperty({ enum: ['markdown', 'plain', 'rich'], description: 'How to show the body: rendered Markdown, plain paragraphs, or rich text (pasted HTML editor or HTML field).' }) appearance!: 'markdown' | 'plain' | 'rich';
+  @ApiProperty({ type: [String], description: 'Tags really sent in the destination tag field (for a Chrome extension account: its own tags, then the AI tags the site accepts); empty when hashtags stay in the text.' }) tags!: string[];
+  @ApiProperty({ type: PreviewDestinationDto }) destination!: PreviewDestinationDto;
   @ApiProperty({ description: 'Platform group (SOCIAL, FORUM, DEVELOPER, BLOGGING…).' }) group!: string;
   @ApiPropertyOptional({ nullable: true, type: String }) engine!: string | null;
   @ApiPropertyOptional({ nullable: true, type: Number }) maxChars!: number | null;

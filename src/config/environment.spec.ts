@@ -129,6 +129,10 @@ describe('validateEnvironment', () => {
       .toMatchObject({ EXTENSION_UI_RECOVERY_ENABLED: true, EXTENSION_UI_HINT_PROVIDER: 'vpsttt', EXTENSION_UI_HINT_MIN_CONFIDENCE: 0.75 });
     expect(() => validateEnvironment({ ...productionEnvironment(), EXTENSION_UI_HINT_PROVIDER: 'other' })).toThrow('EXTENSION_UI_HINT_PROVIDER');
     expect(() => validateEnvironment({ ...productionEnvironment(), EXTENSION_UI_HINT_MIN_CONFIDENCE: '1.5' })).toThrow('EXTENSION_UI_HINT_MIN_CONFIDENCE');
+    // AI form filling (language, community…) is on unless switched off.
+    expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({ EXTENSION_AI_FORM_FILL_ENABLED: true });
+    expect(validateEnvironment({ ...productionEnvironment(), EXTENSION_AI_FORM_FILL_ENABLED: 'false' })).toMatchObject({ EXTENSION_AI_FORM_FILL_ENABLED: false });
+    expect(() => validateEnvironment({ ...productionEnvironment(), EXTENSION_AI_FORM_FILL_ENABLED: 'maybe' })).toThrow('EXTENSION_AI_FORM_FILL_ENABLED');
   });
 
   it('uses the legacy OpenAI timeout when AI_TIMEOUT_MS is absent', () => {

@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { AccountStatus, CampaignStatus, ContentStatus, PlatformMode, VariantStatus } from '@prisma/client';
 import { AiContentService } from '../ai/ai-content.service';
 import { AuditService } from '../audit/audit.service';
@@ -420,6 +421,71 @@ describe('Review with accounts that are not ready', () => {
     await service.approve('owner-1', 'campaign-1');
     expect(prisma.campaign.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ automationState: 'APPROVED' }) as unknown }));
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('Approval of a post over its character limit', () => {
+  function withMastodon() {
+    const ctx = setup();
+    // 520 characters: Mastodon refuses it, so it must never get a publish job.
+    const tooLong = { ...ctx.variant, id: 'variant-2', platformId: 'platform-2', body: 'ạ'.repeat(520) };
+    const waiting = { ...ctx.campaign, automationVariantIds: ['variant-1', 'variant-2'], automationRequest: { ...ctx.dto, platformAccountIds: ['account-1', 'account-2'] } };
+    ctx.prisma.campaign.findFirstOrThrow.mockResolvedValue(waiting);
+    ctx.prisma.campaign.findFirst.mockResolvedValue(waiting);
+    ctx.prisma.platformAccount.findMany.mockResolvedValue([readyAccount('account-1', 'platform-1', 'devto'), readyAccount('account-2', 'platform-2', 'mastodon')]);
+    Object.assign(ctx.prisma, { campaignTarget: { create: jest.fn().mockResolvedValue({ id: 'target-1' }), count: jest.fn().mockResolvedValue(1) } });
+    return { ...ctx, tooLong };
+  }
+  const message = 'Bài MASTODON dài 520/500 ký tự, vượt giới hạn của nền tảng. Rút gọn trước khi duyệt hoặc đăng.';
+
+  it('refuses to approve that one post with a 400 naming the length, and creates nothing', async () => {
+    const { service, prisma, tooLong, campaigns } = withMastodon();
+    prisma.contentVariant.findMany.mockResolvedValue([tooLong]);
+    const error = await service.approveVariant('owner-1', 'campaign-1', 'variant-2').catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).message).toBe(message);
+    expect(prisma.contentVariant.updateMany).not.toHaveBeenCalled();
+    expect(prisma.publishJob.create).not.toHaveBeenCalled();
+    expect(campaigns.publish).not.toHaveBeenCalled();
+  });
+
+  it('"approve all" posts the others and keeps it waiting, reporting why', async () => {
+    const { service, prisma, variant, tooLong, campaigns } = withMastodon();
+    prisma.contentVariant.findMany.mockResolvedValue([variant, tooLong]);
+    // Nothing decided before the click; the long post is still waiting after it.
+    prisma.contentVariant.count.mockResolvedValueOnce(0).mockResolvedValue(1);
+    const result = await service.approve('owner-1', 'campaign-1');
+    // Not the one-step approval of everything: the per-platform decision is used.
+    expect(prisma.campaign.updateMany).not.toHaveBeenCalled();
+    expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['variant-1'] } }, data: { status: VariantStatus.APPROVED } });
+    expect(prisma.publishJob.create).toHaveBeenCalledTimes(1);
+    expect(prisma.publishJob.create).toHaveBeenCalledWith({ data: expect.objectContaining({ platformAccountId: 'account-1' }) as unknown });
+    expect(campaigns.publish).toHaveBeenCalledWith('owner-1', 'campaign-1');
+    expect(result).toMatchObject({
+      waitingVariantIds: ['variant-2'],
+      overLimitVariants: [{ id: 'variant-2', platform: 'MASTODON', length: 520, maxChars: 500, message }],
+    });
+  });
+
+  it('"approve all" fails without changes when every ready post is too long', async () => {
+    const { service, prisma, tooLong } = withMastodon();
+    prisma.contentVariant.findMany.mockResolvedValue([tooLong]);
+    prisma.contentVariant.count.mockResolvedValueOnce(0).mockResolvedValue(1);
+    await expect(service.approve('owner-1', 'campaign-1')).rejects.toThrow(message);
+    expect(prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+
+  it('counts the source line and an extension account like its engine', async () => {
+    const { service, prisma, variant } = withMastodon();
+    // 470 characters fit alone, not with the source line (32 more) the system adds.
+    const withSource = { ...variant, id: 'variant-2', platformId: 'platform-2', body: 'ạ'.repeat(470) };
+    prisma.content.findFirstOrThrow.mockResolvedValue({ id: 'content-1', canonicalUrl: 'https://vpsttt.vn/a' });
+    prisma.platformAccount.findMany.mockResolvedValue([
+      readyAccount('account-1', 'platform-1', 'devto'),
+      readyAccount('account-2', 'platform-2', 'mastodon-social', { settings: { delivery: 'extension', extensionEngine: 'mastodon', extensionAutoSubmit: true } }),
+    ]);
+    prisma.contentVariant.findMany.mockResolvedValue([withSource]);
+    await expect(service.approveVariant('owner-1', 'campaign-1', 'variant-2')).rejects.toThrow('Bài MASTODON-SOCIAL dài 502/500 ký tự');
   });
 });
 

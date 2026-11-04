@@ -230,6 +230,14 @@ export class SkippedReviewAccountContractDto {
   @ApiProperty({ description: 'Vietnamese explanation shown to the reviewer.' }) reasonLabel!: string;
 }
 
+export class OverLimitVariantContractDto {
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ description: 'Platform display name.' }) platform!: string;
+  @ApiProperty({ minimum: 0, description: 'Characters the destination counts.' }) length!: number;
+  @ApiProperty({ minimum: 1 }) maxChars!: number;
+  @ApiProperty({ description: 'Vietnamese explanation shown to the reviewer.' }) message!: string;
+}
+
 export class AutomatedCampaignContractDto {
   @ApiProperty({ type: CampaignContractDto }) campaign!: CampaignContractDto;
   @ApiProperty({ type: ContentContractDto }) content!: ContentContractDto;
@@ -240,6 +248,8 @@ export class AutomatedCampaignContractDto {
   skippedAccounts?: SkippedReviewAccountContractDto[];
   @ApiPropertyOptional({ type: [String], description: 'Review decisions only: drafts left waiting because their platform had no ready account.' })
   waitingVariantIds?: string[];
+  @ApiPropertyOptional({ type: [OverLimitVariantContractDto], description: 'Review decisions only: drafts left waiting because they exceed their destination character limit.' })
+  overLimitVariants?: OverLimitVariantContractDto[];
 }
 
 export class AiProviderContractDto {

@@ -37,6 +37,7 @@ export interface Environment {
   EXTENSION_UI_RECOVERY_ENABLED: boolean;
   EXTENSION_UI_HINT_PROVIDER?: AiProvider;
   EXTENSION_UI_HINT_MIN_CONFIDENCE: number;
+  EXTENSION_AI_FORM_FILL_ENABLED: boolean;
   S3_ENDPOINT: string;
   S3_PUBLIC_URL: string;
   S3_REGION: string;
@@ -224,6 +225,8 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   if (!Number.isFinite(uiHintMinConfidence) || uiHintMinConfidence < 0 || uiHintMinConfidence > 1) {
     throw new Error('EXTENSION_UI_HINT_MIN_CONFIDENCE must be between 0 and 1');
   }
+  // AI picks the extra controls a post form requires (language, community, NSFW…).
+  const extensionAiFormFillEnabled = parseBoolean(raw.EXTENSION_AI_FORM_FILL_ENABLED, 'EXTENSION_AI_FORM_FILL_ENABLED', true);
   const logLevel = typeof raw.LOG_LEVEL === 'string' ? raw.LOG_LEVEL : 'info';
   if (!['error', 'warn', 'info', 'debug', 'verbose'].includes(logLevel)) {
     throw new Error('LOG_LEVEL must be error, warn, info, debug, or verbose');
@@ -297,6 +300,7 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
     EXTENSION_UI_RECOVERY_ENABLED: extensionUiRecoveryEnabled,
     EXTENSION_UI_HINT_PROVIDER: uiHintProviderRaw || undefined,
     EXTENSION_UI_HINT_MIN_CONFIDENCE: uiHintMinConfidence,
+    EXTENSION_AI_FORM_FILL_ENABLED: extensionAiFormFillEnabled,
     OPENAI_TIMEOUT_MS: legacyOpenAiTimeoutMs,
   };
 }
