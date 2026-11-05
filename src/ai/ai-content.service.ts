@@ -16,6 +16,7 @@ import { BrandProfile, brandProfileBlock, BrandProfileService } from './brand-pr
 import {
   clampReview,
   ContentReview,
+  PreviousReview,
   deterministicIssues,
   DraftForCheck,
   draftRank,
@@ -172,6 +173,19 @@ export interface DraftRevision {
   notes?: string | null;
   /** "Sửa theo khuyến nghị": the review points the operator chose; the other earlier notes do not apply. */
   chosenNotes?: string[] | null;
+  /** The editor's score of the stored draft ("AI chấm 7/10"), so the revision is judged against it. */
+  previousScore?: number | null;
+}
+
+/** What the editor checks a revision against: the old score and the fixes the operator asked for. */
+export function previousReviewOf(revision: DraftRevision | undefined): PreviousReview | null {
+  if (!revision) return null;
+  const fixes = [
+    ...(revision.chosenNotes ?? []),
+    ...(revision.instruction ? [revision.instruction] : []),
+    ...(!revision.chosenNotes?.length && revision.notes ? [revision.notes] : []),
+  ];
+  return { score: revision.previousScore ?? null, fixes };
 }
 
 function revisionBrief(revision: DraftRevision): string {
@@ -672,7 +686,9 @@ export class AiContentService {
       return contract.format === 'plain' ? { ...generated, media, body: markdownToPlain(generated.body) } : { ...generated, media };
     };
     let draft = await write(undefined, revision ? revisionBrief(revision) : undefined);
-    let assessment = await this.assess(provider, draft, contract, content, brand);
+    // Every check of a revision, the rewrites included, is judged against the stored draft's review.
+    const previous = previousReviewOf(revision);
+    let assessment = await this.assess(provider, draft, contract, content, brand, previous);
     let best = { draft, assessment };
     // A draft the writer itself flags as off-topic for this audience
     // (recommended=false) is not fixed by rewriting; it goes to the operator.
@@ -685,7 +701,7 @@ export class AiContentService {
     const rank = (candidate: Assessment) => draftRank(candidate.passed, candidate.review, candidate.issues, candidate.overLimit);
     for (let rewrite = 0; rewrite < QUALITY_MAX_REWRITES && !assessment.passed; rewrite += 1) {
       draft = await write(`${rewriteFeedback(assessment.issues, assessment.review)}${standing}`);
-      assessment = await this.assess(provider, draft, contract, content, brand);
+      assessment = await this.assess(provider, draft, contract, content, brand, previous);
       if (rank(assessment) >= rank(best.assessment)) best = { draft, assessment };
     }
     const fitted = await this.fitDraft(write, platform, contract, best.draft, best.assessment, content.canonicalUrl);
@@ -864,6 +880,7 @@ export class AiContentService {
     contract: PlatformContract,
     content: SourceContent,
     brand: BrandProfile | null,
+    previous: PreviousReview | null = null,
   ): Promise<Assessment> {
     const issues = deterministicIssues(draft, contract, content.canonicalUrl);
     const length = contract.maxChars ? publishedLength(draft, contract, content.canonicalUrl) : 0;
@@ -871,7 +888,7 @@ export class AiContentService {
     try {
       review = clampReview(await this.withGenerationRetry(() => this.requestStructured(
         provider,
-        reviewInstructions(contract, contract.maxChars ? length : undefined),
+        reviewInstructions(contract, contract.maxChars ? length : undefined, previous),
         [
           `Brief or source (${isBrief(content) ? 'short marketing brief' : 'source content'}):\n${content.body.slice(0, 20_000)}`,
           brandProfileBlock(brand),

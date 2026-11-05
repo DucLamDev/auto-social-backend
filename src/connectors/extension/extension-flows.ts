@@ -52,6 +52,8 @@ const forumFlows: ExtensionFlow[] = definitions.map(([id, name, engine, forumUrl
 
 export const EXTENSION_FLOWS: readonly ExtensionFlow[] = [...forumFlows,
   { id: 'differ', name: 'Differ', engine: 'differ', forumUrl: 'https://differ.blog', targetUrl: 'https://differ.blog/new-story', revision: 1, setupHint: 'Tạo story, điền tiêu đề/nội dung, chọn Keyword từ tags và Publish. Không ghi đè bản nháp khác.' },
+  { id: 'product-hunt', name: 'Product Hunt · Forums', engine: 'producthunt', forumUrl: 'https://www.producthunt.com', targetUrl: 'https://www.producthunt.com/p/new', revision: 1,
+    setupHint: 'Start new thread trên forum Product Hunt. Ghi forum / product ở ô Chuyên mục, đúng tên trong ô "Search for a product" (General, Vibecoding, Introduce yourself, Self-Promotion hoặc tên product). Để trống thì đăng vào Self-Promotion. Chưa hỗ trợ Launch sản phẩm.' },
   { id: 'dzone', name: 'DZone', engine: 'dzone', forumUrl: 'https://dzone.com', targetUrl: 'https://dzone.com/content/article/post.html', revision: 1, setupHint: 'Điền bài, tl;dr và metadata rồi gửi biên tập duyệt. DZone có thể yêu cầu thêm chủ đề, ảnh và các trường của tác giả; kết quả chờ duyệt không phải đã xuất bản.' },
   ...([['stack-overflow', 'Stack Overflow', 'https://stackoverflow.com'], ['server-fault', 'Server Fault', 'https://serverfault.com'], ['unix-linux-stackexchange', 'Unix & Linux', 'https://unix.stackexchange.com']] as const).map(([id, name, forumUrl]): ExtensionFlow => ({
     id, name, forumUrl, engine: 'stackexchange', targetUrl: `${forumUrl}/questions/ask`, revision: 1,
@@ -131,7 +133,7 @@ export function validateExtensionFlow(slug: string, settings: ExtensionDeliveryS
     throw new BadRequestException('Reddit requires the submit page of a specific subreddit or profile');
   }
   const createPaths: Partial<Record<ExtensionEngine, string[]>> = {
-    differ: ['/new-story'], dzone: ['/content/article/post.html'],
+    differ: ['/new-story'], dzone: ['/content/article/post.html'], producthunt: ['/p/new'],
     stackexchange: ['/questions/ask'], lemmy: ['/create_post'], discuit: ['/new'], linkedin: ['/feed'],
     minds: ['/newsfeed/subscriptions'],
     medium: ['/new-story'], slideshare: ['/upload'], 'aws-builder': ['/create/content'], pixelfed: ['/i/web', '/i/web/compose'],

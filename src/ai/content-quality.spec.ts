@@ -1,5 +1,5 @@
 import { platformContract } from '../platforms/platform-contract';
-import { clampReview, deterministicIssues, draftRank, qualityInstructions, reviewInstructions, reviewPassed, rewriteFeedback } from './content-quality';
+import { clampReview, deterministicIssues, draftRank, qualityInstructions, reviewInstructions, reviewPassed, rewriteFeedback, scoreFromReason } from './content-quality';
 
 const VI = 'Mình vừa chuyển website sang máy chủ mới và thời gian tải trang giảm hẳn, chia sẻ lại các bước đã làm.';
 const EN = 'We moved our website to a new server and page load time dropped a lot, here are the steps we followed.';
@@ -72,10 +72,41 @@ describe('content quality checks', () => {
     expect(issues[0]).toBe(`Dài ${length}/500 ký tự, cần bớt ít nhất ${length - 500} ký tự`);
   });
 
-  it('tells the editor the limit and the draft length, and nothing about length where there is none', () => {
+  it('tells the editor the limit, the draft length and the room left, and nothing about length where there is none', () => {
     const bluesky = platformContract('bluesky');
-    expect(reviewInstructions(bluesky, 280)).toContain('the published post has at most 300 characters, counting hashtags, links and the source line the system adds; this draft has 280. Judge it within that limit and never ask for additions that would not fit.');
+    expect(reviewInstructions(bluesky, 280)).toContain('the published post has at most 300 characters, counting hashtags, links and the source line the system adds; this draft has 280. Judge it within that limit and never ask for additions that would not fit; only 20 characters are left, so any fix that adds text must stay within them or say what to cut to make room.');
     expect(reviewInstructions(bluesky, 320)).toContain('it is 20 characters over, so one issue must ask to cut at least 20 characters');
     expect(reviewInstructions(platformContract('nginx-community'))).not.toContain('length limit');
+  });
+
+  it('anchors the scores and keeps facts from the brief out of the unsupported claims', () => {
+    const text = reviewInstructions(platformContract('bluesky'), 280);
+    expect(text).toContain('8 ready to publish, only optional polish left; 7 ready to publish with one clear weakness');
+    expect(text).toContain('Whatever the brief or the brand facts state, even in a few words, is supported');
+    expect(text).toContain('Never list a statement you consider supported or partly supported.');
+    expect(text).toContain('Fixes must not contradict each other. Leave it empty for a score of 9 or 10.');
+  });
+
+  it('judges a revision against its old score and the fixes the operator asked for', () => {
+    const bluesky = platformContract('bluesky');
+    expect(reviewInstructions(bluesky, 280)).not.toContain('revises an earlier version');
+    expect(reviewInstructions(bluesky, 280, null)).not.toContain('revises an earlier version');
+    const revised = reviewInstructions(bluesky, 280, { score: 7, fixes: ['Câu cuối hơi quảng cáo', ' ', 'Thêm lệnh kiểm tra'] });
+    expect(revised).toContain('This draft revises an earlier version that you scored 7/10. The operator asked the writer to fix:\n- Câu cuối hơi quảng cáo\n- Thêm lệnh kiểm tra\nCheck those fixes first.');
+    expect(revised).toContain('the score must be higher than 7. Never ask to undo a requested fix or for its opposite');
+    // A draft that was never scored is still judged by its fixes.
+    expect(reviewInstructions(bluesky, 280, { score: null, fixes: ['Thêm ví dụ'] })).toContain('the score must be raised accordingly');
+    // Bounded: the operator may choose up to 20 long points.
+    const many = reviewInstructions(bluesky, 280, { score: 6, fixes: Array.from({ length: 20 }, (_, index) => `${index}:${'x'.repeat(1_000)}`) });
+    expect(many).toContain(`- 9:${'x'.repeat(398)}\n`);
+    expect(many).not.toContain('- 10:');
+    expect(many).not.toContain('x'.repeat(399));
+  });
+
+  it('reads the stored score from a reason', () => {
+    expect(scoreFromReason('Cần xem lại (AI chấm 7/10): Câu cuối hơi cụt')).toBe(7);
+    expect(scoreFromReason('Hợp người đọc (AI chấm 10/10) · đã rút gọn tự động để vừa 500 ký tự')).toBe(10);
+    expect(scoreFromReason('Cần xem lại (AI chưa chấm được): Dài 520/500 ký tự')).toBeNull();
+    expect(scoreFromReason(null)).toBeNull();
   });
 });
