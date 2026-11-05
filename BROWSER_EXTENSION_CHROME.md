@@ -1,5 +1,17 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.17.3 / tiện ích 1.12.3: kiểm tra đăng nhập Discuit, Blogger, Warrior Forum
+
+- Discuit: tài khoản đang đăng nhập đọc từ `GET /api/_initial` (`user.username`; `null` khi chưa đăng nhập), không phụ
+  thuộc tên trên thanh menu (bị ẩn khi cửa sổ hẹp).
+- Mọi nền tảng: câu "sai mật khẩu / thông tin bị từ chối" chỉ được đọc khi trang đang hiện ô mật khẩu, ô email Google,
+  ô mã 2FA, hoặc từ vùng thông báo lỗi; chữ trong bài viết của trang đã đăng nhập không còn bị hiểu là bị từ chối.
+- Blogger (Google): bấm link `a.ga-header-sign-in` / `/go/signin` của blogger.com/about; trên www.blogger.com xác nhận
+  tài khoản bằng email trong nhãn nút tài khoản Google ("Tài khoản Google: Tên (email)").
+- Warrior Forum: điều khoản cấm truy cập tự động, nên tiện ích không dùng form đăng nhập hay nút Google; trang không
+  hiện form thì đi tiếp bước xác nhận bằng trang hồ sơ. Đăng nhập tay rồi bấm "Tôi đã đăng nhập · Kiểm tra".
+- Nạp lại tiện ích 1.12.3 trong `chrome://extensions`.
+
 ## Backend 1.17.1 / tiện ích 1.12.1: Differ chọn Keyword và ảnh bìa trong hộp Publish
 
 - Trên Differ, nút **Publish** ở thanh trên cùng chỉ mở hộp xuất bản (`dialog#modal-submit`).

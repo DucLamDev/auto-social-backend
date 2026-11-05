@@ -1,6 +1,20 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.17.3 · 05/11/2026
+### Sửa lỗi
+- Kiểm tra đăng nhập Discuit, Blogger, Warrior Forum không còn báo sai (tiện ích 1.12.3)
+  - **Discuit**: đã đăng nhập mà vẫn báo "Thông tin đăng nhập bị từ chối". Cửa sổ Chrome hẹp làm ẩn tên tài khoản trên
+    thanh menu nên tiện ích không nhận ra phiên, rồi đọc thấy chữ "wrong password" trong một bài trên feed. Nay tiện ích
+    hỏi tài khoản đang đăng nhập qua `/api/_initial` của Discuit. Câu "mật khẩu sai / từ chối" chỉ còn được đọc khi trang
+    đang hiện form đăng nhập hoặc thông báo lỗi, không đọc từ nội dung bài viết. Áp dụng cho mọi nền tảng.
+  - **Blogger** (đăng nhập bằng Google): tiện ích bấm đúng link "Đăng nhập" (`/go/signin`) ở góc phải trang
+    blogger.com/about. Sau khi vào trang quản trị, tiện ích xác nhận đúng tài khoản qua email trên nút tài khoản Google;
+    email khác thì báo "tài khoản khác".
+  - **Warrior Forum**: điều khoản cấm bot và script, nên tiện ích không bấm form đăng nhập hay nút Continue with Google.
+    Thông báo cũ "không có nút đăng nhập bằng Google" là sai. Nay tiện ích nói rõ cần đăng nhập tay một lần rồi bấm
+    "Tôi đã đăng nhập · Kiểm tra"; khi đã đăng nhập thì tiện ích đi tiếp bước xác nhận bằng trang hồ sơ.
+
 ## 1.17.1 · 05/11/2026
 ### Sửa lỗi
 - Differ đăng được: chọn Keyword (topic), gắn ảnh bìa nếu có, rồi bấm Publish trong hộp xuất bản
