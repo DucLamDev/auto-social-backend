@@ -115,12 +115,23 @@ export class ExtensionAccountSessionService {
       const busy = await tx.publishJob.count({ where: { platformAccountId: accountId, status: PublishJobStatus.NEEDS_ACTION,
         lockedAt: { not: null }, OR: [{ lastErrorCode: null }, { lastErrorCode: { not: 'EXTENSION_MODERATION_PENDING' } }] } });
       if (busy) throw new BadRequestException('This account has a claimed task; resolve or requeue it before changing its session');
-      const others = await tx.platformAccount.findMany({ where: { ownerId, id: { not: accountId } }, select: { settings: true } });
+      const others = await tx.platformAccount.findMany({ where: { ownerId, id: { not: accountId } }, select: { name: true, settings: true } });
+      // One Chrome profile holds one signed-in account per site (its cookies). Moving an
+      // account onto a profile that already holds another account of the same site is
+      // refused. An account already sharing it (an older file import) can still be edited:
+      // the save changes nothing about that, and the response names the other account.
+      const alreadyOnProfile = sessionOf(settings)?.deviceId === dto.deviceId;
+      const sharedWith: string[] = [];
       const googleIdentities = new Set<string>();
       for (const other of others) {
         const session = sessionOf(other.settings);
         if (session?.deviceId !== dto.deviceId) continue;
-        if (sessionScope(other.settings) === sessionScope(settings)) throw new BadRequestException('This Chrome profile already belongs to another account on this platform. Pair a separate Chrome profile');
+        if (sessionScope(other.settings) === sessionScope(settings)) {
+          if (!alreadyOnProfile) {
+            throw new BadRequestException(`Hồ sơ Chrome này đang giữ tài khoản ${other.name} của cùng nền tảng. Mỗi hồ sơ Chrome chỉ đăng nhập được một tài khoản trên một nền tảng: ghép thêm một hồ sơ Chrome cho tài khoản này, hoặc chuyển ${other.name} sang hồ sơ khác trước.`);
+          }
+          sharedWith.push(other.name);
+        }
         if (session.autoLogin && session.provider === 'google' && session.loginUsername) googleIdentities.add(session.loginUsername.trim().toLowerCase());
       }
       // A Chrome profile signs in the Google accounts its platforms use. A new Google
@@ -173,7 +184,9 @@ export class ExtensionAccountSessionService {
         extensionLoginMethods: dto.autoLogin ? { ...object(stored.extensionLoginMethods), [dto.provider]: secret } : {},
       }, dto.autoLogin ? null : undefined, tx);
       await tx.platformAccount.update({ where: { id: accountId }, data: { settings: { ...settings, extensionSession: { ...session }, extensionLoginMethods: dto.autoLogin ? methods : {} } as Prisma.InputJsonObject } });
-      return { ...session, passwordConfigured: dto.autoLogin && Boolean(password), totpConfigured: session.autoTotp };
+      return { ...session, passwordConfigured: dto.autoLogin && Boolean(password), totpConfigured: session.autoTotp,
+        // Other accounts of this site on the same profile: only one of them can be signed in at a time.
+        ...(sharedWith.length ? { sharedWith } : {}) };
     }, { timeout: 10_000 });
   }
 

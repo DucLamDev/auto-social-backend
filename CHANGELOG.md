@@ -1,6 +1,7 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+
 ## 1.18.0 · 05/11/2026
 ### Tính năng
 - Đăng thread lên forum Product Hunt bằng tiện ích Chrome, tự chọn forum / product
@@ -19,6 +20,18 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   - Product Hunt không còn bị liệt kê "chưa có luồng".
   - **Sau khi triển khai:** bấm **Test** ở tài khoản Product Hunt để gắn trang đăng mặc định. Muốn cập nhật lời nhắc AI và
     trang mặc định của nền tảng trong database thì chạy seed như trong `DEPLOYMENT.md`.
+
+## 1.17.2 · 05/11/2026
+### Sửa lỗi
+- Sửa được Phiên Chrome / 2FA của tài khoản đang dùng chung hồ sơ Chrome với tài khoản khác cùng nền tảng
+  - **Lỗi cũ:** lần nhập file 03/11 đặt hai tài khoản MeWe (và hai tài khoản Differ), với hai tài khoản Google khác nhau,
+    vào cùng hồ sơ "Chrome VPS". Từ đó lưu bất kỳ thay đổi nào ở form **Phiên Chrome / 2FA** của chúng đều báo lỗi tiếng Anh
+    "This Chrome profile already belongs to another account on this platform".
+  - **Nay:**
+    - Tài khoản vốn đã ở hồ sơ đó sửa và lưu được. `PUT /extension/accounts/:id/session` trả thêm `sharedWith` (tên tài
+      khoản cùng nền tảng trên hồ sơ đó) để giao diện cảnh báo.
+    - Chỉ còn chặn việc **chuyển** một tài khoản sang hồ sơ đang giữ tài khoản khác của cùng nền tảng, vì cookie chỉ giữ
+      một lần đăng nhập mỗi website. Câu báo bằng tiếng Việt nêu tên tài khoản đó và cách xử lý.
 
 ## 1.17.1 · 05/11/2026
 ### Sửa lỗi
@@ -191,7 +204,6 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   rõ bằng tiếng Việt từng tài khoản và lý do, không tạo việc đăng nào. "Duyệt hết" đăng các nền tảng đã có tài khoản sẵn
   sàng, để các bài còn lại tiếp tục chờ duyệt (`waitingVariantIds`) cho tới khi bạn kết nối lại tài khoản hoặc từ chối
   bài. Tài khoản bị bỏ qua sẽ không tự nhận bài này khi kết nối lại sau.
-
 
 ## 1.11.0 · 04/11/2026
 ### Tính năng

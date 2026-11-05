@@ -76,10 +76,28 @@ describe('Chrome account sessions', () => {
     const { service, tx } = setup();
     tx.extensionDevice.findFirst.mockResolvedValueOnce(null);
     await expect(service.configure(device.ownerId, 'account-a', input)).rejects.toThrow('active paired Chrome');
-    tx.platformAccount.findMany.mockResolvedValueOnce([{ settings: { ...base, extensionSession: { deviceId: device.id, expectedUsername: 'bob' } } }]);
-    await expect(service.configure(device.ownerId, 'account-a', input)).rejects.toThrow('already belongs');
+    tx.platformAccount.findMany.mockResolvedValueOnce([{ name: 'Forum · bob', settings: { ...base, extensionSession: { deviceId: device.id, expectedUsername: 'bob' } } }]);
+    await expect(service.configure(device.ownerId, 'account-a', input)).rejects.toThrow('đang giữ tài khoản Forum · bob của cùng nền tảng');
     tx.publishJob.count.mockResolvedValueOnce(1);
     await expect(service.configure(device.ownerId, 'account-a', input)).rejects.toThrow('claimed task');
+  });
+
+  it('still saves an account that already shares its profile with another account of the site (older import), naming the other one', async () => {
+    const { service, tx } = setup();
+    const imported = { deviceId: device.id, origin: 'https://forum.test', expectedUsername: 'alice', provider: 'password', autoLogin: true, autoTotp: true,
+      loginUrl: 'https://forum.test/login', loginUsername: 'alice@example.test' };
+    tx.platformAccount.findFirst.mockResolvedValueOnce({ id: 'account-a', settings: { ...base, extensionSession: imported } });
+    tx.platformAccount.findMany.mockResolvedValueOnce([
+      { name: 'Forum · bob', settings: { ...base, extensionSession: { deviceId: device.id, expectedUsername: 'bob' } } },
+      // Another site on the same profile is not a conflict.
+      { name: 'Other · carol', settings: { ...base, extensionTargetUrl: 'https://other.test/new-topic', extensionSession: { deviceId: device.id, expectedUsername: 'carol' } } },
+    ]);
+    const result = await service.configure(device.ownerId, 'account-a', { ...input, profileUrl: 'https://forum.test/u/alice' });
+    expect(result).toMatchObject({ deviceId: device.id, profileUrl: 'https://forum.test/u/alice', sharedWith: ['Forum · bob'] });
+    expect(tx.platformAccount.update).toHaveBeenCalledTimes(1);
+    // Without a second account of the site the response has no warning.
+    tx.platformAccount.findFirst.mockResolvedValueOnce({ id: 'account-a', settings: { ...base, extensionSession: imported } });
+    expect(await service.configure(device.ownerId, 'account-a', input)).not.toHaveProperty('sharedWith');
   });
 
   it('does not reuse password or TOTP when changing the Google identity', async () => {
