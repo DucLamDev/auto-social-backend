@@ -362,10 +362,23 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
       if (action !== stage) return response(stage);
       const field = otp || password || identifier;
       const form = field.closest('form');
+      const submitLabels = stage === 'totp' ? ['verify', 'verify code', 'xác minh', 'confirm', 'continue'] : ['log in', 'login', 'sign in', 'continue', 'next', 'đăng nhập', 'tiếp theo'];
+      // Forms without <form> keep their button disabled until the fields are filled
+      // (Quora: "Login"). Take the labelled button nearest the field, enabled or not;
+      // it must turn on after filling (checked below) before it is clicked.
+      const nearField = () => {
+        const candidates = all('button, [role="button"], input[type="submit"]').filter(visible)
+          .filter(node => submitLabels.includes(norm(node.innerText || node.value || node.getAttribute('aria-label'))));
+        for (let scope = field.parentElement; scope; scope = scope.parentElement) {
+          const inside = candidates.filter(node => scope.contains(node));
+          if (inside.length) return inside.length === 1 ? inside[0] : null;
+        }
+        return null;
+      };
       const submit = google ? one([stage === 'password' ? '#passwordNext button' : stage === 'identifier' ? '#identifierNext button' : '#totpNext button'])
-        : one(['#login-button', 'button#login-submit', 'button[type="submit"][name="login"]'])
+        : one(['#login-button', 'button#login-submit', 'button[type="submit"][name="login"]', 'button.puppeteer_test_login_button'])
           || (form ? [...form.querySelectorAll('button[type="submit"], input[type="submit"]')].filter(visible).length === 1 ? [...form.querySelectorAll('button[type="submit"], input[type="submit"]')].filter(visible)[0] : null : null)
-          || exact(stage === 'totp' ? ['verify', 'verify code', 'xác minh', 'confirm', 'continue'] : ['log in', 'login', 'sign in', 'continue', 'next', 'đăng nhập', 'tiếp theo']);
+          || exact(submitLabels) || nearField();
       if (!submit || !enabled(field)) return challenge('Không nhận diện được nút xác nhận đăng nhập duy nhất.');
       const write = (node, value) => { if (!node || typeof value !== 'string') return false;
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(node, value);

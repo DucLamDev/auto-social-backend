@@ -1,5 +1,14 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.17.2 / tiện ích 1.12.2: Quora tự đăng nhập bằng mật khẩu
+
+- Nút **Login** của Quora bị khoá tới khi điền đủ email và mật khẩu, và form không có thẻ `<form>`. Tiện ích nhận nút
+  này (`button.puppeteer_test_login_button`); trang khác cùng kiểu thì lấy nút có chữ Login / Log in / Sign in / Đăng
+  nhập gần ô vừa điền nhất, kể cả khi đang khoá.
+- Điền xong tiện ích chờ tối đa 3 giây cho nút bật rồi mới bấm; nút không bật thì báo "Nút xác nhận đăng nhập chưa
+  được bật sau khi điền thông tin", không bấm.
+- Nạp lại tiện ích 1.12.2 trong `chrome://extensions`, rồi bấm **Test** ở tài khoản Quora.
+
 ## Backend 1.17.1 / tiện ích 1.12.1: Differ chọn Keyword và ảnh bìa trong hộp Publish
 
 - Trên Differ, nút **Publish** ở thanh trên cùng chỉ mở hộp xuất bản (`dialog#modal-submit`).

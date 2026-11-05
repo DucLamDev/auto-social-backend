@@ -1,6 +1,14 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.17.2 · 05/11/2026
+### Sửa lỗi
+- Quora tự đăng nhập được bằng email và mật khẩu (tiện ích 1.12.2)
+  Trang đăng nhập Quora giữ nút **Login** ở trạng thái khoá tới khi điền đủ email và mật khẩu, và không nằm trong
+  `<form>`. Tiện ích chỉ tìm nút đang bật nên báo "Không nhận diện được nút xác nhận đăng nhập duy nhất" và dừng. Nay
+  tiện ích nhận nút Login của Quora, và với các trang tương tự thì lấy nút "Login / Đăng nhập…" gần ô vừa điền nhất kể
+  cả khi nút đang khoá; điền xong chờ nút bật rồi mới bấm, nút không bật thì báo rõ, không bấm.
+
 ## 1.17.1 · 05/11/2026
 ### Sửa lỗi
 - Differ đăng được: chọn Keyword (topic), gắn ảnh bìa nếu có, rồi bấm Publish trong hộp xuất bản
