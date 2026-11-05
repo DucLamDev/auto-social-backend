@@ -55,7 +55,7 @@ export async function fillSocialAndSubmit(job) {
   };
   let composerForm = null;
   const activeScope = () => {
-    const dialogs = all('[role="dialog"], .modal.show, .compose-modal-component, m-composer__modal').filter(visible);
+    const dialogs = all('[role="dialog"], .modal.show, .compose-modal-component, m-composer__modal, #c-postbox-dialog').filter(visible);
     // Nested dialogs are common; unrelated simultaneous dialogs are ambiguous.
     const leaves = dialogs.filter(node => !dialogs.some(other => other !== node && contains(node, other)));
     return leaves.length === 1 ? leaves[0] : leaves.length ? false
@@ -158,10 +158,21 @@ export async function fillSocialAndSubmit(job) {
     reddit: ['Post', 'Đăng'], slideshare: ['Publish'], 'aws-builder': ['Publish', 'Publish article'],
     tinhte: ['Đăng', 'Đăng bài', 'Đăng bài viết', 'Xuất bản'], pixelfed: ['Post', 'Share', 'Publish', 'Đăng'],
     mastodon: ['Publish!', 'Publish', 'Post', 'Đăng', 'Đăng bài'], bluesky: ['Post', 'Đăng'], tumblr: ['Post', 'Post now', 'Đăng'], devto: ['Publish', 'Xuất bản'], dailydev: ['Post'],
+    disqus: ['Create Discussion'], mewe: ['Post'],
   }[engine];
+  // Discuss Disqus: choosing a category writes "<Category>: " into the title and the
+  // whole field is stored, so the title carries the prefix. Community Growth is the
+  // category for site owners' community topics; nothing is preselected on the form.
+  const disqusCategory = engine === 'disqus' ? normalize(options.category) || 'Community Growth' : '';
+  const titleText = engine === 'disqus' && !normalize(post.title).toLowerCase().startsWith(`${disqusCategory.toLowerCase()}:`)
+    ? `${disqusCategory}: ${normalize(post.title)}` : post.title;
+  // Disqus reads its fields on focusout (jQuery), not on input: commit each one written.
+  const commit = node => engine === 'disqus' && node?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
   // Quora has no title field: the title leads the post unless the body already starts with it.
   const expectedBody = engine === 'quora' && normalize(post.title) && !startsWithTitle ? `${post.title}\n\n${post.body}` : post.body;
-  const beforeUrls = [...new Set(all('a[href]').map(node => node.href))].slice(0, 2000);
+  // MeWe feed posts carry no link: their ids stand for the permalinks that existed before this post.
+  const beforeUrls = [...new Set([...all('a[href]').map(node => node.href),
+    ...(engine === 'mewe' ? all('.c-mw-post-header[data-postid]').map(node => `${location.origin}/post/show/${node.getAttribute('data-postid')}`) : [])])].slice(0, 2000);
   if (location.origin !== job.targetOrigin) return fail('Trang đã chuyển sang tên miền khác; chưa điền hay gửi bài.');
   // The backend counts the body the way this destination does; never type a post it would cut or refuse.
   if (post.maxChars != null && typeof post.length === 'number' && post.length > post.maxChars) {
@@ -281,6 +292,10 @@ export async function fillSocialAndSubmit(job) {
     }
   }
 
+  // An account without a verified email gets a disabled title and Create button.
+  if (engine === 'disqus' && all('.alert.-warning a[data-action="verify-email"]').some(visible)) {
+    return { status: 'restricted', message: 'Disqus yêu cầu xác minh email của tài khoản trước khi tạo discussion. Xác minh email trên Disqus rồi bấm Giao lại cho tiện ích trên web.' };
+  }
   const writable = node => enabled(node) && (node.isContentEditable || node.matches('input, textarea'));
   let lastBody = null, lastTitle = null;
   const fields = await wait(() => {
@@ -301,7 +316,9 @@ export async function fillSocialAndSubmit(job) {
   // Check every field before writing any of them, including short-post engines.
   const bodyText = titleInBody
     ? normalize([...body.children].filter(node => !node.contains(title)).map(node => node.innerText).join(' ')) : value(body);
-  if ((bodyText && !holds(expectedBody, bodyText)) || (title && value(title) && value(title) !== normalize(post.title))) {
+  // A Disqus title holding only a category prefix ("Community Growth:") is not a draft.
+  const titleDraft = title && value(title) && value(title) !== normalize(titleText) && !(engine === 'disqus' && /^[^:]{2,40}:$/.test(value(title)));
+  if ((bodyText && !holds(expectedBody, bodyText)) || titleDraft) {
     return draft('Trình soạn đang chứa bản nháp khác; chưa ghi đè tiêu đề hoặc nội dung. Lưu hoặc xoá bản nháp đó trong tab rồi bấm Giao lại cho tiện ích trên web.');
   }
 
@@ -384,16 +401,29 @@ export async function fillSocialAndSubmit(job) {
       if (!normalize(open.innerText).toLowerCase().includes(options.category.toLowerCase())) return needs('Chưa xác nhận community Lemmy.');
     }
   }
+  if (engine === 'disqus' && !resume) {
+    // Radio values are the category names; clicking a checked one fires no change, so
+    // it is fired by hand (the form does not add the prefix twice).
+    const radio = all('[data-role="channel-categories"] input[type="radio"][name="category"]')
+      .find(node => !node.disabled && normalize(node.value).toLowerCase() === disqusCategory.toLowerCase());
+    if (!radio) return needs(`Discuss Disqus không có chuyên mục “${disqusCategory}”. Chọn đúng tên chuyên mục trong cấu hình tài khoản trên web; chưa điền bài.`);
+    if (!radio.checked) radio.click();
+    else radio.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(300);
+    if (!radio.checked) return needs('Chưa chọn được chuyên mục Discuss Disqus; chưa điền bài.');
+  }
   await chooseLanguage();
 
   if (!resume) {
-    if (title && !write(title, post.title)) return mismatch('Không điền được tiêu đề vào ô tiêu đề đã tìm thấy; chưa gửi bài.');
+    if (title && !write(title, titleText)) return mismatch('Không điền được tiêu đề vào ô tiêu đề đã tìm thấy; chưa gửi bài.');
+    commit(title);
     if (titleInBody) {
       // Preserve the title block and write only the story paragraph below it.
       const paragraph = [...body.querySelectorAll('p')].find(node => node !== title && !title.contains(node));
       if (!paragraph) return fail('Không tìm thấy đoạn nội dung riêng trong editor Medium.');
       if (!await writeBody(paragraph, expectedBody)) return mismatch('Không điền được nội dung vào editor Medium; chưa gửi bài.');
     } else if (!await writeBody(body, expectedBody)) return mismatch('Không điền được nội dung vào khung soạn đã tìm thấy; chưa gửi bài.');
+    commit(body);
     const summary = pick(['textarea[name="summary"]', 'input[name="summary"]', 'textarea[placeholder*="summary" i]']);
     if (summary) write(summary, post.summary || post.body.split('\n').find(line => line.trim())?.slice(0, 240) || post.title);
     if (engine === 'dzone') {
@@ -406,7 +436,7 @@ export async function fillSocialAndSubmit(job) {
   const validContent = () => {
     title = pick(recipe.titleSelectors);
     const currentBody = pick(bodySelectors);
-    if (!currentBody || (recipe.titleSelectors.length && value(title) !== normalize(post.title))) return false;
+    if (!currentBody || (recipe.titleSelectors.length && value(title) !== normalize(titleText))) return false;
     const shown = currentBody.isContentEditable ? currentBody.innerText : currentBody.value;
     return holds(engine === 'medium' && title && currentBody.contains(title) ? `${post.title}\n\n${expectedBody}` : expectedBody, shown);
   };
@@ -426,7 +456,16 @@ export async function fillSocialAndSubmit(job) {
   const attachImage = async asset => {
     if (previewShown()) return true;
     const bytes = Uint8Array.from(atob(asset.base64), char => char.charCodeAt(0));
-    const file = new File([bytes], asset.name, { type: asset.mimeType });
+    let file = new File([bytes], asset.name, { type: asset.mimeType });
+    // MeWe treats anything but PNG / JPEG / GIF (WebP) as a document: redraw it as PNG.
+    if (engine === 'mewe' && !/^image\/(png|jpeg|gif)$/.test(file.type)) {
+      try {
+        const bitmap = await createImageBitmap(file);
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        canvas.getContext('2d').drawImage(bitmap, 0, 0);
+        file = new File([await canvas.convertToBlob({ type: 'image/png' })], `${String(asset.name).replace(/\.[^.]*$/, '') || 'image'}.png`, { type: 'image/png' });
+      } catch { return false; }
+    }
     const transfer = () => { const data = new DataTransfer(); data.items.add(file); return data; };
     const input = () => { const found = inScope(recipe.mediaInputSelectors).filter(node => !node.disabled); return found.length === 1 ? found[0] : null; };
     let target = input();
@@ -465,7 +504,7 @@ export async function fillSocialAndSubmit(job) {
     if (!validContent()) return needs('Nội dung thay đổi khi gắn ảnh; chưa đăng.');
   }
 
-  if (!resume && !['lemmy', 'discuit'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
+  if (!resume && !['lemmy', 'discuit', 'disqus'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
   if (engine === 'stackexchange' && !resume) {
     // Tags configured on the account must all be applied; the AI's suggested tags
     // are used only when the site already has them (never created), up to 5 in total.
@@ -510,6 +549,18 @@ export async function fillSocialAndSubmit(job) {
         return needs(`Câu hỏi cần ít nhất một tag có trên ${location.hostname}; các tag AI gợi ý (${suggested.join(', ')}) không có trên trang này. Thêm tag đúng trong cấu hình tài khoản trên web rồi giao lại.`);
       }
     }
+  }
+  if (engine === 'disqus' && !resume) {
+    // Topics: the account's fixed tags, then the post's AI tags; 2-30 characters, at
+    // most 5, never a category name. "a, b, c" is split into chips on focusout.
+    const categories = all('[data-role="channel-categories"] input[type="radio"][name="category"]').map(node => normalize(node.value).toLowerCase());
+    const seen = new Set();
+    const topics = [...(options.tags ?? []), ...(options.suggestedTags ?? [])]
+      .map(tag => normalize(tag).replace(/^#+/, '').replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim())
+      .filter(tag => tag.length >= 2 && tag.length <= 30 && !categories.includes(tag.toLowerCase()) && !seen.has(tag.toLowerCase()) && seen.add(tag.toLowerCase()))
+      .slice(0, 5);
+    const input = pick(['[data-role="topic-input"] input[name="topics"]']);
+    if (topics.length && input && enabled(input)) { write(input, topics.join(', ')); commit(input); await sleep(300); }
   }
   if (engine === 'reddit' && !resume && !await choose(options.flair, ['[role="dialog"] input[placeholder*="Search" i]', '[role="dialog"] input[type="search"]'], ['Add flair and tags', 'Add tags and flair', 'Add tags and flairs', 'Flair', 'Thêm flair'])) return needs('Không chọn được flair của subreddit.');
 
@@ -696,7 +747,7 @@ export async function fillSocialAndSubmit(job) {
   // Without configured tags the AI's tags fill the field; a field that rejects them is left empty.
   const aiTags = (options.suggestedTags ?? []).join(', ');
   if (plainTags && !options.tags?.length && aiTags && !value(plainTags) && (!write(plainTags, aiTags) || value(plainTags) !== normalize(aiTags))) write(plainTags, '');
-  for (const tag of plainTags || resume || ['stackexchange', 'differ'].includes(engine) ? [] : options.tags ?? []) {
+  for (const tag of plainTags || resume || ['stackexchange', 'differ', 'disqus'].includes(engine) ? [] : options.tags ?? []) {
     if (!await choose(tag, [...(engine === 'differ' ? ['input.rs__input[role="combobox"]'] : []), 'input[placeholder*="Add a topic" i]', 'input[placeholder*="Add tags" i]', 'input[placeholder*="Search tags" i]', 'input[name="tags"]'], ['Add tags', 'Topics', 'Tags'])) return needs(`Không chọn được tag “${tag}”; chưa bấm đăng.`);
   }
   if (captcha()) return { status: 'captcha' };
@@ -765,6 +816,16 @@ export async function readSocialPublishedPost(task) {
   };
   const matchingContent = job.recipe.engine === 'pixelfed' ? matchingBodies.filter(node => words(node.innerText) === words(body)) : matchingBodies;
   if (titleMatches && matchingContent.length && validUrl(location.href) && matchesAuthor(location.href)) return validUrl(location.href);
+  // MeWe adds the new post on top of the feed without a link: the post header's
+  // data-postid gives its permalink. Posts on the page before submitting are excluded.
+  if (job.recipe.engine === 'mewe') {
+    for (const node of matchingContent) {
+      const id = node.closest('.c-mw-post')?.querySelector('.c-mw-post-header[data-postid]')?.getAttribute('data-postid');
+      const url = id && /^[A-Za-z0-9_-]+$/.test(id) ? validUrl(`${location.origin}/post/show/${id}`) : null;
+      if (url) return url;
+    }
+    return null;
+  }
   // Some social apps stay on the feed. Only accept a permalink inside the
   // matching post, never a global unrelated link or an existing pre-submit post.
   if (!titleRequired) for (const node of matchingContent) {

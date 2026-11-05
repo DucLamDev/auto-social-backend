@@ -2,8 +2,8 @@ import type { ExtensionRecipe } from '../../connectors/extension/extension-deliv
 
 export interface ApprovedSelector { field: string; selector: string }
 
-/** Recipe data sent to the extension, plus selectors for the composer opener. */
-export type DeliveredRecipe = ExtensionRecipe & { openerSelectors?: string[] };
+/** Recipe data sent to the extension. */
+export type DeliveredRecipe = ExtensionRecipe;
 
 const MAX_PER_FIELD = 3;
 
@@ -28,6 +28,6 @@ export function mergeApprovedSelectors(recipe: ExtensionRecipe, approved: Approv
     titleSelectors: prepend(recipe.titleSelectors, title),
     bodySelectors: prepend(recipe.bodySelectors, body),
     submitSelectors: prepend(recipe.submitSelectors, of('submit')),
-    ...(opener.length ? { openerSelectors: opener.slice(0, MAX_PER_FIELD) } : {}),
+    ...(opener.length ? { openerSelectors: prepend(recipe.openerSelectors ?? [], opener) } : {}),
   };
 }

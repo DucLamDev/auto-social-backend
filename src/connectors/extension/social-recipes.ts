@@ -1,6 +1,6 @@
 import type { ExtensionRecipe } from './extension-delivery';
 
-export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev'] as const;
+export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'disqus', 'mewe'] as const;
 export type SocialExtensionEngine = (typeof SOCIAL_EXTENSION_ENGINES)[number];
 
 function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>): ExtensionRecipe {
@@ -20,6 +20,35 @@ function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>)
 // (Mastodon, Bluesky, Minds, LinkedIn feed…) and mixed lists of editors (Reddit,
 // Stack Exchange, Tinhte) keep the runner's choice by element type.
 export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRecipe> = {
+  // Discuss Disqus (disqus.com/home/discuss/channel-…/): the form reads the title and
+  // the plain-text editor (contenteditable="plaintext-only") on focusout; a category
+  // radio prefixes the title with "<Category>: ". A new discussion opens
+  // /channel/<name>/discussion/channel-<name>/<slug>/ (pushState, no reload).
+  disqus: recipe('disqus', {
+    readySelectors: ['input[name="title"]'], titleSelectors: ['input[name="title"]'],
+    bodySelectors: ['[data-role="postbox"] [data-role="editable"]'],
+    submitSelectors: ['#submit-button'], successUrlPattern: '/channel/[a-z0-9_-]+/discussion/channel-[a-z0-9_-]+/[^/?#]+/?(?:[?#].*)?$',
+    errorSelectors: ['.form-attribute-input.is-error [data-role="attribute-error"]', '.modal [data-role="content"] .modal-body'],
+    // The shown title may drop the category prefix: the body and the URL confirm the post.
+    publishedBodySelectors: ['.reading-block[data-role="message"]'],
+  }),
+  // MeWe (Ember + Quill 2): "How is your day going?" on /myworld opens #c-postbox-dialog
+  // posting to the signed-in user's own feed with the account's default audience. The
+  // dialog closes on success and the post is added on top of the feed without a link;
+  // its permalink is built from the post header's data-postid (see social-actions.js).
+  mewe: recipe('mewe', {
+    readySelectors: ['[data-testid="post-placeholder"]', '.c-mw-postbox .ql-editor[contenteditable="true"]'],
+    openerSelectors: ['[data-testid="post-placeholder"]', '.c-mw-postbox-placeholder .postbox-placeholder_text'],
+    bodySelectors: ['#c-postbox-dialog .c-mw-postbox .ql-editor[contenteditable="true"]', '.c-mw-postbox .ql-editor[contenteditable="true"]'],
+    submitSelectors: ['#c-postbox-dialog button[data-testid="share-btn"]', '.c-mw-postbox button[data-testid="share-btn"]'],
+    // PNG / JPEG / GIF only: WebP is taken as a document, so the extension converts it to PNG.
+    optionalMedia: 'image', mediaInputSelectors: ['input#fake-upload-photo[type="file"]', 'input[data-testid="postbox-upload-photo"]'],
+    mediaPreviewSelectors: ['.c-mw-postbox .postbox_media .c-mw-postbox-photo', '.c-mw-postbox img.postbox-photo_img'],
+    mediaBusySelectors: ['.c-mw-postbox .postbox_media_photo_wrapper--loading', '.c-mw-postbox .m-progress'],
+    successUrlPattern: '/post/show/[A-Za-z0-9_-]+(?:[?#].*)?$',
+    errorSelectors: ['.c-mw-toast-box'],
+    publishedBodySelectors: ['.c-mw-post .post_text[data-testid="post-text"]'],
+  }),
   // daily.dev /squads/create opens its composer dialog (form#smart_composer) with the
   // signed-in user's own profile as audience; a new post opens /posts/<slug>.
   dailydev: recipe('dailydev', {

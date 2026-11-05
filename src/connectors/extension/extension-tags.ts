@@ -25,6 +25,8 @@ const TAG_RULES: Partial<Record<ExtensionEngine, { max: number; clean: (tag: str
   devto: { max: 4, clean: (tag) => fold(tag).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 30) },
   // Differ: one Keyword picked from its own topic list; these are the candidates the extension matches.
   differ: { max: 3, clean: (tag) => fold(tag).toLowerCase().replace(/[_-]+/g, ' ').replace(/[^a-z0-9 +#.]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40) },
+  // Discuss Disqus topics: free text of 2 to 30 characters, at most 5, committed as "a, b, c".
+  disqus: { max: 5, clean: (tag) => tag.replace(/[,;]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 30) },
   // SlideShare: free-text tags separated by commas.
   slideshare: { max: 5, clean: (tag) => tag.replace(/[,\s]+/g, ' ').trim().toLowerCase().slice(0, 40) },
 };
@@ -34,6 +36,7 @@ const TAG_STYLES: Partial<Record<ExtensionEngine, string>> = {
   stackexchange: 'English tags that already exist on this Stack Exchange site, lowercase, words joined with "-" (for example "nginx", "reverse-proxy"); the question is refused without at least one real tag',
   devto: 'lowercase letters and digits only, no spaces, "-" or accents (for example "webdev", "selfhosting")',
   discourse: 'short lowercase tags this forum most likely already has, words joined with "-"',
+  disqus: 'short English topics of 2 to 30 characters that site owners search for (for example "comments", "moderation", "audience growth")',
   differ: 'broad English topics a blogging site lists as categories, most relevant first (for example "programming", "devops", "linux", "security", "web development", "cloud computing")',
 };
 

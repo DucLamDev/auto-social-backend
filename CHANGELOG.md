@@ -1,6 +1,22 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.18.0 · 05/11/2026
+### Tính năng
+- Tự đăng bài lên Discuss Disqus và MeWe bằng tiện ích Chrome (tiện ích 1.13.0)
+  - **Discuss Disqus**: tiện ích chọn chuyên mục (mặc định Community Growth, đổi được ở ô Chuyên mục của tài khoản),
+    điền tiêu đề kèm tiền tố chuyên mục như form của Disqus, topic từ tag cố định rồi tag AI của bài (tối đa 5), nội
+    dung chữ thuần, rồi bấm Create Discussion một lần và xác nhận trang discussion mới. Tài khoản chưa xác minh email,
+    chuyên mục sai hoặc form có bản nháp khác thì dừng trước khi điền.
+  - AI viết cho Disqus dạng chia sẻ kinh nghiệm hoặc câu hỏi về phát triển cộng đồng website, hợp kênh Discuss Disqus
+    (Disqus đã đóng các Channel khác), nhắc thương hiệu tối đa một lần.
+  - **MeWe**: tiện ích mở ô "How is your day going?" trên /myworld, điền bài, gắn ảnh nếu có (ảnh WebP được đổi sang
+    PNG vì MeWe coi WebP là tài liệu), chờ tải ảnh xong rồi bấm Post. Bài mới được nhận ra bằng mã bài trên đầu feed và
+    ghi link mewe.com/post/show/…; bài cũ trùng nội dung không bị nhận nhầm. Bản nháp khác trong hộp không bị ghi đè.
+  - Hai kênh không còn báo "Chưa đăng tự động được". Tài khoản đã đăng nhập tự kết nối khi bấm Test (trang đăng mặc
+    định của luồng). Sau khi cập nhật backend cần chạy `scripts/sync-extension-flows.cjs --apply` và
+    `scripts/sync-ai-prompts.cjs --apply`, rồi nạp lại tiện ích 1.13.0.
+
 ## 1.17.1 · 05/11/2026
 ### Sửa lỗi
 - Differ đăng được: chọn Keyword (topic), gắn ảnh bìa nếu có, rồi bấm Publish trong hộp xuất bản

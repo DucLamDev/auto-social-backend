@@ -1,5 +1,36 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.18.0 / tiện ích 1.13.0: đăng bài lên Discuss Disqus và MeWe
+
+Cần backend 1.18.0 và tiện ích 1.13.0. Sau khi cập nhật backend, chạy `scripts/sync-extension-flows.cjs --apply` để
+database có hai luồng mới, và `scripts/sync-ai-prompts.cjs` để Disqus nhận lời dặn mới. Rồi nạp lại tiện ích trong
+`chrome://extensions` và bấm **Test** ở tài khoản Disqus, MeWe để tự kết nối.
+
+- **Discuss Disqus** (`https://disqus.com/home/discuss/channel-discussdisqus/`, luồng `disqus`):
+  - Disqus đã đóng các Channel khác; Discuss Disqus là kênh của Disqus cho chủ website nói về cộng đồng, bình luận.
+    AI viết bài dạng chia sẻ kinh nghiệm hoặc câu hỏi về phát triển cộng đồng, nhắc thương hiệu tối đa một lần.
+  - Tiện ích chọn chuyên mục (ô **Chuyên mục** của tài khoản, mặc định **Community Growth**; tên phải đúng một trong
+    Community Growth, Reveal, Installation, Admin, Plans and Pricing, API, Bug Reports & Feedback, Embed).
+  - Tiêu đề được ghi kèm tiền tố chuyên mục như form của Disqus (`Community Growth: …`), tối đa 200 ký tự cả tiền tố.
+  - Topic: tag cố định của tài khoản rồi tag AI của bài, 2–30 ký tự, tối đa 5, không trùng tên chuyên mục.
+  - Nội dung là chữ thuần. Form chỉ ghi nhận ô khi ô mất focus, nên tiện ích phát `focusout` sau mỗi ô.
+  - Bấm **Create Discussion**; bài mới mở `/channel/discussdisqus/discussion/channel-discussdisqus/<slug>/`.
+  - Dừng trước khi điền nếu: tài khoản chưa xác minh email (Disqus khoá form), chuyên mục không có, hoặc form đang có
+    bản nháp khác.
+- **MeWe** (`https://mewe.com/myworld`, luồng `mewe`):
+  - Tiện ích bấm ô **How is your day going?** để mở hộp soạn bài (`#c-postbox-dialog`, editor Quill), điền nội dung
+    (hashtag nằm trong bài, tối đa 2) rồi bấm **Post** của hộp, không bấm nút Share của bài khác trong feed.
+  - Bài đăng lên dòng thời gian của tài khoản đang đăng nhập, ai xem được theo mặc định của tài khoản MeWe (tài khoản
+    công khai: Anyone; riêng tư: My Followers). Tiện ích không đổi lựa chọn này.
+  - Bài có ảnh: tiện ích gắn ảnh vào ô tải ảnh và chờ tải xong mới bấm Post. MeWe coi WebP là tài liệu nên ảnh WebP
+    được vẽ lại thành PNG trước khi gắn.
+  - Đăng xong hộp đóng, bài mới hiện đầu feed nhưng không có link; tiện ích lấy mã bài (`data-postid`) để ghi link
+    `https://mewe.com/post/show/<mã>`, bỏ qua các bài đã có trên trang trước khi đăng.
+- Recipe có thêm trường `openerSelectors` (nút mở hộp soạn). Selector mở hộp do AI đề xuất và bạn duyệt được đặt trước
+  selector có sẵn, không thay thế.
+- Kiểm thử bằng trang giả lập dựng theo mã giao diện công khai của hai trang:
+  `node --import tsx --test scripts/extension-e2e/disqus-mewe.test.cjs`. Chưa thay được lần đăng thật trên tài khoản.
+
 ## Backend 1.17.1 / tiện ích 1.12.1: Differ chọn Keyword và ảnh bìa trong hộp Publish
 
 - Trên Differ, nút **Publish** ở thanh trên cùng chỉ mở hộp xuất bản (`dialog#modal-submit`).

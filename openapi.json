@@ -13709,7 +13709,9 @@
               "linkedin",
               "differ",
               "dzone",
-              "dailydev"
+              "dailydev",
+              "disqus",
+              "mewe"
             ]
           },
           "targetUrl": {
