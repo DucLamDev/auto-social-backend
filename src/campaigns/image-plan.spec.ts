@@ -18,6 +18,7 @@ const blueskyApi = { settings: {}, platform: { slug: 'bluesky', connectorKey: 'b
 const forum = { settings: extension('discourse', 'https://forum.hestiacp.com/new-topic'), platform: { slug: 'hestiacp-forum', capability: { text: true, image: false } } };
 const instagram = { settings: {}, platform: { slug: 'instagram', connectorKey: 'instagram', capability: { text: false, image: true } } };
 const discord = { settings: {}, platform: { slug: 'discord', connectorKey: 'discord', capability: social } };
+const differ = { settings: extension('differ', 'https://differ.blog/new-story'), platform: { slug: 'differ', capability: social } };
 
 describe('which destinations get an AI image', () => {
   it('follows what each publishing route can attach', () => {
@@ -27,6 +28,8 @@ describe('which destinations get an AI image', () => {
     expect(accountImageNeed(forum, connectors)).toBe('none');
     expect(accountImageNeed(instagram, connectors)).toBe('required');
     expect(accountImageNeed(discord, connectors)).toBe('optional');
+    // Differ's publish dialog takes an optional featured image.
+    expect(accountImageNeed(differ, connectors)).toBe('optional');
     expect(accountImageNeed({ ...discord, platform: { ...discord.platform, capability: { text: true, image: false } } }, connectors)).toBe('none');
   });
 

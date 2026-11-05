@@ -23,6 +23,8 @@ const TAG_RULES: Partial<Record<ExtensionEngine, { max: number; clean: (tag: str
   },
   // DEV: lowercase letters and digits only, at most 4 tags.
   devto: { max: 4, clean: (tag) => fold(tag).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 30) },
+  // Differ: one Keyword picked from its own topic list; these are the candidates the extension matches.
+  differ: { max: 3, clean: (tag) => fold(tag).toLowerCase().replace(/[_-]+/g, ' ').replace(/[^a-z0-9 +#.]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40) },
   // SlideShare: free-text tags separated by commas.
   slideshare: { max: 5, clean: (tag) => tag.replace(/[,\s]+/g, ' ').trim().toLowerCase().slice(0, 40) },
 };
@@ -32,6 +34,7 @@ const TAG_STYLES: Partial<Record<ExtensionEngine, string>> = {
   stackexchange: 'English tags that already exist on this Stack Exchange site, lowercase, words joined with "-" (for example "nginx", "reverse-proxy"); the question is refused without at least one real tag',
   devto: 'lowercase letters and digits only, no spaces, "-" or accents (for example "webdev", "selfhosting")',
   discourse: 'short lowercase tags this forum most likely already has, words joined with "-"',
+  differ: 'broad English topics a blogging site lists as categories, most relevant first (for example "programming", "devops", "linux", "security", "web development", "cloud computing")',
 };
 
 /** Extra guidance for the AI's topic tags on destinations with strict tag rules. */

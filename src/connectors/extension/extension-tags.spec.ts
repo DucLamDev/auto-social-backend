@@ -1,4 +1,4 @@
-import { destinationTags, takesSuggestedTags } from './extension-tags';
+import { destinationTags, tagStyle, takesSuggestedTags } from './extension-tags';
 
 describe('AI tags for extension tag fields', () => {
   it('turns AI tags into Stack Exchange tags after the configured ones, at most 5 in total', () => {
@@ -13,6 +13,12 @@ describe('AI tags for extension tag fields', () => {
 
   it('keeps Unicode Discourse tags and drops duplicates of the configured ones', () => {
     expect(destinationTags('discourse', ['Máy chủ', 'web_server', 'Docker'], ['docker'])).toEqual(['máy-chủ', 'web-server']);
+  });
+
+  it('gives Differ up to 3 plain topic candidates for its Keyword picker, with a style hint for the AI', () => {
+    expect(takesSuggestedTags('differ')).toBe(true);
+    expect(destinationTags('differ', ['#Self-Hosting', 'Web_Development', 'DevOps', 'Linux'])).toEqual(['self hosting', 'web development', 'devops']);
+    expect(tagStyle('differ')).toContain('programming');
   });
 
   it('sends nothing to destinations without a tag field', () => {
