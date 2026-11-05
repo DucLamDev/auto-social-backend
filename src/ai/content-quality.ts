@@ -113,27 +113,53 @@ export const reviewJsonSchema = {
   },
 } as const;
 
+/** "Sửa theo khuyến nghị" / "Viết lại": the earlier version's score and the fixes the operator asked for. */
+export interface PreviousReview {
+  score: number | null;
+  fixes: readonly string[];
+}
+
+/** How many requested fixes the editor is shown, and how much of each. */
+const PREVIOUS_FIXES_SHOWN = 10;
+const PREVIOUS_FIX_LENGTH = 400;
+
+/** "AI chấm 7/10" in a stored reason, or null when the draft was never scored. */
+export function scoreFromReason(reason: string | null | undefined): number | null {
+  const match = reason?.match(/AI chấm (\d{1,2})\/10/);
+  return match ? clampScore(Number(match[1])) : null;
+}
+
 /**
  * The editor's instructions. With the draft's published length, the editor
- * knows the hard limit too, so it never asks for additions the post has no
- * room for.
+ * knows the room left, so it never asks for additions the post cannot hold.
+ * With the previous review of a revised draft, it checks the requested fixes
+ * first and scores the improvement, so fixing the chosen points raises the
+ * score instead of drawing a new, contradicting list.
  */
-export function reviewInstructions(contract: PlatformContract, publishedLength?: number): string {
-  const over = contract.maxChars && publishedLength !== undefined ? publishedLength - contract.maxChars : 0;
+export function reviewInstructions(contract: PlatformContract, publishedLength?: number, previous?: PreviousReview | null): string {
+  const room = contract.maxChars && publishedLength !== undefined ? contract.maxChars - publishedLength : null;
+  const fixes = (previous?.fixes ?? []).map((fix) => fix.trim().slice(0, PREVIOUS_FIX_LENGTH)).filter(Boolean).slice(0, PREVIOUS_FIXES_SHOWN);
   return [
-    `You are a strict senior editor for ${contract.name}. Judge the draft as a real member of its audience would.`,
+    `You are a demanding but fair senior editor for ${contract.name}. Judge the draft as a real member of its audience would.`,
     'Score each criterion from 1 to 10:',
     '- hook: would a target reader stop at the first line?',
     '- specificity: concrete details, steps, numbers and examples instead of generic claims.',
     '- platformFit: format, length, tone and community norms of this destination; promotional posts in forums and communities score low.',
     '- naturalness: reads like a knowledgeable human, no filler or AI cliches.',
+    'Score anchors for every number: 9-10 excellent, nothing worth changing; 8 ready to publish, only optional polish left; 7 ready to publish with one clear weakness; 5-6 part of it needs rewriting; 1-4 off-topic, misleading or in the wrong language. Optional polish never lowers a score.',
     contract.maxChars
-      ? `Hard length limit: the published post has at most ${contract.maxChars} characters, counting hashtags, links and the source line the system adds${publishedLength !== undefined ? `; this draft has ${publishedLength}` : ''}. Judge it within that limit and never ask for additions that would not fit${over > 0 ? `; it is ${over} characters over, so one issue must ask to cut at least ${over} characters` : ''}.`
+      ? `Hard length limit: the published post has at most ${contract.maxChars} characters, counting hashtags, links and the source line the system adds${publishedLength !== undefined ? `; this draft has ${publishedLength}` : ''}. Judge it within that limit and never ask for additions that would not fit${room !== null && room < 0 ? `; it is ${-room} characters over, so one issue must ask to cut at least ${-room} characters` : room !== null ? `; only ${room} characters are left, so any fix that adds text must stay within them or say what to cut to make room` : ''}.`
       : '',
-    'score is the overall quality from 1 to 10; 7 means ready to publish without edits.',
+    'score is the overall quality from 1 to 10.',
     `languageOk is true only when the draft is written in ${LANGUAGE_NAMES[contract.language]}.`,
-    'unsupportedClaims lists statements about the brand, its products, prices, customers, performance or offers that are not supported by the brief or the brand facts. General, widely known technical knowledge is not an unsupported claim.',
-    'issues lists at most five short, actionable fixes written in Vietnamese for the operator. Do not rewrite the post.',
+    'unsupportedClaims lists only statements about the brand, its products, prices, customers, performance, locations or offers that add facts the brief and the brand facts do not give. Whatever the brief or the brand facts state, even in a few words, is supported: if the brief says the brand offers VPS and proxies, "the brand has VPS and proxies" is supported. General, widely known technical knowledge is not an unsupported claim. Never list a statement you consider supported or partly supported.',
+    'issues lists at most five short, actionable fixes written in Vietnamese for the operator, most important first: only changes that would raise the score, not matters of taste. Fixes must not contradict each other. Leave it empty for a score of 9 or 10. Do not rewrite the post.',
+    previous && (fixes.length || previous.score !== null)
+      ? [
+          `This draft revises an earlier version${previous.score !== null ? ` that you scored ${previous.score}/10` : ''}.${fixes.length ? ` The operator asked the writer to fix:\n${fixes.map((fix) => `- ${fix}`).join('\n')}` : ''}`,
+          `Check those fixes first. When they are made and nothing else got worse, the score must be ${previous.score !== null ? `higher than ${previous.score}` : 'raised accordingly'}. Never ask to undo a requested fix or for its opposite, and raise a new issue only for a real problem a reader would notice.`,
+        ].join('\n')
+      : '',
   ].filter(Boolean).join('\n');
 }
 

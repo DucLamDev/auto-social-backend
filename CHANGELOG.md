@@ -1,6 +1,19 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.18.1 · 05/11/2026
+### Sửa lỗi
+- Sửa theo khuyến nghị thì điểm AI chấm tăng, không ra một danh sách góp ý mới trái với lần trước
+  - Lần chấm bài viết lại biết điểm cũ ("AI chấm X/10") và các mục người duyệt đã chọn sửa. AI chấm kiểm các mục đó
+    trước; sửa xong mà không hỏng chỗ khác thì điểm phải cao hơn điểm cũ. Không còn đòi làm ngược lại mục vừa sửa (ví dụ
+    vừa bảo bớt quảng cáo, lần sau lại chê câu về thương hiệu "hơi cụt").
+  - "Thông tin chưa có căn cứ" chỉ còn là thông tin về thương hiệu mà mô tả và hồ sơ thương hiệu không có. Trước đây AI
+    chấm liệt kê cả điều mô tả đã nêu (như "vpsttt có cả VPS và proxy"), làm bài 7/10 vẫn bị giữ lại không duyệt tự động.
+  - Thang điểm có mốc rõ (8: đăng được, chỉ còn trau chuốt tuỳ ý; 7: còn một điểm yếu rõ). Chỗ trau chuốt tuỳ ý không trừ
+    điểm, bài 9–10 không kèm góp ý, các góp ý không được mâu thuẫn nhau.
+  - Nền tảng giới hạn ký tự (Pixelfed, Bluesky, X…): AI chấm được báo còn trống bao nhiêu ký tự, nên không đòi thêm chi
+    tiết không vừa; góp ý thêm chữ phải nói bớt chỗ nào.
+
 
 ## 1.18.0 · 05/11/2026
 ### Tính năng
