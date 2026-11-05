@@ -26,6 +26,12 @@ describe('posting flow status shown after a login check', () => {
     expect(extensionFlowAudit('unix-linux-stackexchange', { ...settings, extensionTags: [] })).toMatchObject({ status: 'CONFIGURED' });
   });
 
+  it('lists Product Hunt forums as ready to configure now that threads have a posting flow', () => {
+    expect(extensionFlowAudit('product-hunt', {})).toMatchObject({ status: 'CONFIGURATION_REQUIRED', implemented: true, engine: 'producthunt' });
+    expect(extensionFlowAudit('product-hunt', { delivery: 'extension', extensionEngine: 'producthunt', extensionTargetUrl: 'https://www.producthunt.com/p/new', extensionAutoSubmit: true }))
+      .toMatchObject({ status: 'CONFIGURED', implemented: true, engine: 'producthunt' });
+  });
+
   it('lists daily.dev as ready to configure now that it has a posting flow', () => {
     expect(extensionFlowAudit('daily-dev', {})).toMatchObject({ status: 'CONFIGURATION_REQUIRED', implemented: true, engine: 'dailydev' });
     expect(extensionFlowAudit('daily-dev', { delivery: 'extension', extensionEngine: 'dailydev', extensionTargetUrl: 'https://daily.dev/squads/create', extensionAutoSubmit: true }))

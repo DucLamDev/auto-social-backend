@@ -345,6 +345,41 @@ export async function fillSocialAndSubmit(job) {
     await sleep(300);
     return all('[aria-selected="true"], [aria-checked="true"], .selected, .tag, .chip, .rs__multi-value, [data-testid*="flair"], button, [role="combobox"]').some(node => visible(node) && normalize(node.innerText).toLowerCase().includes(name.toLowerCase()));
   };
+  // Product Hunt "Start new thread": the forum the thread goes to is picked in a "Search for a
+  // product" box (General, Vibecoding, Introduce yourself, Self-Promotion, or a product's own
+  // forum). Its rows have no stable roles, so a row is the element whose own text is exactly the
+  // name and that appeared when the box opened. Sidebar links read "p/general" and never match,
+  // and links are never clicked. Returns true, or the result that stops the run untouched.
+  const chooseProductHuntForum = async name => {
+    const field = pick(['input[placeholder*="Search for a product" i]', 'input[aria-label*="Search for a product" i]', 'input[placeholder*="product" i]']);
+    if (!field) return needs('Không thấy ô "Search for a product" của Product Hunt để chọn forum; chưa điền bài.');
+    const same = text => normalize(text).toLowerCase() === name.toLowerCase();
+    // textContent first (cheap, no layout), then the visible text of the few matches.
+    const named = () => all('body *').filter(node => node !== field && same(node.textContent) && visible(node) && same(node.innerText)
+      && ![...node.children].some(child => same(child.textContent)) && !node.closest('a[href], header, nav, aside, [role="banner"], [role="navigation"]'));
+    const area = (() => { let node = field; for (let level = 0; level < 4 && node.parentElement; level++) node = node.parentElement; return node; })();
+    const before = new Set(named());
+    // Shown in the picker once chosen: the input's value, or a label next to it.
+    const shown = () => same(field.value) || named().some(node => contains(area, node));
+    if (shown()) return true;
+    const rowsNow = () => named().filter(node => !before.has(node));
+    field.focus(); field.click();
+    let rows = await wait(() => (rowsNow().length ? rowsNow() : null), 2500) ?? [];
+    if (!rows.length) {
+      // Product forums are found by searching their name.
+      write(field, name);
+      rows = await wait(() => (rowsNow().length ? rowsNow() : null), 6000) ?? [];
+    }
+    if (rows.length !== 1) {
+      return needs(rows.length ? `Có nhiều mục “${name}” trong ô chọn forum của Product Hunt; chưa điền bài. Chọn đúng forum trong tab rồi bấm Giao lại.`
+        : `Không thấy forum / product “${name}” trong ô "Search for a product" của Product Hunt; chưa điền bài. Ghi đúng tên ở ô Chuyên mục của tài khoản.`);
+    }
+    const clicked = rows[0];
+    (clicked.closest('[role="option"], [role="menuitem"], [cmdk-item], button, li') ?? clicked).click();
+    // The list closed (the clicked row is gone) and the picker now names the forum.
+    if (!await wait(() => ((!clicked.isConnected || !visible(clicked)) && shown() ? true : null), 3000)) return needs(`Đã bấm forum “${name}” nhưng Product Hunt chưa hiện forum đã chọn; chưa điền bài.`);
+    return true;
+  };
   // The post language (Lemmy and similar forms). Not found: left to AI form-fill.
   const chooseLanguage = async () => {
     const names = { en: ['en', 'eng', 'english'], vi: ['vi', 'vie', 'vietnamese', 'tiếng việt'] }[post.language];
@@ -411,6 +446,10 @@ export async function fillSocialAndSubmit(job) {
     else radio.dispatchEvent(new Event('change', { bubbles: true }));
     await sleep(300);
     if (!radio.checked) return needs('Chưa chọn được chuyên mục Discuss Disqus; chưa điền bài.');
+  }
+  if (engine === 'producthunt' && !resume) {
+    const chosen = await chooseProductHuntForum(normalize(options.category) || 'Self-Promotion');
+    if (chosen !== true) return chosen;
   }
   await chooseLanguage();
 
@@ -504,7 +543,7 @@ export async function fillSocialAndSubmit(job) {
     if (!validContent()) return needs('Nội dung thay đổi khi gắn ảnh; chưa đăng.');
   }
 
-  if (!resume && !['lemmy', 'discuit', 'disqus'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
+  if (!resume && !['lemmy', 'discuit', 'producthunt', 'disqus'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
   if (engine === 'stackexchange' && !resume) {
     // Tags configured on the account must all be applied; the AI's suggested tags
     // are used only when the site already has them (never created), up to 5 in total.
@@ -755,6 +794,19 @@ export async function fillSocialAndSubmit(job) {
   const unfilled = await formFillNeeded();
   if (unfilled) return unfilled;
   if (engine === 'differ') return await publishDiffer();
+  if (engine === 'producthunt') {
+    const editor = pick(bodySelectors);
+    const submit = await wait(() => {
+      const after = all('button, input[type="submit"]').filter(node => enabled(node) && normalize(node.innerText || node.value).toLowerCase() === 'submit'
+        && !node.closest('header, nav, [role="banner"], [role="navigation"]')
+        && editor && (editor.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING));
+      return after[0] ?? null;
+    }, 5000);
+    if (!submit) return { ...needs('Nút Submit của form Product Hunt chưa sẵn sàng; chưa đăng.'), missing: ['submit'] };
+    if (!validContent()) return needs('Nội dung không còn khớp với bài trên web; chưa đăng.');
+    submit.click();
+    return { status: 'submitted', beforeUrls };
+  }
   const submit = await wait(() => {
     const target = pick(recipe.submitSelectors);
     if (target) return enabled(target) ? target : null;

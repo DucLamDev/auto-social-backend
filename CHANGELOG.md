@@ -1,9 +1,9 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
-## 1.18.0 · 05/11/2026
+## 1.19.0 · 05/11/2026
 ### Tính năng
-- Tự đăng bài lên Discuss Disqus và MeWe bằng tiện ích Chrome (tiện ích 1.13.0)
+- Tự đăng bài lên Discuss Disqus và MeWe bằng tiện ích Chrome (tiện ích 1.14.0)
   - **Discuss Disqus**: tiện ích chọn chuyên mục (mặc định Community Growth, đổi được ở ô Chuyên mục của tài khoản),
     điền tiêu đề kèm tiền tố chuyên mục như form của Disqus, topic từ tag cố định rồi tag AI của bài (tối đa 5), nội
     dung chữ thuần, rồi bấm Create Discussion một lần và xác nhận trang discussion mới. Tài khoản chưa xác minh email,
@@ -15,7 +15,74 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
     ghi link mewe.com/post/show/…; bài cũ trùng nội dung không bị nhận nhầm. Bản nháp khác trong hộp không bị ghi đè.
   - Hai kênh không còn báo "Chưa đăng tự động được". Tài khoản đã đăng nhập tự kết nối khi bấm Test (trang đăng mặc
     định của luồng). Sau khi cập nhật backend cần chạy `scripts/sync-extension-flows.cjs --apply` và
-    `scripts/sync-ai-prompts.cjs --apply`, rồi nạp lại tiện ích 1.13.0.
+    `scripts/sync-ai-prompts.cjs --apply`, rồi nạp lại tiện ích 1.14.0.
+
+## 1.18.3 · 05/11/2026
+### Sửa lỗi
+- Kiểm tra đăng nhập Discuit, Blogger, Warrior Forum không còn báo sai (tiện ích 1.13.2)
+  - **Discuit**: đã đăng nhập mà vẫn báo "Thông tin đăng nhập bị từ chối". Cửa sổ Chrome hẹp làm ẩn tên tài khoản trên
+    thanh menu nên tiện ích không nhận ra phiên, rồi đọc thấy chữ "wrong password" trong một bài trên feed. Nay tiện ích
+    hỏi tài khoản đang đăng nhập qua `/api/_initial` của Discuit. Câu "mật khẩu sai / từ chối" chỉ còn được đọc khi trang
+    đang hiện form đăng nhập hoặc thông báo lỗi, không đọc từ nội dung bài viết. Áp dụng cho mọi nền tảng.
+  - **Blogger** (đăng nhập bằng Google): tiện ích bấm đúng link "Đăng nhập" (`/go/signin`) ở góc phải trang
+    blogger.com/about. Sau khi vào trang quản trị, tiện ích xác nhận đúng tài khoản qua email trên nút tài khoản Google;
+    email khác thì báo "tài khoản khác".
+  - **Warrior Forum**: điều khoản cấm bot và script, nên tiện ích không bấm form đăng nhập hay nút Continue with Google.
+    Thông báo cũ "không có nút đăng nhập bằng Google" là sai. Nay tiện ích nói rõ cần đăng nhập tay một lần rồi bấm
+    "Tôi đã đăng nhập · Kiểm tra"; khi đã đăng nhập thì tiện ích đi tiếp bước xác nhận bằng trang hồ sơ.
+
+## 1.18.2 · 05/11/2026
+### Sửa lỗi
+- Quora tự đăng nhập được bằng email và mật khẩu (tiện ích 1.13.1)
+  Trang đăng nhập Quora giữ nút **Login** ở trạng thái khoá tới khi điền đủ email và mật khẩu, và không nằm trong
+  `<form>`. Tiện ích chỉ tìm nút đang bật nên báo "Không nhận diện được nút xác nhận đăng nhập duy nhất" và dừng. Nay
+  tiện ích nhận nút Login của Quora, và với các trang tương tự thì lấy nút "Login / Đăng nhập…" gần ô vừa điền nhất kể
+  cả khi nút đang khoá; điền xong chờ nút bật rồi mới bấm, nút không bật thì báo rõ, không bấm.
+
+## 1.18.1 · 05/11/2026
+### Sửa lỗi
+- Sửa theo khuyến nghị thì điểm AI chấm tăng, không ra một danh sách góp ý mới trái với lần trước
+  - Lần chấm bài viết lại biết điểm cũ ("AI chấm X/10") và các mục người duyệt đã chọn sửa. AI chấm kiểm các mục đó
+    trước; sửa xong mà không hỏng chỗ khác thì điểm phải cao hơn điểm cũ. Không còn đòi làm ngược lại mục vừa sửa (ví dụ
+    vừa bảo bớt quảng cáo, lần sau lại chê câu về thương hiệu "hơi cụt").
+  - "Thông tin chưa có căn cứ" chỉ còn là thông tin về thương hiệu mà mô tả và hồ sơ thương hiệu không có. Trước đây AI
+    chấm liệt kê cả điều mô tả đã nêu (như "vpsttt có cả VPS và proxy"), làm bài 7/10 vẫn bị giữ lại không duyệt tự động.
+  - Thang điểm có mốc rõ (8: đăng được, chỉ còn trau chuốt tuỳ ý; 7: còn một điểm yếu rõ). Chỗ trau chuốt tuỳ ý không trừ
+    điểm, bài 9–10 không kèm góp ý, các góp ý không được mâu thuẫn nhau.
+  - Nền tảng giới hạn ký tự (Pixelfed, Bluesky, X…): AI chấm được báo còn trống bao nhiêu ký tự, nên không đòi thêm chi
+    tiết không vừa; góp ý thêm chữ phải nói bớt chỗ nào.
+
+
+## 1.18.0 · 05/11/2026
+### Tính năng
+- Đăng thread lên forum Product Hunt bằng tiện ích Chrome, tự chọn forum / product
+  Cần nạp lại tiện ích 1.13.0. Đây là luồng **Start new thread** (`https://www.producthunt.com/p/new`), không phải Launch
+  sản phẩm.
+  - **Chọn forum trước khi điền bài:**
+    - Tiện ích chọn trong ô "Search for a product" đúng tên ghi ở ô **Chuyên mục** của tài khoản: General, Vibecoding,
+      Introduce yourself, Self-Promotion, hoặc tên một product (tiện ích gõ để tìm).
+    - Để trống thì đăng vào **Self-Promotion**.
+    - Không thấy tên đó thì dừng, chưa điền gì.
+  - **Điền bài:** tiêu đề, nội dung dán dạng định dạng (Markdown → HTML), rồi bấm **Submit của form**. Nút "Submit" trên
+    thanh đầu trang (đăng sản phẩm) không bao giờ được bấm.
+  - **Ghi nhận bài:** thread mới ở `/p/<forum>/<slug>`.
+  - **AI viết theo kiểu thread forum:** tiêu đề cụ thể, nội dung trò chuyện, nhắc sản phẩm một lần kèm công khai, câu hỏi
+    mời trả lời; không tagline kiểu Launch.
+  - Product Hunt không còn bị liệt kê "chưa có luồng".
+  - **Sau khi triển khai:** bấm **Test** ở tài khoản Product Hunt để gắn trang đăng mặc định. Muốn cập nhật lời nhắc AI và
+    trang mặc định của nền tảng trong database thì chạy seed như trong `DEPLOYMENT.md`.
+
+## 1.17.2 · 05/11/2026
+### Sửa lỗi
+- Sửa được Phiên Chrome / 2FA của tài khoản đang dùng chung hồ sơ Chrome với tài khoản khác cùng nền tảng
+  - **Lỗi cũ:** lần nhập file 03/11 đặt hai tài khoản MeWe (và hai tài khoản Differ), với hai tài khoản Google khác nhau,
+    vào cùng hồ sơ "Chrome VPS". Từ đó lưu bất kỳ thay đổi nào ở form **Phiên Chrome / 2FA** của chúng đều báo lỗi tiếng Anh
+    "This Chrome profile already belongs to another account on this platform".
+  - **Nay:**
+    - Tài khoản vốn đã ở hồ sơ đó sửa và lưu được. `PUT /extension/accounts/:id/session` trả thêm `sharedWith` (tên tài
+      khoản cùng nền tảng trên hồ sơ đó) để giao diện cảnh báo.
+    - Chỉ còn chặn việc **chuyển** một tài khoản sang hồ sơ đang giữ tài khoản khác của cùng nền tảng, vì cookie chỉ giữ
+      một lần đăng nhập mỗi website. Câu báo bằng tiếng Việt nêu tên tài khoản đó và cách xử lý.
 
 ## 1.17.1 · 05/11/2026
 ### Sửa lỗi
@@ -188,7 +255,6 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   rõ bằng tiếng Việt từng tài khoản và lý do, không tạo việc đăng nào. "Duyệt hết" đăng các nền tảng đã có tài khoản sẵn
   sàng, để các bài còn lại tiếp tục chờ duyệt (`waitingVariantIds`) cho tới khi bạn kết nối lại tài khoản hoặc từ chối
   bài. Tài khoản bị bỏ qua sẽ không tự nhận bài này khi kết nối lại sau.
-
 
 ## 1.11.0 · 04/11/2026
 ### Tính năng

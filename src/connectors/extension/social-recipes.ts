@@ -1,6 +1,6 @@
 import type { ExtensionRecipe } from './extension-delivery';
 
-export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'disqus', 'mewe'] as const;
+export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'producthunt', 'disqus', 'mewe'] as const;
 export type SocialExtensionEngine = (typeof SOCIAL_EXTENSION_ENGINES)[number];
 
 function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>): ExtensionRecipe {
@@ -63,6 +63,17 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
     readySelectors: ['textarea[name="title"]'], titleSelectors: ['textarea[name="title"]'], bodySelectors: ['[contenteditable][aria-label="editable markdown"]'], inputMode: 'pasteHtml',
     optionalMedia: 'image', mediaInputSelectors: ['dialog#modal-submit input[type="file"]'], mediaPreviewSelectors: ['dialog#modal-submit img[alt="preview"]'],
     submitSelectors: ['button#post-submit-button'], successUrlPattern: '/p/[^/?#]+(?:[?#].*)?$', publishedTitleSelectors: ['h1'], publishedBodySelectors: ['article', '.prose'],
+  }),
+  // Product Hunt forums, "Start new thread" (/p/new): a product / forum picker ("Search for a
+  // product": General, Self-Promotion, a product's own forum…), Title, a rich Body editor and
+  // the form's Submit. The header also has a "Submit" (launch a product): never that one.
+  // The new thread opens at /p/<forum>/<slug>.
+  producthunt: recipe('producthunt', {
+    readySelectors: ['input[placeholder*="Search for a product" i]', 'input[placeholder="Title" i]', 'input[name="title"]'],
+    titleSelectors: ['input[placeholder="Title" i]', 'input[name="title"]', 'textarea[placeholder="Title" i]', 'textarea[name="title"]'],
+    bodySelectors: ['.ProseMirror[contenteditable="true"]', '[contenteditable="true"][data-placeholder="Body" i]', '[contenteditable="true"][aria-placeholder="Body" i]', 'main [contenteditable="true"]'],
+    inputMode: 'pasteHtml', submitSelectors: [], successUrlPattern: '/p/(?!new(?:[/?#]|$))[^/?#]+/[^/?#]+(?:[?#].*)?$',
+    publishedTitleSelectors: ['h1'], publishedBodySelectors: ['main'],
   }),
   dzone: recipe('dzone', {
     readySelectors: ['textarea.article-title[name="title"]'], titleSelectors: ['textarea.article-title[name="title"]'], bodySelectors: ['.fr-element.fr-view[contenteditable]'], inputMode: 'pasteHtml',

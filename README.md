@@ -125,6 +125,8 @@ Bài đạt từ 7/10. Ở Content đợi duyệt:
   `notes` rỗng thì phải có `instruction`;
 - việc này chạy nền 1–3 phút. Trạng thái nằm ở trường `aiRevision` của biến thể (`generating`, `done`, `failed`);
 - bài mới thay bài cũ tại chỗ, được chấm lại; bài đã duyệt nhưng chưa vào chiến dịch quay về chờ duyệt;
+- lần chấm lại biết điểm cũ ("AI chấm X/10") và các mục bạn yêu cầu sửa: AI chấm kiểm các mục đó trước, sửa xong mà không
+  hỏng chỗ khác thì điểm phải cao hơn điểm cũ, và không đòi làm ngược lại mục đã sửa;
 - bạn sửa tay trong lúc AI đang viết thì giữ bản bạn sửa.
 
 **Ảnh AI cho chiến dịch** (từ backend 1.7.0) dùng cùng địa chỉ và key VPSTTT AI, gọi `POST /images/generations` với
@@ -173,6 +175,9 @@ Mỗi bài AI viết đi qua bốn lớp kiểm soát:
    Thông tin về thương hiệu (giá, số liệu, khách hàng, ưu đãi) chỉ được lấy từ mô tả hoặc hồ sơ này. Hồ sơ thiếu hay sai thì bị bỏ qua và ghi cảnh báo, không chặn việc tạo bài.
 3. **Kiểm tra máy.** Kiểm độ dài sau khi dựng văn bản cuối, đúng ngôn ngữ, đủ tiêu đề, không còn Markdown ở nơi cần HTML, số hashtag và câu sáo.
 4. **AI chấm điểm.** AI chấm từ 1 đến 10 cho câu mở đầu, độ cụ thể, độ hợp nền tảng và độ tự nhiên, rồi liệt kê các thông tin chưa có căn cứ.
+   - Thang điểm: 9–10 xuất sắc; 8 đăng được, chỉ còn chỗ trau chuốt tuỳ ý; 7 đăng được nhưng còn một điểm yếu rõ; 5–6 phải viết lại một phần. Chỗ trau chuốt tuỳ ý không làm trừ điểm.
+   - "Chưa có căn cứ" chỉ là thông tin về thương hiệu mà mô tả và hồ sơ thương hiệu không có; điều mô tả đã nêu (dù ngắn) là có căn cứ.
+   - Góp ý phải vừa giới hạn ký tự: AI chấm được báo số ký tự còn trống, góp ý thêm chữ phải nói bớt chỗ nào.
    - Đạt khi điểm từ 7 trở lên, đúng ngôn ngữ và không có thông tin chưa có căn cứ.
    - Chưa đạt thì AI viết lại đúng một lần.
    - Vẫn chưa đạt, hoặc AI tự đánh giá bài không hợp nơi đăng: biến thể giữ `recommended=false` cùng nhận xét. Job chuyển `NEEDS_ACTION` với mã `CONTENT_REVIEW_REQUIRED`, không tự đăng.

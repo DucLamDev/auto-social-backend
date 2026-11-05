@@ -131,6 +131,20 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
         if (typeof handle === 'string' && handle) identity = handle;
         if (typeof email === 'string' && email) ownEmail = email;
       } catch { /* DOM fallback */ }
+    } else if (location.hostname === 'discuit.org') {
+      // /api/_initial names the signed-in user ("user": null when signed out); the navbar
+      // name is hidden in narrow windows, which once read as "not signed in".
+      try { const r = await fetch('/api/_initial', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) }); if (r.ok) { const me = (await r.json())?.user; if (typeof me?.username === 'string' && me.username) identity = me.username; } } catch { /* Navbar fallback */ }
+    } else if (location.hostname === 'www.blogger.com' && auth.provider === 'google') {
+      // Blogger is signed in with Google: the Google account button names the email
+      // ("Tài khoản Google: Tên (email)"). Only that email decides, never a blog author.
+      const emails = [...new Set(all('a[aria-label], button[aria-label]').map(node => node.getAttribute('aria-label') || '')
+        .filter(label => /google/i.test(label)).map(label => /\(([^()\s]+@[^()\s]+)\)\s*$/.exec(label)?.[1]).filter(Boolean).map(norm))];
+      if (emails.length === 1) {
+        if (emails[0] !== norm(auth.loginUsername)) return response('mismatch');
+        verifiedGoogleIdentity = true;
+        return { ...response('authenticated'), detectedUsername: (auth.expectedUsername || emails[0]).slice(0, 200) };
+      }
     } else if (location.hostname === 'huggingface.co') {
       // The hub's own session endpoint names the signed-in user (the avatar menu is closed).
       try { const r = await fetch('/api/whoami-v2', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) }); if (r.ok) { const me = await r.json(); if (typeof me?.name === 'string') identity = me.name; } } catch { /* DOM fallback */ }
@@ -311,6 +325,15 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     }
   }
 
+  // Warrior Forum's terms forbid bots, scripts and automated access: an existing
+  // session is recognized above, but its login form and Google button are never used.
+  if (/(?:^|\.)warriorforum\.com$/.test(location.hostname)) {
+    // Signed in (no login control shown): the worker goes on to the own profile page.
+    const loginShown = all('input[type="password"]').some(visible)
+      || all('button, [role="button"], a').filter(visible).some(node => /^(?:log ?in|sign ?in|continue with (?:google|facebook))$/i.test((node.innerText || '').trim()));
+    if (!loginShown) return response('unknown');
+    return challenge('Điều khoản Warrior Forum cấm bot, script và truy cập tự động, nên tiện ích không tự đăng nhập (kể cả nút Continue with Google). Đăng nhập tay một lần trong Chrome rồi bấm “Tôi đã đăng nhập · Kiểm tra”. Bài cho Warrior Forum được bàn giao để bạn đăng tay.');
+  }
   // A registration page is never a login form: filling it could create a second
   // account (a Discourse /signup page was once filled). Stop as "not signed in".
   if (!google) {
@@ -330,7 +353,9 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     }
   }
   const otp = one(['#totpPin', 'input[name="totpPin"]', 'input[name="second_factor_token"]', 'input[autocomplete="one-time-code"]', 'form[action*="two-step"] input[name="code"]']);
-  if (/incorrect password|wrong password|username and password do not match|invalid (?:email or password|password|credentials|code)|incorrect code|mật khẩu không đúng|mã không đúng|sai mã|mã không hợp lệ|code incorrect|mot de passe incorrect/i.test(text)) {
+  const loginFormShown = Boolean(otp) || all('input[type="password"], #identifierId').some(visible);
+  const rejectionText = loginFormShown ? text : notices;
+  if (/incorrect password|wrong password|username and password do not match|invalid (?:email or password|password|credentials|code)|incorrect code|mật khẩu không đúng|mã không đúng|sai mã|mã không hợp lệ|code incorrect|mot de passe incorrect/i.test(rejectionText)) {
     return challenge(otp ? 'Google hoặc nền tảng đã từ chối mã TOTP. Kiểm tra khóa 2FA trong cấu hình; chưa gửi lại mã.' : 'Thông tin đăng nhập bị từ chối; không tự thử lại.', google);
   }
   if (otp) {
@@ -362,10 +387,23 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
       if (action !== stage) return response(stage);
       const field = otp || password || identifier;
       const form = field.closest('form');
+      const submitLabels = stage === 'totp' ? ['verify', 'verify code', 'xác minh', 'confirm', 'continue'] : ['log in', 'login', 'sign in', 'continue', 'next', 'đăng nhập', 'tiếp theo'];
+      // Forms without <form> keep their button disabled until the fields are filled
+      // (Quora: "Login"). Take the labelled button nearest the field, enabled or not;
+      // it must turn on after filling (checked below) before it is clicked.
+      const nearField = () => {
+        const candidates = all('button, [role="button"], input[type="submit"]').filter(visible)
+          .filter(node => submitLabels.includes(norm(node.innerText || node.value || node.getAttribute('aria-label'))));
+        for (let scope = field.parentElement; scope; scope = scope.parentElement) {
+          const inside = candidates.filter(node => scope.contains(node));
+          if (inside.length) return inside.length === 1 ? inside[0] : null;
+        }
+        return null;
+      };
       const submit = google ? one([stage === 'password' ? '#passwordNext button' : stage === 'identifier' ? '#identifierNext button' : '#totpNext button'])
-        : one(['#login-button', 'button#login-submit', 'button[type="submit"][name="login"]'])
+        : one(['#login-button', 'button#login-submit', 'button[type="submit"][name="login"]', 'button.puppeteer_test_login_button'])
           || (form ? [...form.querySelectorAll('button[type="submit"], input[type="submit"]')].filter(visible).length === 1 ? [...form.querySelectorAll('button[type="submit"], input[type="submit"]')].filter(visible)[0] : null : null)
-          || exact(stage === 'totp' ? ['verify', 'verify code', 'xác minh', 'confirm', 'continue'] : ['log in', 'login', 'sign in', 'continue', 'next', 'đăng nhập', 'tiếp theo']);
+          || exact(submitLabels) || nearField();
       if (!submit || !enabled(field)) return challenge('Không nhận diện được nút xác nhận đăng nhập duy nhất.');
       const write = (node, value) => { if (!node || typeof value !== 'string') return false;
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(node, value);
@@ -385,6 +423,10 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     if (siteLoginForm) return { ...response('noGoogle'), message: 'Trang đăng nhập của nền tảng chỉ có form email / mật khẩu riêng, không có nút đăng nhập bằng Google. Tài khoản này dùng Google nên tiện ích không điền mật khẩu Google vào form của nền tảng. Đăng nhập tay một lần trong Chrome rồi bấm Kiểm tra, hoặc đổi dòng này sang phương thức Email kèm mật khẩu riêng của nền tảng.' };
   }
   if (!google) {
+    if (location.hostname === 'www.blogger.com') {
+      const signIn = one(['a.ga-header-sign-in', 'a[href^="/go/signin"]', 'a[href^="https://www.blogger.com/go/signin"]']);
+      if (signIn) { if (action === 'openLogin') { signIn.click(); return response('submitted'); } return response('openLogin'); }
+    }
     if (location.hostname === 'social.vivaldi.net' && location.pathname === '/auth/sign_in') {
       const sso = all('a[href]').filter(enabled).filter(node => norm(node.innerText) === 'vivaldi.net');
       if (sso.length === 1) {
@@ -403,6 +445,6 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     });
     if (openLogin) { if (action === 'openLogin') { openLogin.click(); return response('submitted'); } return response('openLogin'); }
   }
-  if (/incorrect password|wrong password|invalid code|incorrect code|mật khẩu không đúng|mã không đúng/i.test(text)) return challenge('Thông tin đăng nhập hoặc mã TOTP bị từ chối; không tự thử lại.');
+  if (/incorrect password|wrong password|invalid code|incorrect code|mật khẩu không đúng|mã không đúng/i.test(rejectionText)) return challenge('Thông tin đăng nhập hoặc mã TOTP bị từ chối; không tự thử lại.');
   return response('unknown');
 }
