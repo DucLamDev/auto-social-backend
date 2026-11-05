@@ -1,6 +1,18 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.17.2 · 05/11/2026
+### Sửa lỗi
+- Sửa được Phiên Chrome / 2FA của tài khoản đang dùng chung hồ sơ Chrome với tài khoản khác cùng nền tảng
+  - **Lỗi cũ:** lần nhập file 03/11 đặt hai tài khoản MeWe (và hai tài khoản Differ), với hai tài khoản Google khác nhau,
+    vào cùng hồ sơ "Chrome VPS". Từ đó lưu bất kỳ thay đổi nào ở form **Phiên Chrome / 2FA** của chúng đều báo lỗi tiếng Anh
+    "This Chrome profile already belongs to another account on this platform".
+  - **Nay:**
+    - Tài khoản vốn đã ở hồ sơ đó sửa và lưu được. `PUT /extension/accounts/:id/session` trả thêm `sharedWith` (tên tài
+      khoản cùng nền tảng trên hồ sơ đó) để giao diện cảnh báo.
+    - Chỉ còn chặn việc **chuyển** một tài khoản sang hồ sơ đang giữ tài khoản khác của cùng nền tảng, vì cookie chỉ giữ
+      một lần đăng nhập mỗi website. Câu báo bằng tiếng Việt nêu tên tài khoản đó và cách xử lý.
+
 ## 1.17.1 · 05/11/2026
 ### Sửa lỗi
 - Differ đăng được: chọn Keyword (topic), gắn ảnh bìa nếu có, rồi bấm Publish trong hộp xuất bản
