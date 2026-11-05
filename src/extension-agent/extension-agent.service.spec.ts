@@ -210,6 +210,18 @@ describe('ExtensionAgentService', () => {
     expect(campaignStatus.refresh).toHaveBeenCalledWith('camp-1');
   });
 
+  it('accepts a Blogger post on <blog>.blogspot.com, written on www.blogger.com, and no other site', async () => {
+    const { service, prisma } = setup();
+    const blogger = { delivery: 'extension', extensionEngine: 'blogger', extensionTargetUrl: 'https://www.blogger.com/blog/posts/_', extensionAutoSubmit: true };
+    prisma.publishJob.findFirst.mockResolvedValue({ ...claimedJob, platformAccount: { settings: blogger } });
+    await expect(service.report(device, 'job-1', { outcome: 'PUBLISHED', url: 'https://evil.example.com/2026/11/post.html' })).rejects.toThrow('not on the configured forum');
+    await expect(service.report(device, 'job-1', { outcome: 'PUBLISHED', url: 'http://vpsttt.blogspot.com/2026/11/post.html' })).rejects.toThrow('not on the configured forum');
+    await expect(service.report(device, 'job-1', { outcome: 'PUBLISHED', url: 'https://vpsttt.blogspot.com/2026/11/keeping-small-vps-patched.html' })).resolves.toMatchObject({ recorded: 'PUBLISHED' });
+    // A blogspot link counts only for the Blogger flow.
+    prisma.publishJob.findFirst.mockResolvedValue(claimedJob);
+    await expect(service.report(device, 'job-1', { outcome: 'PUBLISHED', url: 'https://vpsttt.blogspot.com/2026/11/keeping-small-vps-patched.html' })).rejects.toThrow('not on the configured forum');
+  });
+
   it('marks FAILED only for reasons where nothing was submitted, and keeps the claim while waiting for the operator', async () => {
     const { service, prisma } = setup();
     prisma.publishJob.findFirst.mockResolvedValue(claimedJob);

@@ -1,6 +1,6 @@
 import type { ExtensionRecipe } from './extension-delivery';
 
-export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'producthunt', 'disqus', 'mewe'] as const;
+export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'producthunt', 'disqus', 'mewe', 'ubiquiti', 'huggingface', 'blogger'] as const;
 export type SocialExtensionEngine = (typeof SOCIAL_EXTENSION_ENGINES)[number];
 
 function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>): ExtensionRecipe {
@@ -20,6 +20,40 @@ function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>)
 // (Mastodon, Bluesky, Minds, LinkedIn feed…) and mixed lists of editors (Reddit,
 // Stack Exchange, Tinhte) keep the runner's choice by element type.
 export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRecipe> = {
+  // Hugging Face Posts (huggingface.co/posts?post=true opens the "New Post" dialog): one
+  // textarea of at most 1999 characters, Post submits the form and opens /posts/<user>/<id>.
+  // Who may post is decided by Hugging Face (/api/posts/can-post), checked before writing.
+  huggingface: recipe('huggingface', {
+    readySelectors: ['dialog textarea[name="content"]', 'form[action="/posts"] textarea[name="content"]'],
+    bodySelectors: ['dialog textarea[name="content"]', 'form[action="/posts"] textarea[name="content"]'], inputMode: 'value',
+    submitSelectors: ['form[action="/posts"] button[type="submit"]'],
+    successUrlPattern: '/posts/[^/?#]+/\\d{6,}/?(?:[?#].*)?$',
+    errorSelectors: ['dialog .alert-warning', '.alert-warning'],
+    publishedBodySelectors: ['div[data-target="SocialPost"]', 'main div.break-words', 'main'],
+  }),
+  // Blogger (new UI): "New Post" ([jsname=UOx8F]) creates a draft and opens
+  // /blog/post/edit/<blogId>/<postId>; the body is a same-origin designMode iframe.
+  // Publish ([jsname=vdQQuc], "Đăng") asks to confirm; the post list then links the
+  // published post on <blog>.blogspot.com. The whole run is in social-actions.js.
+  blogger: recipe('blogger', {
+    readySelectors: ['[jsname="UOx8F"]', '[jsname="r4nke"] input'],
+    titleSelectors: ['[jsname="r4nke"] input'], bodySelectors: ['iframe.editable'], inputMode: 'pasteHtml',
+    submitSelectors: ['[jsname="vdQQuc"]'],
+    successUrlPattern: '^https://[a-z0-9-]+\\.blogspot\\.com/\\d{4}/\\d{2}/[^/?#]+\\.html',
+    errorSelectors: ['[role="alert"]'],
+  }),
+  // Ubiquiti Community (community.ui.com/questions/create): a "Post" is a question with a
+  // title (10-200), a TipTap body (25-30000) and one required topic chosen from buttons.
+  // Publish goes to /questions/<slug>/<uuid>; nothing is held for review.
+  ubiquiti: recipe('ubiquiti', {
+    readySelectors: ['input[data-uic-component="TextInput.Field"][placeholder="Start with a descriptive title"]'],
+    titleSelectors: ['input[data-uic-component="TextInput.Field"][placeholder="Start with a descriptive title"]'],
+    bodySelectors: ['.tiptap-text-block .ProseMirror[contenteditable="true"]'], inputMode: 'pasteHtml',
+    submitSelectors: [], successUrlPattern: '/questions/[^/?#]+/[0-9a-f-]{36}(?:[?#].*)?$',
+    errorSelectors: ['[data-uic-component="Label.HelpText"][data-invalid]', '.Toastify__toast'],
+    // The question page has no stable body selector: its main area, on the new question's URL.
+    publishedBodySelectors: ['main', '#root'],
+  }),
   // Discuss Disqus (disqus.com/home/discuss/channel-…/): the form reads the title and
   // the plain-text editor (contenteditable="plaintext-only") on focusout; a category
   // radio prefixes the title with "<Category>: ". A new discussion opens

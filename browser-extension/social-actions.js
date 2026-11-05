@@ -158,7 +158,7 @@ export async function fillSocialAndSubmit(job) {
     reddit: ['Post', 'Đăng'], slideshare: ['Publish'], 'aws-builder': ['Publish', 'Publish article'],
     tinhte: ['Đăng', 'Đăng bài', 'Đăng bài viết', 'Xuất bản'], pixelfed: ['Post', 'Share', 'Publish', 'Đăng'],
     mastodon: ['Publish!', 'Publish', 'Post', 'Đăng', 'Đăng bài'], bluesky: ['Post', 'Đăng'], tumblr: ['Post', 'Post now', 'Đăng'], devto: ['Publish', 'Xuất bản'], dailydev: ['Post'],
-    disqus: ['Create Discussion'], mewe: ['Post'],
+    disqus: ['Create Discussion'], mewe: ['Post'], ubiquiti: ['Publish'], huggingface: ['Post'],
   }[engine];
   // Discuss Disqus: choosing a category writes "<Category>: " into the title and the
   // whole field is stored, so the title carries the prefix. Community Growth is the
@@ -190,6 +190,47 @@ export async function fillSocialAndSubmit(job) {
   if (/you must be logged in|please sign in to continue|bạn (?:cần|phải) đăng nhập/i.test(document.body.innerText)) return { status: 'login', message: 'Nền tảng yêu cầu đăng nhập trước khi tạo bài.' };
   if (engine === 'slideshare' && /(?:uploads?|uploading).{0,80}(?:unavailable|disabled|temporarily suspended)/i.test(document.body.innerText)) {
     return { status: 'unavailable', message: 'SlideShare đang tạm ngừng nhận file upload. Bài chưa được gửi.' };
+  }
+
+  // Blogger: "New Post" makes a draft and opens the editor, whose body is a
+  // same-origin designMode iframe the generic steps cannot reach. Each step checks
+  // what is on screen; nothing is published unless title and body hold the post.
+  if (engine === 'blogger') {
+    const titleInput = () => pick(recipe.titleSelectors);
+    const editor = () => all('iframe.editable, iframe[class*="editable"]').find(frame => visible(frame) && frame.contentDocument?.body) ?? null;
+    if (!titleInput() || !editor()) {
+      if (!/^\/blog\/post\/edit\//.test(location.pathname)) {
+        // The left menu and the floating button are the same action: either one.
+        const create = all('[jsname="UOx8F"]').filter(enabled);
+        if (!create.length) return fail('Không thấy nút Bài đăng mới (New Post) của Blogger.', ['opener']);
+        create[0].click();
+      }
+      if (!await wait(() => titleInput() && editor(), 30_000)) return fail('Chưa mở được trình soạn bài Blogger.', ['body']);
+    }
+    const title = titleInput(), doc = editor().contentDocument, body = doc.body;
+    const shown = () => doc.body.innerText.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+    if (!resume && ((value(title) && value(title) !== normalize(post.title)) || (shown() && !holds(expectedBody, shown())))) {
+      return draft('Trình soạn Blogger đang có bài khác; chưa ghi đè. Kiểm tra bản nháp trong tab rồi bấm Giao lại cho tiện ích trên web.');
+    }
+    if (!resume) {
+      if (!write(title, post.title)) return mismatch('Không điền được tiêu đề Blogger; chưa đăng.');
+      const html = typeof post.bodyHtml === 'string' && post.bodyHtml.trim() ? post.bodyHtml
+        : String(post.body).split(/\n{2,}/).map(part => `<p>${escapeHtml(part).replace(/\n/g, '<br>')}</p>`).join('');
+      body.focus(); doc.execCommand('selectAll', false);
+      if (!doc.execCommand('insertHTML', false, html)) return mismatch('Không điền được nội dung vào trình soạn Blogger; chưa đăng.');
+      body.dispatchEvent(new Event('input', { bubbles: true }));
+      title.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    await sleep(800);
+    if (value(titleInput()) !== normalize(post.title) || !holds(expectedBody, shown())) return mismatch('Trình soạn Blogger không giữ đúng tiêu đề / nội dung; chưa đăng.');
+    if (!job.autoSubmit) return { status: 'filled', beforeUrls };
+    const publish = await wait(() => all('[jsname="vdQQuc"]').find(enabled) ?? null, 10_000);
+    if (!publish) return needs('Đã điền bài nhưng không thấy nút Đăng (Publish) của Blogger; kiểm tra trong tab.');
+    publish.click();
+    const confirm = await wait(() => all('[jsname="LgbsSe"][data-id="EBS5u"]').find(enabled) ?? button(['Confirm', 'Xác nhận']), 10_000);
+    if (!confirm) return needs('Blogger chưa hiện hộp "Xuất bản bài đăng?"; bài đã điền, kiểm tra trong tab rồi bấm Đăng.');
+    confirm.click();
+    return { status: 'submitted', beforeUrls };
   }
 
   // A composer opener approved for this site after a redesign (or suggested by
@@ -258,6 +299,20 @@ export async function fillSocialAndSubmit(job) {
     if (!mindsChannelMatches()) return needs('Minds chưa chọn My Channel. Chọn My Channel trong tab rồi bấm Giao lại cho tiện ích trên web; chưa điền hay gửi bài.');
     const current = value(pick(bodySelectors));
     if (current && !holds(expectedBody, current)) return draft('Minds đang có bản nháp khác trong khung soạn. Lưu hoặc xoá bản nháp đó trong tab rồi bấm Giao lại cho tiện ích trên web; chưa ghi đè bản nháp.');
+  }
+  if (engine === 'huggingface' && !resume) {
+    // Hugging Face decides who may publish Posts (PRO and some other accounts).
+    try {
+      const response = await fetch('/api/posts/can-post', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) });
+      const allowed = response.ok ? await response.json() : null;
+      if (allowed?.canPost === false) {
+        return { status: 'restricted', message: `Hugging Face chưa cho tài khoản này đăng Posts${allowed.reason ? `: ${String(allowed.reason).slice(0, 200)}` : ''}. Posts dành cho tài khoản PRO và một số tài khoản được Hugging Face mở quyền; chưa điền bài.` };
+      }
+    } catch { /* The composer's own warning and disabled Post button still apply. */ }
+    if (!pick(bodySelectors)) {
+      const open = await wait(() => button(['New Post']), 5000);
+      open?.click();
+    }
   }
   if (engine === 'pixelfed' && !pick(['.compose-modal-component', '#composeModal', 'textarea[placeholder*="caption" i]'])) {
     const open = await wait(() => button(['New Post', 'Create new post', 'Compose', 'Create', 'New post', 'Đăng bài'])
@@ -447,6 +502,17 @@ export async function fillSocialAndSubmit(job) {
     await sleep(300);
     if (!radio.checked) return needs('Chưa chọn được chuyên mục Discuss Disqus; chưa điền bài.');
   }
+  if (engine === 'ubiquiti' && !resume) {
+    // One required topic, chosen from plain buttons by their name (General by default).
+    // The General / Early Access / Alpha tabs of beta testers are not topics.
+    const topic = normalize(options.category) || 'General';
+    const matches = all('button').filter(enabled).filter(node => !node.matches('[role="tab"], [data-testid="public"], [data-testid="beta"], [data-testid="alpha"]')
+      && [...node.querySelectorAll('span[data-uic-component="Text"]')].some(span => normalize(span.innerText).toLowerCase() === topic.toLowerCase()));
+    const choices = matches.filter(node => !matches.some(other => other !== node && node.contains(other)));
+    if (choices.length !== 1) return needs(`Không thấy đúng một chủ đề “${topic}” trên Ubiquiti Community. Sửa ô Chuyên mục của tài khoản trên web (ví dụ General, Network, Protect); chưa điền bài.`);
+    choices[0].click();
+    await sleep(300);
+  }
   if (engine === 'producthunt' && !resume) {
     const chosen = await chooseProductHuntForum(normalize(options.category) || 'Self-Promotion');
     if (chosen !== true) return chosen;
@@ -543,7 +609,7 @@ export async function fillSocialAndSubmit(job) {
     if (!validContent()) return needs('Nội dung thay đổi khi gắn ảnh; chưa đăng.');
   }
 
-  if (!resume && !['lemmy', 'discuit', 'producthunt', 'disqus'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
+  if (!resume && !['lemmy', 'discuit', 'producthunt', 'disqus', 'ubiquiti'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
   if (engine === 'stackexchange' && !resume) {
     // Tags configured on the account must all be applied; the AI's suggested tags
     // are used only when the site already has them (never created), up to 5 in total.
@@ -786,7 +852,7 @@ export async function fillSocialAndSubmit(job) {
   // Without configured tags the AI's tags fill the field; a field that rejects them is left empty.
   const aiTags = (options.suggestedTags ?? []).join(', ');
   if (plainTags && !options.tags?.length && aiTags && !value(plainTags) && (!write(plainTags, aiTags) || value(plainTags) !== normalize(aiTags))) write(plainTags, '');
-  for (const tag of plainTags || resume || ['stackexchange', 'differ', 'disqus'].includes(engine) ? [] : options.tags ?? []) {
+  for (const tag of plainTags || resume || ['stackexchange', 'differ', 'disqus', 'ubiquiti'].includes(engine) ? [] : options.tags ?? []) {
     if (!await choose(tag, [...(engine === 'differ' ? ['input.rs__input[role="combobox"]'] : []), 'input[placeholder*="Add a topic" i]', 'input[placeholder*="Add tags" i]', 'input[placeholder*="Search tags" i]', 'input[name="tags"]'], ['Add tags', 'Topics', 'Tags'])) return needs(`Không chọn được tag “${tag}”; chưa bấm đăng.`);
   }
   if (captcha()) return { status: 'captcha' };
@@ -868,6 +934,18 @@ export async function readSocialPublishedPost(task) {
   };
   const matchingContent = job.recipe.engine === 'pixelfed' ? matchingBodies.filter(node => words(node.innerText) === words(body)) : matchingBodies;
   if (titleMatches && matchingContent.length && validUrl(location.href) && matchesAuthor(location.href)) return validUrl(location.href);
+  // Blogger returns to the post list: the new post's row shows its exact title and a
+  // "View" link to <blog>.blogspot.com that was not on the page before submitting.
+  if (job.recipe.engine === 'blogger') {
+    const pattern = new RegExp(job.recipe.successUrlPattern);
+    for (const link of all('a[jsname="X9tL0d"][href], [jsname="X9tL0d"] a[href], a[href*=".blogspot.com/"]').filter(visible)) {
+      if (!pattern.test(link.href) || (task.beforeUrls ?? []).includes(link.href)) continue;
+      let row = link;
+      for (let depth = 0; depth < 8 && row.parentElement && !words(row.innerText).includes(expectedTitle); depth++) row = row.parentElement;
+      if (expectedTitle && words(row.innerText).includes(expectedTitle) && new Set([...row.querySelectorAll('a[href*=".blogspot.com/"]')].map(a => a.href)).size === 1) return link.href;
+    }
+    return null;
+  }
   // MeWe adds the new post on top of the feed without a link: the post header's
   // data-postid gives its permalink. Posts on the page before submitting are excluded.
   if (job.recipe.engine === 'mewe') {

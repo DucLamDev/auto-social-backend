@@ -1,6 +1,26 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.20.0 · 05/11/2026
+### Tính năng
+- Thêm luồng đăng bài bằng tiện ích Chrome cho 4 kênh trước đây "chưa có luồng" (tiện ích 1.15.0)
+  - **Linux Foundation Forum**: kiểu diễn đàn mới **Vanilla** (dùng được cho diễn đàn Vanilla khác). Mặc định đăng vào
+    chuyên mục System Management (`/post/discussion/system-management`), đổi bằng URL `/post/discussion/<mã>`. Nội dung
+    Markdown; chờ nút Post Discussion hết khoá khi diễn đàn tự lưu nháp; không bấm Save Draft hay Preview; nhận ra bài
+    đang chờ duyệt.
+  - **Ubiquiti Community**: đăng một Post ở `community.ui.com/questions/create`, tự chọn chủ đề (ô Chuyên mục của tài
+    khoản, mặc định General), nội dung có định dạng, bấm Publish và xác nhận trang câu hỏi mới.
+  - **Blogger**: trên blog chính của tài khoản Google (`/blog/posts/_`, hoặc `/blog/posts/<blogId>`): bấm Bài đăng
+    mới, điền tiêu đề và nội dung có định dạng vào trình soạn (khung iframe), bấm Đăng rồi Xác nhận, lấy link bài trên
+    `<blog>.blogspot.com` từ danh sách bài. Backend nhận link blogspot cho riêng luồng này.
+  - **Hugging Face Posts** (bài ngắn tối đa 1.999 ký tự, không phải Blog Article cần PRO): hỏi Hugging Face
+    (`/api/posts/can-post`) tài khoản có được đăng không; chưa được thì báo lý do và không điền. AI viết bài ngắn
+    cho người làm ML thay cho mô tả model.
+  - Vẫn không có luồng: Dailymotion (chỉ nhận video), Redis Community Forum (đã đóng), Warrior Forum (điều khoản cấm
+    tự động).
+  - Sau khi cập nhật backend cần chạy `scripts/sync-extension-flows.cjs --apply` và `scripts/sync-ai-prompts.cjs
+    --apply`, nạp lại tiện ích 1.15.0, rồi bấm Test ở các tài khoản này để tự kết nối.
+
 ## 1.19.0 · 05/11/2026
 ### Tính năng
 - Tự đăng bài lên Discuss Disqus và MeWe bằng tiện ích Chrome (tiện ích 1.14.0)

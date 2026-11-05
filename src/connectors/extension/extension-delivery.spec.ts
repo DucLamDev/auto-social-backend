@@ -38,10 +38,19 @@ describe('extension delivery settings', () => {
     expect(matches('phpbb', 'https://forum.mikrotik.com/posting.php?mode=post&f=3')).toBe(false);
   });
 
+  it('accepts only the new discussion page of a Vanilla category', () => {
+    const base = { extensionEngine: 'vanilla', extensionAutoSubmit: true };
+    expect(parseExtensionDeliverySettings({ ...base, extensionTargetUrl: 'https://forum.linuxfoundation.org/post/discussion/system-management' }).engine).toBe('vanilla');
+    expect(parseExtensionDeliverySettings({ ...base, extensionTargetUrl: 'https://forum.example.org/post/discussion' }).engine).toBe('vanilla');
+    for (const url of ['https://forum.linuxfoundation.org/discussion/123/a-topic', 'https://forum.linuxfoundation.org/categories/system-management', 'https://forum.linuxfoundation.org/post/discussion/../admin']) {
+      expect(() => parseExtensionDeliverySettings({ ...base, extensionTargetUrl: url })).toThrow('Vanilla target');
+    }
+  });
+
   it('pastes HTML only into rich editors and sets the value of Markdown textareas', () => {
     const pasteHtml = Object.values(EXTENSION_RECIPES).filter((recipe) => recipe.inputMode === 'pasteHtml').map((recipe) => recipe.engine).sort();
-    expect(pasteHtml).toEqual(['aws-builder', 'dailydev', 'differ', 'dzone', 'medium', 'producthunt', 'quora', 'substack', 'tumblr']);
-    for (const engine of ['devto', 'lemmy', 'discuit'] as const) {
+    expect(pasteHtml).toEqual(['aws-builder', 'blogger', 'dailydev', 'differ', 'dzone', 'medium', 'producthunt', 'quora', 'substack', 'tumblr', 'ubiquiti']);
+    for (const engine of ['devto', 'lemmy', 'discuit', 'huggingface'] as const) {
       expect(EXTENSION_RECIPES[engine].inputMode).toBe('value');
       expect(EXTENSION_RECIPES[engine].bodySelectors.some((selector) => selector.includes('contenteditable'))).toBe(false);
     }
