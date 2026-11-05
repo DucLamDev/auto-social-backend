@@ -289,6 +289,40 @@ test('reports a Vietnamese rejected TOTP before issuing or filling another code'
   } finally { await page.close(); }
 });
 
+test('Quora: fills email and password and presses its Login button, which stays disabled until both are filled (no <form>)', async () => {
+  const quora = '<div class="login"><div class="left"><button>Continue with Google</button><button>Continue with Facebook</button><div role="button">Sign up with email</div></div>'
+    + '<div class="right"><div>Login</div><label for="email">Email</label><input id="email" name="email" type="email" placeholder="Your email">'
+    + '<label for="password">Password</label><input id="password" name="password" type="password" placeholder="Your password">'
+    + '<a>Forgot password?</a><button class="q-click-wrapper" disabled><div>Login</div></button></div></div>';
+  const scoped = { ...job, targetOrigin: 'https://www.quora.com', openUrl: 'https://www.quora.com/', recipe: { engine: 'quora' } };
+  for (const button of ['', 'puppeteer_test_login_button']) {
+    const page = await pageAt('https://www.quora.com/', quora.replace('q-click-wrapper', `q-click-wrapper ${button}`));
+    try {
+      await page.evaluate(() => {
+        const inputs = [...document.querySelectorAll('input')], login = document.querySelector('.right button');
+        for (const input of inputs) input.addEventListener('input', () => { login.disabled = !inputs.every(x => x.value); });
+        login.onclick = () => { window.received = inputs.map(x => x.value); };
+        document.querySelector('.left button').onclick = () => { window.google = true; };
+      });
+      assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'password');
+      const result = await page.evaluate(accountAuthStep, { job: scoped, action: 'password', expectedPageUrl: page.url(), payload: { username: 'alice@example.test', password: 'fixture-password' } }); // vpsttt-secretscan: ignore
+      assert.equal(result.state, 'submitted', result.message);
+      assert.deepEqual(await page.evaluate(() => window.received), ['alice@example.test', 'fixture-password']); // vpsttt-secretscan: ignore
+      assert.equal(await page.evaluate(() => window.google), undefined);
+    } finally { await page.close(); }
+  }
+});
+
+test('a login button that never turns on after filling is reported, not clicked', async () => {
+  const page = await pageAt('https://www.quora.com/', '<div><input name="email" type="email"><input type="password"><button disabled>Login</button></div>');
+  const scoped = { ...job, targetOrigin: 'https://www.quora.com', recipe: { engine: 'quora' } };
+  try {
+    const result = await page.evaluate(accountAuthStep, { job: scoped, action: 'password', expectedPageUrl: page.url(), payload: { username: 'alice@example.test', password: 'fixture-password' } }); // vpsttt-secretscan: ignore
+    assert.equal(result.state, 'challenge');
+    assert.match(result.message, /chưa được bật sau khi điền/);
+  } finally { await page.close(); }
+});
+
 test('a missing submit button is a platform flow issue, not a Google verification failure', async () => {
   const page = await pageAt('https://accounts.google.com/login', '<input id="identifierId">');
   try {
