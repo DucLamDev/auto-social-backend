@@ -1,6 +1,25 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.18.0 · 05/11/2026
+### Tính năng
+- Đăng thread lên forum Product Hunt bằng tiện ích Chrome, tự chọn forum / product
+  Cần nạp lại tiện ích 1.13.0. Đây là luồng **Start new thread** (`https://www.producthunt.com/p/new`), không phải Launch
+  sản phẩm.
+  - **Chọn forum trước khi điền bài:**
+    - Tiện ích chọn trong ô "Search for a product" đúng tên ghi ở ô **Chuyên mục** của tài khoản: General, Vibecoding,
+      Introduce yourself, Self-Promotion, hoặc tên một product (tiện ích gõ để tìm).
+    - Để trống thì đăng vào **Self-Promotion**.
+    - Không thấy tên đó thì dừng, chưa điền gì.
+  - **Điền bài:** tiêu đề, nội dung dán dạng định dạng (Markdown → HTML), rồi bấm **Submit của form**. Nút "Submit" trên
+    thanh đầu trang (đăng sản phẩm) không bao giờ được bấm.
+  - **Ghi nhận bài:** thread mới ở `/p/<forum>/<slug>`.
+  - **AI viết theo kiểu thread forum:** tiêu đề cụ thể, nội dung trò chuyện, nhắc sản phẩm một lần kèm công khai, câu hỏi
+    mời trả lời; không tagline kiểu Launch.
+  - Product Hunt không còn bị liệt kê "chưa có luồng".
+  - **Sau khi triển khai:** bấm **Test** ở tài khoản Product Hunt để gắn trang đăng mặc định. Muốn cập nhật lời nhắc AI và
+    trang mặc định của nền tảng trong database thì chạy seed như trong `DEPLOYMENT.md`.
+
 ## 1.17.1 · 05/11/2026
 ### Sửa lỗi
 - Differ đăng được: chọn Keyword (topic), gắn ảnh bìa nếu có, rồi bấm Publish trong hộp xuất bản
