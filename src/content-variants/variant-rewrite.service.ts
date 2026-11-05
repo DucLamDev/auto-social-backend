@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import { MediaType, Prisma, VariantStatus } from '@prisma/client';
 import { AiContentService } from '../ai/ai-content.service';
 import { AiProvider } from '../ai/ai-provider';
+import { scoreFromReason } from '../ai/content-quality';
 import { imagePlanFor } from '../campaigns/image-plan';
 import { ApplicationException } from '../common/exceptions/application.exception';
 import { repairEscapedNewlines } from '../common/utils/escaped-text';
@@ -90,6 +91,8 @@ export class VariantRewriteService {
         revision: {
           previous: { title: variant.title, body: variant.body, hashtags: variant.hashtags },
           instruction: typeof revision.instruction === 'string' ? revision.instruction : '',
+          // The new version is judged against this score, so fixing the chosen points raises it.
+          previousScore: scoreFromReason(variant.reason),
           // Points the operator chose replace the whole last review; a passing draft's reason is praise, not a note to fix.
           ...(Array.isArray(revision.notes)
             ? { notes: null, chosenNotes: revision.notes.filter((note): note is string => typeof note === 'string') }

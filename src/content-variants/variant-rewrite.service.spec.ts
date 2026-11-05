@@ -31,7 +31,7 @@ describe('rewrite one draft with AI', () => {
     await settle(); await settle();
     expect(reviseDraft).toHaveBeenCalledWith('owner-1', {
       contentId: 'content-1', platformSlug: 'bluesky', image: null,
-      revision: { previous: { title: null, body: 'Bản cũ', hashtags: ['vps'] }, instruction: 'Mở bài bằng số liệu', notes: 'Cần xem lại (AI chấm 5/10): Mở bài chung chung' },
+      revision: { previous: { title: null, body: 'Bản cũ', hashtags: ['vps'] }, instruction: 'Mở bài bằng số liệu', previousScore: 5, notes: 'Cần xem lại (AI chấm 5/10): Mở bài chung chung' },
     }, 'openai');
     const saved = (prisma.contentVariant.updateMany.mock.calls[1] as UpdateCall)[0];
     // Only if the text is unchanged and this is still the latest request.
@@ -87,7 +87,8 @@ describe('rewrite one draft with AI', () => {
       .toMatchObject({ status: 'generating', instruction: '', notes: ['Lời mở đầu hơi chung chung', 'Thêm ví dụ'] });
     await settle(); await settle();
     expect(reviseDraft).toHaveBeenCalledWith('owner-1', expect.objectContaining({
-      revision: { previous: { title: null, body: 'Bản cũ', hashtags: ['vps'] }, instruction: '', notes: null, chosenNotes: ['Lời mở đầu hơi chung chung', 'Thêm ví dụ'] },
+      // The new version is scored against the stored 5/10.
+      revision: { previous: { title: null, body: 'Bản cũ', hashtags: ['vps'] }, instruction: '', previousScore: 5, notes: null, chosenNotes: ['Lời mở đầu hơi chung chung', 'Thêm ví dụ'] },
     }), 'openai');
   });
 
