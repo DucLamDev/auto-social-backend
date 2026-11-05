@@ -61,6 +61,11 @@ describe('mergeApprovedSelectors', () => {
     expect(JSON.stringify(EXTENSION_RECIPES.discourse)).toBe(before);
   });
 
+  it('keeps a built-in composer opener behind an approved one', () => {
+    const merged = mergeApprovedSelectors(EXTENSION_RECIPES.mewe, [{ field: 'opener', selector: 'button.new-post' }]);
+    expect(merged.openerSelectors).toEqual(['button.new-post', ...EXTENSION_RECIPES.mewe.openerSelectors!]);
+  });
+
   it('adds no title selector to an engine that has none and returns the same recipe when nothing is approved', () => {
     const mastodon = EXTENSION_RECIPES.mastodon;
     expect(mergeApprovedSelectors(mastodon, [{ field: 'title', selector: '#t' }]).titleSelectors).toEqual(mastodon.titleSelectors);

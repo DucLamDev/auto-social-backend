@@ -28,6 +28,17 @@ describe('per-platform Chrome flows', () => {
     expect(() => validateExtensionFlow('discourse', { engine: 'medium', targetUrl: 'https://example.com', autoSubmit: true })).toThrow('matching platform');
   });
 
+  it('keeps Disqus on a channel discussion page and MeWe on the own feed', () => {
+    expect(validateExtensionFlow('disqus', { engine: 'disqus', targetUrl: 'https://disqus.com/home/discuss/channel-discussdisqus/', autoSubmit: true })?.id).toBe('disqus');
+    expect(validateExtensionFlow('mewe', { engine: 'mewe', targetUrl: 'https://mewe.com/myworld', autoSubmit: true })?.id).toBe('mewe');
+    for (const targetUrl of ['https://disqus.com/home/', 'https://disqus.com/home/discussion/channel-discussdisqus/abc/', 'https://disqus.com/home/discuss/channel-discussdisqus/?x=1', 'https://example.com/home/discuss/channel-discussdisqus/']) {
+      expect(() => validateExtensionFlow('disqus', { engine: 'disqus', targetUrl, autoSubmit: true })).toThrow();
+    }
+    for (const targetUrl of ['https://mewe.com/group/123', 'https://mewe.com/', 'https://example.com/myworld']) {
+      expect(() => validateExtensionFlow('mewe', { engine: 'mewe', targetUrl, autoSubmit: true })).toThrow();
+    }
+  });
+
   it('keeps daily.dev on its own-profile composer page', () => {
     expect(validateExtensionFlow('daily-dev', { engine: 'dailydev', targetUrl: 'https://daily.dev/squads/create', autoSubmit: true })?.id).toBe('daily-dev');
     // A Squad the account cannot post in would silently become a profile post.

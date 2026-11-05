@@ -66,7 +66,7 @@ const INLINE_HASHTAG_LIMITS: Record<string, number> = {
   'pixelfed-social': 5,
 };
 const TAG_LIMITS: Record<string, number> = { devto: 4, instagram: 5 };
-const TITLE_LIMITS: Partial<Record<ExtensionEngine, number>> = { reddit: 300, stackexchange: 150, xenforo: 150, discourse: 150, phpbb: 150, dailydev: 250, lemmy: 200 };
+const TITLE_LIMITS: Partial<Record<ExtensionEngine, number>> = { reddit: 300, stackexchange: 150, xenforo: 150, discourse: 150, phpbb: 150, dailydev: 250, lemmy: 200, disqus: 175 };
 const TITLE_REQUIRED_PLATFORMS = new Set(['wordpress', 'blogger', 'devto', 'discourse']);
 /** Mastodon servers (API or Chrome extension): links count as 23 characters. */
 const MASTODON_PLATFORMS = new Set(['mastodon', 'mastodon-social', 'vivaldi-social']);

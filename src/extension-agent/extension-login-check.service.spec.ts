@@ -59,7 +59,7 @@ describe('login completion and automatic connection', () => {
     expect(settings.extensionSession.autoLogin).toBe(true);
   });
 
-  function fixture(settings: Record<string, unknown>, enabled = false, verifyOnly = false, slug = 'disqus') {
+  function fixture(settings: Record<string, unknown>, enabled = false, verifyOnly = false, slug = 'dailymotion') {
     const auth = { deviceId: 'device', expectedUsername: 'brand', loginUsername: 'owner@example.test', provider: 'google', allowIdentityByEmail: true, profileUrl: 'https://example.test/u/brand' };
     const check = { id: 'check', platformAccountId: 'account', verifyOnly, account: { enabled, settings: { ...settings, extensionSession: auth }, platform: { slug } } };
     const tx = { extensionLoginCheck: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) }, platformAccount: { update: jest.fn() } };
@@ -91,6 +91,8 @@ describe('login completion and automatic connection', () => {
     ['cloudpanel-forum', 'https://www.cloudpanelforum.org/forums/install-config/post-thread'],
     ['directadmin-forums', 'https://forum.directadmin.com/forums/general-technical-discussion-troubleshooting.32/post-thread'],
     ['tinhte', 'https://tinhte.vn/editorv2/create/795/'],
+    ['disqus', 'https://disqus.com/home/discuss/channel-discussdisqus/'],
+    ['mewe', 'https://mewe.com/myworld'],
   ])('connects a signed-in imported %s account that never got a posting route, using the flow default page', async (slug, page) => {
     // daily.dev still carries the reason saved before its flow existed.
     const { service, tx } = fixture({ extensionAutoConnect: true, extensionSetup: { status: 'FLOW_REQUIRED' } }, false, true, slug);
@@ -100,7 +102,7 @@ describe('login completion and automatic connection', () => {
   });
 
   it('records why a signed-in account still cannot post, without switching it on', async () => {
-    const { service, tx } = fixture({ extensionAutoConnect: true, extensionSetup: { status: 'DESTINATION_REQUIRED' } }, false, false, 'disqus');
+    const { service, tx } = fixture({ extensionAutoConnect: true, extensionSetup: { status: 'DESTINATION_REQUIRED' } }, false, false, 'dailymotion');
     await service.result({ id: 'device', ownerId: 'owner' } as never, 'check', { outcome: 'AUTHENTICATED' });
     expect(updates(tx)).toEqual([expect.objectContaining({ settings: expect.objectContaining({ extensionSetup: { status: 'FLOW_REQUIRED' } }) as unknown }) as unknown]);
     expect(updates(tx).some((data) => data.enabled)).toBe(false);

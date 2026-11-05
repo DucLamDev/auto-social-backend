@@ -7,9 +7,17 @@ describe('posting flow status shown after a login check', () => {
   });
 
   it('keeps the other gaps as they were', () => {
-    expect(extensionFlowAudit('disqus', {})).toMatchObject({ status: 'UNAVAILABLE', implemented: false });
-    expect(extensionFlowAudit('mewe', {})).toMatchObject({ status: 'FLOW_REQUIRED', implemented: false });
+    expect(extensionFlowAudit('dailymotion', {})).toMatchObject({ status: 'FLOW_REQUIRED', implemented: false });
     expect(extensionFlowAudit('voz-forums', {})).toMatchObject({ status: 'DESTINATION_REQUIRED', implemented: true, engine: 'xenforo' });
+  });
+
+  it('lists Disqus and MeWe as ready to configure now that they have posting flows, each with a default page', () => {
+    expect(extensionFlowAudit('disqus', {})).toMatchObject({ status: 'CONFIGURATION_REQUIRED', implemented: true, engine: 'disqus' });
+    expect(extensionFlowAudit('mewe', {})).toMatchObject({ status: 'CONFIGURATION_REQUIRED', implemented: true, engine: 'mewe' });
+    expect(extensionFlowAudit('disqus', { delivery: 'extension', extensionEngine: 'disqus', extensionTargetUrl: 'https://disqus.com/home/discuss/channel-discussdisqus/', extensionAutoSubmit: true }))
+      .toMatchObject({ status: 'CONFIGURED', engine: 'disqus' });
+    expect(extensionFlowAudit('mewe', { delivery: 'extension', extensionEngine: 'mewe', extensionTargetUrl: 'https://mewe.com/myworld', extensionAutoSubmit: true }))
+      .toMatchObject({ status: 'CONFIGURED', engine: 'mewe' });
   });
 
   it('no longer asks Stack Exchange accounts for configured tags: the AI tags of each post fill the tag field', () => {

@@ -13710,7 +13710,9 @@
               "differ",
               "dzone",
               "dailydev",
-              "producthunt"
+              "producthunt",
+              "disqus",
+              "mewe"
             ]
           },
           "targetUrl": {

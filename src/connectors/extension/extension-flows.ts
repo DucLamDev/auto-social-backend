@@ -86,6 +86,12 @@ export const EXTENSION_FLOWS: readonly ExtensionFlow[] = [...forumFlows,
     setupHint: 'Đăng bài viết (tiêu đề + nội dung) lên hồ sơ daily.dev đang đăng nhập, qua trang https://daily.dev/squads/create. Chưa hỗ trợ đăng vào Squad.' },
   { id: 'pixelfed-social', name: 'pixelfed.social', engine: 'pixelfed', forumUrl: 'https://pixelfed.social', targetUrl: 'https://pixelfed.social/i/web', revision: 1,
     setupHint: 'Đính kèm một ảnh JPEG/PNG/WebP tối đa 20 MiB cho nội dung trước khi tạo chiến dịch. Tiện ích tải ảnh, điền caption và bấm đăng.' },
+  // Disqus closed its other public Channels; Discuss Disqus is the one left, for
+  // site owners talking about their communities (Community Growth by default).
+  { id: 'disqus', name: 'Discuss Disqus', engine: 'disqus', forumUrl: 'https://disqus.com', targetUrl: 'https://disqus.com/home/discuss/channel-discussdisqus/', revision: 1,
+    setupHint: 'Tạo discussion trong kênh Discuss Disqus (kênh của Disqus cho chủ website), mặc định chuyên mục Community Growth: chia sẻ hoặc hỏi về phát triển cộng đồng, bình luận trên website. Đổi chuyên mục bằng ô Chuyên mục (Community Growth, Reveal, Installation, Admin, Plans and Pricing, API, Bug Reports & Feedback, Embed). Tiện ích điền tiêu đề, topic từ tag của bài, nội dung rồi bấm Create Discussion.' },
+  { id: 'mewe', name: 'MeWe', engine: 'mewe', forumUrl: 'https://mewe.com', targetUrl: 'https://mewe.com/myworld', revision: 1,
+    setupHint: 'Đăng lên dòng thời gian MeWe của tài khoản đang đăng nhập: tiện ích mở ô "How is your day going?", điền nội dung, gắn ảnh nếu bài có ảnh rồi bấm Post. Ai xem được bài theo mặc định của tài khoản MeWe.' },
 ];
 
 export function extensionFlowForPlatform(slug: string): ExtensionFlow | undefined {
@@ -136,7 +142,7 @@ export function validateExtensionFlow(slug: string, settings: ExtensionDeliveryS
     differ: ['/new-story'], dzone: ['/content/article/post.html'], producthunt: ['/p/new'],
     stackexchange: ['/questions/ask'], lemmy: ['/create_post'], discuit: ['/new'], linkedin: ['/feed'],
     minds: ['/newsfeed/subscriptions'],
-    medium: ['/new-story'], slideshare: ['/upload'], 'aws-builder': ['/create/content'], pixelfed: ['/i/web', '/i/web/compose'],
+    medium: ['/new-story'], slideshare: ['/upload'], 'aws-builder': ['/create/content'], pixelfed: ['/i/web', '/i/web/compose'], mewe: ['/myworld'],
     mastodon: ['/publish'], bluesky: ['/intent/compose'], tumblr: ['/new/text'], devto: ['/new'], dailydev: ['/squads/create'],
   };
   if (createPaths[flow.engine] && !createPaths[flow.engine]!.includes(target.pathname.replace(/\/$/, ''))) {
@@ -146,5 +152,6 @@ export function validateExtensionFlow(slug: string, settings: ExtensionDeliveryS
   // account cannot post in, so only the plain composer page (own profile) is accepted.
   if (flow.engine === 'dailydev' && (target.search || target.hash)) throw new BadRequestException(flow.setupHint);
   if (flow.engine === 'tinhte' && !/^\/editorv2\/create\/\d+\/?$/.test(target.pathname)) throw new BadRequestException(flow.setupHint);
+  if (flow.engine === 'disqus' && (!/^\/home\/discuss\/channel-[a-z0-9-]+\/?$/.test(target.pathname) || target.search || target.hash)) throw new BadRequestException(flow.setupHint);
   return flow;
 }

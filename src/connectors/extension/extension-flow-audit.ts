@@ -7,11 +7,9 @@ const gaps: Record<string, { message: string; url?: string }> = {
   dailymotion: { message: 'Chưa có luồng upload video. Cần file video, ngôn ngữ và thiết lập nội dung dành cho trẻ em; Chrome cần quyền studio.dailymotion.com.', url: 'https://faq.dailymotion.com/hc/en-us/articles/115009030368-Upload-videos-from-your-Dailymotion-Studio' },
   blogger: { message: 'Cần hoàn tất hồ sơ Google/Blogger và có blog đích. Chưa xác minh được editor của blog để triển khai xuất bản.' },
   'hugging-face': { message: 'Cần xác minh email và quyền tạo Blog Article của tài khoản. Chưa kiểm thử được màn hình xuất bản.', url: 'https://huggingface.co/docs/hub/en/blog-articles' },
-  mewe: { message: 'Chưa xác minh được đúng hồ sơ và form đăng MeWe. Chưa có luồng xuất bản đã kiểm thử.' },
   'ubiquiti-community': { message: 'New Post còn mở hộp Sign In. Cần hoàn tất đăng nhập Ubiquiti và chọn chủ đề đích trước khi kiểm thử luồng đăng.' },
   'warrior-forum': { message: 'Điều khoản Warrior Forum cấm bot, script hay hệ thống tự động truy cập trang. Chỉ đăng thủ công: mở chủ đề phù hợp, bấm tạo thread và dán bài đã duyệt; thread mới chờ Warrior Forum duyệt.', url: 'https://www.warriorforum.com/tos.html' },
   'linux-foundation-forum': { message: 'Chưa nhận diện được phiên và form tạo thảo luận. Cần xác định chuyên mục đích sau đăng nhập.' },
-  disqus: { message: 'Disqus đã dừng Channels thông thường; chỉ còn Discuss Disqus cho hỗ trợ sản phẩm. Không có luồng đăng bài lên hồ sơ như mạng xã hội.', url: 'https://help.disqus.com/en/articles/1717095-channel-help' },
 };
 /** Shown instead of "community required" while AI form filling can pick one per post. */
 export const AI_COMMUNITY_NOTE = 'AI sẽ chọn community nếu chưa cấu hình.';
@@ -26,8 +24,8 @@ export function extensionFlowAudit(slug: string, value: unknown, options: { form
   const flow = extensionFlowForPlatform(slug);
   if (setup.status === 'ACCESS_RESTRICTED') return { status: 'ACCESS_RESTRICTED', message: String(setup.message || 'Nền tảng hạn chế quyền đăng; đăng nhập lại không khôi phục quyền.'), implemented: Boolean(flow) };
   if (slug === 'redis-community-forum') return { status: 'DESTINATION_UNAVAILABLE', implemented: Boolean(flow), message: 'Forum đang chuyển về redis.io, không còn form Discourse tại URL đã cấu hình. Chưa thể đăng ở đích này.' };
-  // Disqus has no post destination; Warrior Forum's terms forbid automated access.
-  if (!flow) return { status: slug === 'disqus' ? 'UNAVAILABLE' : slug === 'warrior-forum' ? 'MANUAL_ONLY' : 'FLOW_REQUIRED', implemented: false, ...(gaps[slug] || { message: 'Chưa có luồng đăng đã kiểm thử cho nền tảng này.' }) };
+  // Warrior Forum's terms forbid automated access.
+  if (!flow) return { status: slug === 'warrior-forum' ? 'MANUAL_ONLY' : 'FLOW_REQUIRED', implemented: false, ...(gaps[slug] || { message: 'Chưa có luồng đăng đã kiểm thử cho nền tảng này.' }) };
   const required: string[] = [];
   const notes: string[] = [];
   // Stack Exchange tags come from the approved post's AI tags; configured tags are optional.

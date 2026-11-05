@@ -54,6 +54,8 @@ export interface ExtensionRecipe {
   publishedLinkSelectors?: string[];
   /** Page must show one of these before the runner touches anything. */
   readySelectors: string[];
+  /** Clicked once when no editor is shown yet ("How is your day going?"); never a submit or a form control. */
+  openerSelectors?: string[];
   titleSelectors: string[];
   /**
    * Tried in order. How the body goes in follows `inputMode`; without it the
