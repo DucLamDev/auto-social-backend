@@ -34,7 +34,7 @@ export interface PlatformContract {
   titleHardLimit?: number;
 }
 
-const MARKDOWN_ENGINES = new Set<ExtensionEngine>(['discourse', 'devto', 'lemmy', 'discuit', 'stackexchange', 'differ']);
+const MARKDOWN_ENGINES = new Set<ExtensionEngine>(['discourse', 'devto', 'lemmy', 'discuit', 'stackexchange', 'differ', 'producthunt']);
 
 const PLATFORM_FORMAT: Record<string, TextFormat> = {
   wordpress: 'html',

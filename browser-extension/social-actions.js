@@ -328,6 +328,41 @@ export async function fillSocialAndSubmit(job) {
     await sleep(300);
     return all('[aria-selected="true"], [aria-checked="true"], .selected, .tag, .chip, .rs__multi-value, [data-testid*="flair"], button, [role="combobox"]').some(node => visible(node) && normalize(node.innerText).toLowerCase().includes(name.toLowerCase()));
   };
+  // Product Hunt "Start new thread": the forum the thread goes to is picked in a "Search for a
+  // product" box (General, Vibecoding, Introduce yourself, Self-Promotion, or a product's own
+  // forum). Its rows have no stable roles, so a row is the element whose own text is exactly the
+  // name and that appeared when the box opened. Sidebar links read "p/general" and never match,
+  // and links are never clicked. Returns true, or the result that stops the run untouched.
+  const chooseProductHuntForum = async name => {
+    const field = pick(['input[placeholder*="Search for a product" i]', 'input[aria-label*="Search for a product" i]', 'input[placeholder*="product" i]']);
+    if (!field) return needs('Không thấy ô "Search for a product" của Product Hunt để chọn forum; chưa điền bài.');
+    const same = text => normalize(text).toLowerCase() === name.toLowerCase();
+    // textContent first (cheap, no layout), then the visible text of the few matches.
+    const named = () => all('body *').filter(node => node !== field && same(node.textContent) && visible(node) && same(node.innerText)
+      && ![...node.children].some(child => same(child.textContent)) && !node.closest('a[href], header, nav, aside, [role="banner"], [role="navigation"]'));
+    const area = (() => { let node = field; for (let level = 0; level < 4 && node.parentElement; level++) node = node.parentElement; return node; })();
+    const before = new Set(named());
+    // Shown in the picker once chosen: the input's value, or a label next to it.
+    const shown = () => same(field.value) || named().some(node => contains(area, node));
+    if (shown()) return true;
+    const rowsNow = () => named().filter(node => !before.has(node));
+    field.focus(); field.click();
+    let rows = await wait(() => (rowsNow().length ? rowsNow() : null), 2500) ?? [];
+    if (!rows.length) {
+      // Product forums are found by searching their name.
+      write(field, name);
+      rows = await wait(() => (rowsNow().length ? rowsNow() : null), 6000) ?? [];
+    }
+    if (rows.length !== 1) {
+      return needs(rows.length ? `Có nhiều mục “${name}” trong ô chọn forum của Product Hunt; chưa điền bài. Chọn đúng forum trong tab rồi bấm Giao lại.`
+        : `Không thấy forum / product “${name}” trong ô "Search for a product" của Product Hunt; chưa điền bài. Ghi đúng tên ở ô Chuyên mục của tài khoản.`);
+    }
+    const clicked = rows[0];
+    (clicked.closest('[role="option"], [role="menuitem"], [cmdk-item], button, li') ?? clicked).click();
+    // The list closed (the clicked row is gone) and the picker now names the forum.
+    if (!await wait(() => ((!clicked.isConnected || !visible(clicked)) && shown() ? true : null), 3000)) return needs(`Đã bấm forum “${name}” nhưng Product Hunt chưa hiện forum đã chọn; chưa điền bài.`);
+    return true;
+  };
   // The post language (Lemmy and similar forms). Not found: left to AI form-fill.
   const chooseLanguage = async () => {
     const names = { en: ['en', 'eng', 'english'], vi: ['vi', 'vie', 'vietnamese', 'tiếng việt'] }[post.language];
@@ -383,6 +418,10 @@ export async function fillSocialAndSubmit(job) {
       }
       if (!normalize(open.innerText).toLowerCase().includes(options.category.toLowerCase())) return needs('Chưa xác nhận community Lemmy.');
     }
+  }
+  if (engine === 'producthunt' && !resume) {
+    const chosen = await chooseProductHuntForum(normalize(options.category) || 'Self-Promotion');
+    if (chosen !== true) return chosen;
   }
   await chooseLanguage();
 
@@ -459,13 +498,13 @@ export async function fillSocialAndSubmit(job) {
     if (alt) write(alt, asset.altText);
     return true;
   };
-  if (recipe.optionalMedia && job.attachments?.length && !resume) {
+  if (recipe.optionalMedia && job.attachments?.length && !resume && engine !== 'differ') {
     if (!await attachImage(job.attachments[0])) return needs('Đã điền bài nhưng chưa gắn được ảnh vào khung soạn, nên chưa bấm Đăng. Gắn ảnh rồi bấm Đăng, hoặc bỏ ảnh của kênh này trên web rồi chạy lại.');
     await sleep(300);
     if (!validContent()) return needs('Nội dung thay đổi khi gắn ảnh; chưa đăng.');
   }
 
-  if (!resume && !['lemmy', 'discuit'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
+  if (!resume && !['lemmy', 'discuit', 'producthunt'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
   if (engine === 'stackexchange' && !resume) {
     // Tags configured on the account must all be applied; the AI's suggested tags
     // are used only when the site already has them (never created), up to 5 in total.
@@ -528,6 +567,90 @@ export async function fillSocialAndSubmit(job) {
       && [node.innerText, node.getAttribute('aria-label'), node.value].some(text => labels.includes(normalize(text).toLowerCase())));
     return matches.length === 1 ? matches[0] : null;
   };
+  // Differ: the toolbar "Publish" (#post-submit-button) only opens <dialog id="modal-submit">.
+  // The dialog holds an optional featured image (JPG/PNG/GIF, at most 5 MB), one
+  // Keyword picked from Differ's own topic list, and the real Publish (type=submit).
+  const DIFFER_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif'];
+  const DIFFER_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+  // Broad topics most posts fit when none of the post's tags is in Differ's list.
+  const DIFFER_FALLBACK_TOPICS = ['technology', 'tech', 'programming', 'software development', 'software', 'devops', 'linux', 'web development', 'security', 'cloud computing', 'cloud'];
+  const topicKey = text => String(text ?? '').normalize('NFD').replace(/\p{M}+/gu, '').replace(/[đĐ]/g, 'd').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const differDialog = () => { const dialog = document.querySelector('dialog#modal-submit'); return dialog?.open && visible(dialog) ? dialog : null; };
+  const differKeyword = async dialog => {
+    const shown = () => normalize(dialog.querySelector('.rs__single-value')?.innerText);
+    if (shown()) return shown();
+    const control = dialog.querySelector('.rs__control');
+    const input = dialog.querySelector('input.rs__input, .rs__input input, input[id^="react-select"]');
+    if (!control && !input) return null;
+    const optionNodes = () => [...dialog.querySelectorAll('.rs__option')].filter(visible);
+    // react-select opens its menu on mouse down on the control, or on ArrowDown in its input.
+    control?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+    let nodes = await wait(() => (optionNodes().length ? optionNodes() : null), 2000);
+    if (!nodes && input) {
+      input.focus();
+      input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 }));
+      nodes = await wait(() => (optionNodes().length ? optionNodes() : null), 2000);
+    }
+    if (!nodes) return null;
+    const topics = nodes.map(node => ({ node, label: normalize(node.innerText), key: topicKey(node.innerText) })).filter(topic => topic.key);
+    const wanted = [...(options.tags ?? []), ...(options.suggestedTags ?? [])].map(topicKey).filter(Boolean);
+    const pickTopic = () => {
+      for (const tag of wanted) { const exact = topics.find(topic => topic.key === tag); if (exact) return exact; }
+      // "selfhosting" fits "Self Hosting"; "linuxserver" fits "Linux". Short keys would match too much.
+      for (const tag of wanted) {
+        const close = topics.find(topic => topic.key.length >= 3 && tag.length >= 3 && (topic.key.includes(tag) || tag.includes(topic.key)));
+        if (close) return close;
+      }
+      for (const fallback of DIFFER_FALLBACK_TOPICS.map(topicKey)) { const general = topics.find(topic => topic.key === fallback); if (general) return general; }
+      return null;
+    };
+    const topic = pickTopic();
+    // No match: the menu stays open so AI form-fill (or the operator) sees Differ's topic list.
+    if (!topic) return null;
+    topic.node.click();
+    return await wait(() => (shown() ? shown() : null), 2000);
+  };
+  const differImage = async (dialog, asset) => {
+    const preview = () => [...dialog.querySelectorAll('img[alt="preview"]')].some(visible);
+    if (preview()) return true;
+    const bytes = Uint8Array.from(atob(asset.base64), char => char.charCodeAt(0));
+    if (!DIFFER_IMAGE_TYPES.includes(asset.mimeType) || bytes.length > DIFFER_IMAGE_MAX_BYTES) return false;
+    const input = dialog.querySelector('input[type="file"]');
+    if (!input) return false;
+    const transfer = new DataTransfer(); transfer.items.add(new File([bytes], asset.name, { type: asset.mimeType }));
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('input', { bubbles: true })); input.dispatchEvent(new Event('change', { bubbles: true }));
+    return Boolean(await wait(() => (preview() ? true : null), 10_000));
+  };
+  const publishDiffer = async () => {
+    let dialog = differDialog();
+    if (!dialog) {
+      const opener = await wait(() => { const target = pick(recipe.submitSelectors); return target && enabled(target) ? target : null; }, 5000);
+      if (!opener) return { ...needs('Nút Publish của Differ chưa sẵn sàng; chưa đăng.'), missing: ['submit'] };
+      if (!validContent()) return needs('Nội dung không còn khớp với bài trên web; chưa đăng.');
+      opener.click();
+      dialog = await wait(differDialog, 5000);
+      if (!dialog) return needs('Đã bấm Publish nhưng Differ không mở hộp xuất bản (Featured Image / Keyword); chưa đăng.');
+    }
+    // The featured image is optional: one Differ cannot take (type, over 5 MB) is left out, never blocks the post.
+    const asset = job.attachments?.[0];
+    const imageNote = asset && !await differImage(dialog, asset) ? ' Ảnh bìa không gắn được (Differ chỉ nhận JPG/PNG/GIF tối đa 5 MB) nên bài đăng không kèm ảnh.' : '';
+    const keyword = await differKeyword(dialog);
+    if (!keyword) {
+      // None of the post's tags is a Differ topic: let the AI pick from the list, or leave it to the operator.
+      if (job.formFill?.enabled && (job.formFillRounds ?? 0) < 2 && !resume) {
+        return { status: 'needsForm', problems: ['required'], beforeUrls, message: 'Chưa chọn được Keyword (topic) của Differ cho bài này. Chọn một topic trong hộp Publish rồi bấm Publish.' };
+      }
+      return needs(`Chưa chọn được Keyword (topic) của Differ cho bài này; hộp Publish đang mở. Chọn một topic rồi bấm Publish.${imageNote}`);
+    }
+    if (captcha()) return { status: 'captcha' };
+    if (!validContent()) return needs('Nội dung không còn khớp với bài trên web; chưa đăng.');
+    const publish = [...dialog.querySelectorAll('button[type="submit"]')].filter(enabled);
+    if (publish.length !== 1) return needs('Không thấy đúng một nút Publish trong hộp xuất bản của Differ; chưa đăng.');
+    publish[0].click();
+    return { status: 'submitted', beforeUrls, ...(imageNote ? { message: imageNote.trim() } : {}) };
+  };
+
   const formProblems = () => {
     const scope = activeScope();
     if (!scope) return [];
@@ -612,13 +735,27 @@ export async function fillSocialAndSubmit(job) {
   // Without configured tags the AI's tags fill the field; a field that rejects them is left empty.
   const aiTags = (options.suggestedTags ?? []).join(', ');
   if (plainTags && !options.tags?.length && aiTags && !value(plainTags) && (!write(plainTags, aiTags) || value(plainTags) !== normalize(aiTags))) write(plainTags, '');
-  for (const tag of plainTags || resume || engine === 'stackexchange' ? [] : options.tags ?? []) {
+  for (const tag of plainTags || resume || ['stackexchange', 'differ'].includes(engine) ? [] : options.tags ?? []) {
     if (!await choose(tag, [...(engine === 'differ' ? ['input.rs__input[role="combobox"]'] : []), 'input[placeholder*="Add a topic" i]', 'input[placeholder*="Add tags" i]', 'input[placeholder*="Search tags" i]', 'input[name="tags"]'], ['Add tags', 'Topics', 'Tags'])) return needs(`Không chọn được tag “${tag}”; chưa bấm đăng.`);
   }
   if (captcha()) return { status: 'captcha' };
   if (!quoraAudienceMatches()) return needs('Đối tượng xem bài Quora đã thay đổi; chưa bấm Post.');
   const unfilled = await formFillNeeded();
   if (unfilled) return unfilled;
+  if (engine === 'differ') return await publishDiffer();
+  if (engine === 'producthunt') {
+    const editor = pick(bodySelectors);
+    const submit = await wait(() => {
+      const after = all('button, input[type="submit"]').filter(node => enabled(node) && normalize(node.innerText || node.value).toLowerCase() === 'submit'
+        && !node.closest('header, nav, [role="banner"], [role="navigation"]')
+        && editor && (editor.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING));
+      return after[0] ?? null;
+    }, 5000);
+    if (!submit) return { ...needs('Nút Submit của form Product Hunt chưa sẵn sàng; chưa đăng.'), missing: ['submit'] };
+    if (!validContent()) return needs('Nội dung không còn khớp với bài trên web; chưa đăng.');
+    submit.click();
+    return { status: 'submitted', beforeUrls };
+  }
   const submit = await wait(() => {
     const target = pick(recipe.submitSelectors);
     if (target) return enabled(target) ? target : null;

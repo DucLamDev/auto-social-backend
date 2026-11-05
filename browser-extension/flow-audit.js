@@ -4,7 +4,7 @@ const destinations = {
   minds: 'https://www.minds.com/newsfeed/subscriptions', linkedin: 'https://www.linkedin.com/feed/',
   stackoverflow: 'https://stackoverflow.com/questions/ask', serverfault: 'https://serverfault.com/questions/ask', unix: 'https://unix.stackexchange.com/questions/ask',
   lemmy: 'https://lemmy.world/create_post', discuit: 'https://discuit.org/new', huggingface: 'https://huggingface.co/new-blog',
-  dzone: 'https://dzone.com/content/article/post.html', differ: 'https://differ.blog/new-story', mewe: 'https://mewe.com', producthunt: 'https://www.producthunt.com',
+  dzone: 'https://dzone.com/content/article/post.html', differ: 'https://differ.blog/new-story', mewe: 'https://mewe.com', producthunt: 'https://www.producthunt.com/p/new',
   dailymotion: 'https://www.dailymotion.com', blogger: 'https://www.blogger.com', ubiquiti: 'https://community.ui.com',
   studio: 'https://studio.dailymotion.com',
   daily: 'https://daily.dev/squads/create', warrior: 'https://www.warriorforum.com', linuxfoundation: 'https://forum.linuxfoundation.org',

@@ -40,7 +40,7 @@ describe('extension delivery settings', () => {
 
   it('pastes HTML only into rich editors and sets the value of Markdown textareas', () => {
     const pasteHtml = Object.values(EXTENSION_RECIPES).filter((recipe) => recipe.inputMode === 'pasteHtml').map((recipe) => recipe.engine).sort();
-    expect(pasteHtml).toEqual(['aws-builder', 'dailydev', 'differ', 'dzone', 'medium', 'quora', 'substack', 'tumblr']);
+    expect(pasteHtml).toEqual(['aws-builder', 'dailydev', 'differ', 'dzone', 'medium', 'producthunt', 'quora', 'substack', 'tumblr']);
     for (const engine of ['devto', 'lemmy', 'discuit'] as const) {
       expect(EXTENSION_RECIPES[engine].inputMode).toBe('value');
       expect(EXTENSION_RECIPES[engine].bodySelectors.some((selector) => selector.includes('contenteditable'))).toBe(false);

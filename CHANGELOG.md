@@ -1,7 +1,7 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
-## 1.17.1 · 05/11/2026
+## 1.18.1 · 05/11/2026
 ### Sửa lỗi
 - Sửa theo khuyến nghị thì điểm AI chấm tăng, không ra một danh sách góp ý mới trái với lần trước
   - Lần chấm bài viết lại biết điểm cũ ("AI chấm X/10") và các mục người duyệt đã chọn sửa. AI chấm kiểm các mục đó
@@ -13,6 +13,57 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
     điểm, bài 9–10 không kèm góp ý, các góp ý không được mâu thuẫn nhau.
   - Nền tảng giới hạn ký tự (Pixelfed, Bluesky, X…): AI chấm được báo còn trống bao nhiêu ký tự, nên không đòi thêm chi
     tiết không vừa; góp ý thêm chữ phải nói bớt chỗ nào.
+
+
+## 1.18.0 · 05/11/2026
+### Tính năng
+- Đăng thread lên forum Product Hunt bằng tiện ích Chrome, tự chọn forum / product
+  Cần nạp lại tiện ích 1.13.0. Đây là luồng **Start new thread** (`https://www.producthunt.com/p/new`), không phải Launch
+  sản phẩm.
+  - **Chọn forum trước khi điền bài:**
+    - Tiện ích chọn trong ô "Search for a product" đúng tên ghi ở ô **Chuyên mục** của tài khoản: General, Vibecoding,
+      Introduce yourself, Self-Promotion, hoặc tên một product (tiện ích gõ để tìm).
+    - Để trống thì đăng vào **Self-Promotion**.
+    - Không thấy tên đó thì dừng, chưa điền gì.
+  - **Điền bài:** tiêu đề, nội dung dán dạng định dạng (Markdown → HTML), rồi bấm **Submit của form**. Nút "Submit" trên
+    thanh đầu trang (đăng sản phẩm) không bao giờ được bấm.
+  - **Ghi nhận bài:** thread mới ở `/p/<forum>/<slug>`.
+  - **AI viết theo kiểu thread forum:** tiêu đề cụ thể, nội dung trò chuyện, nhắc sản phẩm một lần kèm công khai, câu hỏi
+    mời trả lời; không tagline kiểu Launch.
+  - Product Hunt không còn bị liệt kê "chưa có luồng".
+  - **Sau khi triển khai:** bấm **Test** ở tài khoản Product Hunt để gắn trang đăng mặc định. Muốn cập nhật lời nhắc AI và
+    trang mặc định của nền tảng trong database thì chạy seed như trong `DEPLOYMENT.md`.
+
+## 1.17.2 · 05/11/2026
+### Sửa lỗi
+- Sửa được Phiên Chrome / 2FA của tài khoản đang dùng chung hồ sơ Chrome với tài khoản khác cùng nền tảng
+  - **Lỗi cũ:** lần nhập file 03/11 đặt hai tài khoản MeWe (và hai tài khoản Differ), với hai tài khoản Google khác nhau,
+    vào cùng hồ sơ "Chrome VPS". Từ đó lưu bất kỳ thay đổi nào ở form **Phiên Chrome / 2FA** của chúng đều báo lỗi tiếng Anh
+    "This Chrome profile already belongs to another account on this platform".
+  - **Nay:**
+    - Tài khoản vốn đã ở hồ sơ đó sửa và lưu được. `PUT /extension/accounts/:id/session` trả thêm `sharedWith` (tên tài
+      khoản cùng nền tảng trên hồ sơ đó) để giao diện cảnh báo.
+    - Chỉ còn chặn việc **chuyển** một tài khoản sang hồ sơ đang giữ tài khoản khác của cùng nền tảng, vì cookie chỉ giữ
+      một lần đăng nhập mỗi website. Câu báo bằng tiếng Việt nêu tên tài khoản đó và cách xử lý.
+
+## 1.17.1 · 05/11/2026
+### Sửa lỗi
+- Differ đăng được: chọn Keyword (topic), gắn ảnh bìa nếu có, rồi bấm Publish trong hộp xuất bản
+  Cần nạp lại tiện ích 1.12.1.
+  - **Lỗi cũ:** nút Publish trên thanh trên cùng của Differ (`#post-submit-button`) chỉ mở hộp xuất bản. Tiện ích bấm nút
+    đó rồi chờ bài xuất hiện, nên bài không bao giờ được đăng. Hộp còn để trống Keyword.
+  - **Bây giờ tiện ích:**
+    1. Mở hộp xuất bản.
+    2. Gắn ảnh bìa nếu bài có ảnh. Differ chỉ nhận JPG/PNG/GIF tối đa 5 MB; ảnh không hợp thì bỏ qua, bài vẫn đăng và có
+       ghi chú.
+    3. Chọn **một** Keyword trong danh sách topic của Differ, theo thứ tự:
+       - tag cấu hình của tài khoản;
+       - tag AI viết cho bài (Differ nay nhận tối đa 3 tag gợi ý, AI được dặn viết topic rộng như "programming",
+         "devops", "linux");
+       - topic chung ("technology", "programming"…).
+       Không topic nào hợp thì nhờ AI điền form chọn trong danh sách. AI không chắc thì để hộp mở chờ bạn chọn.
+    4. Bấm Publish trong hộp.
+  - Bài Differ nay được AI tạo ảnh bìa như các kênh nhận được ảnh.
 
 ## 1.17.0 · 04/11/2026
 ### Tính năng
@@ -166,7 +217,6 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   rõ bằng tiếng Việt từng tài khoản và lý do, không tạo việc đăng nào. "Duyệt hết" đăng các nền tảng đã có tài khoản sẵn
   sàng, để các bài còn lại tiếp tục chờ duyệt (`waitingVariantIds`) cho tới khi bạn kết nối lại tài khoản hoặc từ chối
   bài. Tài khoản bị bỏ qua sẽ không tự nhận bài này khi kết nối lại sau.
-
 
 ## 1.11.0 · 04/11/2026
 ### Tính năng

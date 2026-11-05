@@ -77,7 +77,7 @@ test('DZone opens More and submits to moderation without saving a draft or publi
   await page.close();
 });
 
-test('Differ pastes a multi-line Markdown post as rich content, selects a keyword chip and clicks its unique Publish control', async () => {
+test('Differ pastes a multi-line Markdown post as rich content, opens its publish dialog, selects the configured keyword and publishes there', async () => {
   const page = await pageAt('https://differ.blog/new-story');
   // Differ's editor is MDXEditor (Lexical): it builds headings, lists and code
   // blocks from pasted HTML, while typed text would stay raw Markdown on one line.
@@ -86,18 +86,27 @@ test('Differ pastes a multi-line Markdown post as rich content, selects a keywor
     + '<pre><code class="language-bash">sudo systemctl enable --now nginx\n</code></pre><p>Đọc thêm <a href="https://nginx.org/en/docs/">hướng dẫn</a> khi cần.</p>';
   await page.evaluate(() => {
     window.sent = [];
-    document.body.innerHTML = '<textarea name="title"></textarea><div contenteditable="true" aria-label="editable markdown"></div><input class="rs__input" role="combobox"><button>Publish</button><button id="post-submit-button">Publish</button>';
+    // The toolbar Publish only opens <dialog id="modal-submit">; its own submit button publishes.
+    document.body.innerHTML = '<textarea name="title"></textarea><div contenteditable="true" aria-label="editable markdown"></div><button id="post-submit-button">Publish</button>'
+      + '<dialog id="modal-submit" class="modal"><div class="rs__control"><div class="rs__placeholder">Select...</div><input class="rs__input" role="combobox"></div><div class="slot"></div><button type="submit">Publish</button></dialog>';
     const editor = document.querySelector('[contenteditable]');
+    const dialog = document.querySelector('dialog');
     editor.addEventListener('paste', event => { event.preventDefault(); editor.innerHTML = event.clipboardData.getData('text/html'); });
-    document.querySelector('input').oninput = () => { const option = document.createElement('div'); option.setAttribute('role', 'option'); option.textContent = 'nginx'; document.body.append(option); option.onclick = () => { option.removeAttribute('role'); option.className = 'rs__multi-value'; }; };
-    document.querySelector('#post-submit-button').onclick = () => window.sent.push(editor.innerHTML);
+    dialog.querySelector('.rs__control').addEventListener('mousedown', () => {
+      const option = document.createElement('div'); option.className = 'rs__option'; option.textContent = 'nginx';
+      option.onclick = () => { dialog.querySelector('.rs__placeholder').outerHTML = '<div class="rs__single-value">nginx</div>'; option.remove(); };
+      dialog.querySelector('.slot').append(option);
+    });
+    document.querySelector('#post-submit-button').onclick = () => dialog.showModal();
+    dialog.querySelector('button[type="submit"]').onclick = () => window.sent.push({ html: editor.innerHTML, keyword: dialog.querySelector('.rs__single-value')?.textContent ?? null });
   });
   const result = await page.evaluate(fill, { recipe: { ...EXTENSION_RECIPES.differ, inputMode: 'pasteHtml' }, targetOrigin: 'https://differ.blog', autoSubmit: true, options: { tags: ['nginx'] },
     post: { title: 'Cài Nginx trên Ubuntu 24.04', body, bodyHtml, maxChars: null, length: body.length, language: 'vi' } });
   assert.equal(result.status, 'submitted', JSON.stringify(result));
   const sent = await page.evaluate(() => window.sent);
   assert.equal(sent.length, 1);
-  assert.equal(sent[0], bodyHtml, 'the editor holds the rendered post, not raw Markdown');
+  assert.equal(sent[0].html, bodyHtml, 'the editor holds the rendered post, not raw Markdown');
+  assert.equal(sent[0].keyword, 'nginx');
   await page.close();
 });
 
@@ -280,4 +289,76 @@ test('daily.dev keeps a saved draft and stops before Post when auto-submit is of
   assert.equal(await page.locator('textarea').inputValue(), post.title);
   assert.deepEqual(await page.evaluate(() => window.submits), []);
   await page.close();
+});
+
+// Product Hunt "Start new thread" (producthunt.com/p/new) as in the operator's screenshot: the
+// header has its own "Submit" (launch a product), the sidebar links read "p/general"…, the forum
+// is picked in "Search for a product" (rows without roles; product forums appear when searched),
+// then Title, a ProseMirror-like Body that takes pasted HTML, and the form's "Submit".
+function productHuntPage() {
+  {
+    window.sent = []; window.launches = 0;
+    document.body.innerHTML = '<header><a href="/">P</a><button type="button" id="launch">Submit</button></header>'
+      + '<aside><a href="/p/general">p/general</a><a href="/p/self-promotion">p/self-promotion</a><a href="/p/google-cloud-platform">p/google-cloud-platform</a></aside>'
+      + '<main><h1>Start new thread</h1><div class="picker"><div class="box"><svg></svg><input placeholder="Search for a product"></div><div class="menu"></div></div>'
+      + '<p class="desc">Discuss anything: tips, startups, or product recommendations.</p><input placeholder="Title">'
+      + '<div class="ProseMirror" contenteditable="true"></div><button type="button" id="send">Submit</button></main>';
+    const input = document.querySelector('.box input'), menu = document.querySelector('.menu'), editor = document.querySelector('.ProseMirror');
+    const topics = ['General', 'Vibecoding', 'Introduce yourself', 'Self-Promotion'], products = ['Google Cloud Platform', 'Nitrosend'];
+    const render = query => {
+      const names = query ? [...topics, ...products].filter(name => name.toLowerCase().includes(query.toLowerCase())) : topics;
+      menu.innerHTML = names.map(name => `<div class="row"><svg></svg><span>${name}</span></div>`).join('');
+      for (const row of menu.querySelectorAll('.row')) row.addEventListener('click', () => {
+        window.forum = row.textContent;
+        menu.innerHTML = '';
+        input.remove();
+        document.querySelector('.box').insertAdjacentHTML('beforeend', `<span class="chosen">${row.textContent}</span>`);
+      });
+    };
+    input.addEventListener('focus', () => render(''));
+    input.addEventListener('input', () => render(input.value));
+    editor.addEventListener('paste', event => { event.preventDefault(); editor.innerHTML = event.clipboardData.getData('text/html'); });
+    document.querySelector('#launch').onclick = () => { window.launches++; };
+    document.querySelector('#send').onclick = () => window.sent.push({ forum: window.forum ?? null, title: document.querySelector('input[placeholder="Title"]').value, html: editor.innerHTML });
+  }
+}
+const phPost = { title: 'How do you test a proxy before trusting it?', body: '## What I check\n\n- The exit IP\n- DNS leaks\n\nWhat do you check first?',
+  bodyHtml: '<h2>What I check</h2><ul><li>The exit IP</li><li>DNS leaks</li></ul><p>What do you check first?</p>', maxChars: null, language: 'en' };
+
+test('Product Hunt picks the configured forum (Self-Promotion when none) before writing, then clicks the form Submit, never the header one', async () => {
+  for (const [category, expected] of [['', 'Self-Promotion'], ['General', 'General'], ['Google Cloud Platform', 'Google Cloud Platform']]) {
+    const page = await pageAt('https://www.producthunt.com/p/new');
+    try {
+      await page.evaluate(productHuntPage);
+      const result = await page.evaluate(fill, { recipe: EXTENSION_RECIPES.producthunt, targetOrigin: 'https://www.producthunt.com', openUrl: page.url(), autoSubmit: true,
+        options: { tags: [], category }, post: { ...phPost, length: phPost.body.length } });
+      assert.equal(result.status, 'submitted', `${category}: ${JSON.stringify(result)}`);
+      const [sent, launches] = await page.evaluate(() => [window.sent, window.launches]);
+      assert.equal(launches, 0, 'the header Submit (product launch) is never clicked');
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0].forum, expected);
+      assert.equal(sent[0].title, phPost.title);
+      assert.equal(sent[0].html, phPost.bodyHtml);
+    } finally { await page.close(); }
+  }
+});
+
+test('Product Hunt stops before writing anything when the configured forum is not in the picker', async () => {
+  const page = await pageAt('https://www.producthunt.com/p/new');
+  try {
+    await page.evaluate(productHuntPage);
+    const result = await page.evaluate(fill, { recipe: EXTENSION_RECIPES.producthunt, targetOrigin: 'https://www.producthunt.com', openUrl: page.url(), autoSubmit: true,
+      options: { tags: [], category: 'Not A Forum' }, post: { ...phPost, length: phPost.body.length } });
+    assert.equal(result.status, 'filled', JSON.stringify(result));
+    assert.match(result.message, /Không thấy forum \/ product “Not A Forum”/);
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('input[placeholder="Title"]').value, document.querySelector('.ProseMirror').innerHTML, window.sent.length, window.launches]), ['', '', 0, 0]);
+  } finally { await page.close(); }
+});
+
+test('Product Hunt recognises the new thread at /p/<forum>/<slug> and not the composer page', () => {
+  const pattern = new RegExp(EXTENSION_RECIPES.producthunt.successUrlPattern);
+  assert.equal(pattern.test('https://www.producthunt.com/p/self-promotion/how-do-you-test-a-proxy'), true);
+  assert.equal(pattern.test('https://www.producthunt.com/p/new'), false);
+  assert.equal(pattern.test('https://www.producthunt.com/p/new/whatever'), false);
+  assert.equal(pattern.test('https://www.producthunt.com/p/general'), false);
 });
