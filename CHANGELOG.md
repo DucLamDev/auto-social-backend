@@ -1,6 +1,25 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.17.1 · 05/11/2026
+### Sửa lỗi
+- Differ đăng được: chọn Keyword (topic), gắn ảnh bìa nếu có, rồi bấm Publish trong hộp xuất bản
+  Cần nạp lại tiện ích 1.12.1.
+  - **Lỗi cũ:** nút Publish trên thanh trên cùng của Differ (`#post-submit-button`) chỉ mở hộp xuất bản. Tiện ích bấm nút
+    đó rồi chờ bài xuất hiện, nên bài không bao giờ được đăng. Hộp còn để trống Keyword.
+  - **Bây giờ tiện ích:**
+    1. Mở hộp xuất bản.
+    2. Gắn ảnh bìa nếu bài có ảnh. Differ chỉ nhận JPG/PNG/GIF tối đa 5 MB; ảnh không hợp thì bỏ qua, bài vẫn đăng và có
+       ghi chú.
+    3. Chọn **một** Keyword trong danh sách topic của Differ, theo thứ tự:
+       - tag cấu hình của tài khoản;
+       - tag AI viết cho bài (Differ nay nhận tối đa 3 tag gợi ý, AI được dặn viết topic rộng như "programming",
+         "devops", "linux");
+       - topic chung ("technology", "programming"…).
+       Không topic nào hợp thì nhờ AI điền form chọn trong danh sách. AI không chắc thì để hộp mở chờ bạn chọn.
+    4. Bấm Publish trong hộp.
+  - Bài Differ nay được AI tạo ảnh bìa như các kênh nhận được ảnh.
+
 ## 1.17.0 · 04/11/2026
 ### Tính năng
 - Tiện ích Chrome 1.12.0: hàng đợi không kẹt, AI điền mục còn thiếu rồi tự Đăng, bài không vượt giới hạn ký tự

@@ -28,8 +28,11 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
     submitSelectors: ['button[type="submit"][form="smart_composer"]'], successUrlPattern: '/posts/[^/?#]+(?:[?#].*)?$',
     publishedTitleSelectors: ['h1'], publishedBodySelectors: ['[class*="markdown"]'],
   }),
+  // The toolbar Publish (#post-submit-button) opens <dialog id="modal-submit">: optional featured
+  // image (JPG/PNG/GIF ≤ 5 MB), one Keyword from Differ's topic list, then the dialog's own Publish.
   differ: recipe('differ', {
     readySelectors: ['textarea[name="title"]'], titleSelectors: ['textarea[name="title"]'], bodySelectors: ['[contenteditable][aria-label="editable markdown"]'], inputMode: 'pasteHtml',
+    optionalMedia: 'image', mediaInputSelectors: ['dialog#modal-submit input[type="file"]'], mediaPreviewSelectors: ['dialog#modal-submit img[alt="preview"]'],
     submitSelectors: ['button#post-submit-button'], successUrlPattern: '/p/[^/?#]+(?:[?#].*)?$', publishedTitleSelectors: ['h1'], publishedBodySelectors: ['article', '.prose'],
   }),
   dzone: recipe('dzone', {

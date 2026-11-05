@@ -64,10 +64,122 @@ function richEditor(mangle) {
   }
 }
 
+// Differ's real publish flow (differ.blog/new-story): the toolbar #post-submit-button only opens
+// <dialog id="modal-submit"> holding a react-dropzone (hidden file input, preview <img alt="preview">),
+// a react-select Keyword picker (classNamePrefix "rs", one topic from Differ's list) and the
+// dialog's own <button type="submit">Publish</button>, which is what really publishes.
+function differDialog(topics) {
+  {
+    const editor = document.querySelector('[contenteditable]');
+    const dialog = document.createElement('dialog');
+    dialog.id = 'modal-submit';
+    dialog.className = 'modal';
+    dialog.innerHTML = '<div class="modal-box"><label>Featured Image</label><div class="dropzone"><input type="file" accept="image/*" style="display:none"></div>'
+      + '<label>Keyword</label><div class="rs-container"><div class="rs__control"><div class="rs__value-container"><div class="rs__placeholder">Select...</div>'
+      + '<div class="rs__input-container"><input class="rs__input" role="combobox" aria-expanded="false"></div></div></div><div class="rs__menu-slot"></div></div>'
+      + '<button type="submit">Publish</button></div>';
+    document.body.append(dialog);
+    window.keyword = null; window.image = null;
+    const file = dialog.querySelector('input[type="file"]');
+    file.addEventListener('change', () => {
+      const img = document.createElement('img');
+      img.alt = 'preview'; img.style.cssText = 'display:block;width:20px;height:20px';
+      img.src = URL.createObjectURL(file.files[0]);
+      dialog.querySelector('.dropzone').append(img);
+      window.image = file.files[0].name;
+    });
+    const open = () => {
+      if (dialog.querySelector('.rs__menu')) return;
+      const menu = document.createElement('div');
+      menu.className = 'rs__menu';
+      menu.innerHTML = topics.map(topic => `<div class="rs__option" role="option">${topic}</div>`).join('');
+      dialog.querySelector('.rs__menu-slot').append(menu);
+      for (const option of menu.querySelectorAll('.rs__option')) option.addEventListener('click', () => {
+        window.keyword = option.textContent;
+        menu.remove();
+        dialog.querySelector('.rs__placeholder').outerHTML = `<div class="rs__single-value">${option.textContent}</div>`;
+      });
+    };
+    dialog.querySelector('.rs__control').addEventListener('mousedown', open);
+    dialog.querySelector('.rs__input').addEventListener('keydown', event => { if (event.key === 'ArrowDown') open(); });
+    document.querySelector('#post-submit-button').onclick = () => dialog.showModal();
+    dialog.querySelector('button[type="submit"]').onclick = () => {
+      window.sent.push({ title: document.querySelector('textarea').value, html: editor.innerHTML, text: editor.innerText, keyword: window.keyword, image: window.image });
+      dialog.close();
+    };
+  }
+}
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+const differJob = (page, extra = {}) => ({ recipe: EXTENSION_RECIPES.differ, targetOrigin: 'https://differ.blog', openUrl: page.url(), post: richPost, autoSubmit: true, options: { tags: [] }, ...extra });
+
+test('Differ opens its publish dialog, adds the featured image, picks the Keyword matching a post tag, then publishes', async () => {
+  const page = await pageAt('https://differ.blog/new-story');
+  try {
+    await page.evaluate(richEditor, false);
+    await page.evaluate(differDialog, ['Technology', 'Linux', 'Security']);
+    const result = await page.evaluate(fill, differJob(page, { options: { tags: [], suggestedTags: ['self hosting', 'linux'] },
+      attachments: [{ name: 'cover.png', mimeType: 'image/png', base64: PNG }] }));
+    assert.equal(result.status, 'submitted', JSON.stringify(result));
+    const sent = await page.evaluate(() => window.sent);
+    assert.equal(sent.length, 1, 'the toolbar button alone never publishes');
+    assert.equal(sent[0].keyword, 'Linux');
+    assert.equal(sent[0].image, 'cover.png');
+    assert.match(sent[0].html, /<h2>Vì sao cần reverse proxy<\/h2>/);
+  } finally { await page.close(); }
+});
+
+test('Differ falls back to a broad topic when no post tag is in its list, and a configured tag wins over AI tags', async () => {
+  for (const [options, topics, expected] of [
+    [{ tags: [], suggestedTags: ['vps'] }, ['Health', 'Technology'], 'Technology'],
+    [{ tags: ['Security'], suggestedTags: ['linux'] }, ['Linux', 'Security'], 'Security'],
+  ]) {
+    const page = await pageAt('https://differ.blog/new-story');
+    try {
+      await page.evaluate(richEditor, false);
+      await page.evaluate(differDialog, topics);
+      const result = await page.evaluate(fill, differJob(page, { options }));
+      assert.equal(result.status, 'submitted', JSON.stringify(result));
+      const [sent] = await page.evaluate(() => window.sent);
+      assert.equal(sent.keyword, expected);
+      assert.equal(sent.image, null);
+    } finally { await page.close(); }
+  }
+});
+
+test('Differ leaves out a featured image it cannot take and still publishes, saying so', async () => {
+  const page = await pageAt('https://differ.blog/new-story');
+  try {
+    await page.evaluate(richEditor, false);
+    await page.evaluate(differDialog, ['Technology']);
+    const result = await page.evaluate(fill, differJob(page, { attachments: [{ name: 'cover.webp', mimeType: 'image/webp', base64: PNG }] }));
+    assert.equal(result.status, 'submitted', JSON.stringify(result));
+    assert.match(result.message, /Ảnh bìa không gắn được/);
+    const [sent] = await page.evaluate(() => window.sent);
+    assert.equal(sent.image, null);
+    assert.equal(sent.keyword, 'Technology');
+  } finally { await page.close(); }
+});
+
+test('Differ without a fitting topic asks AI form-fill, or waits for the operator with the dialog open; nothing is published', async () => {
+  for (const formFill of [{ enabled: true }, { enabled: false }]) {
+    const page = await pageAt('https://differ.blog/new-story');
+    try {
+      await page.evaluate(richEditor, false);
+      await page.evaluate(differDialog, ['Health', 'Food']);
+      const result = await page.evaluate(fill, differJob(page, { options: { tags: [], suggestedTags: ['vps'] }, formFill }));
+      assert.equal(result.status, formFill.enabled ? 'needsForm' : 'filled', JSON.stringify(result));
+      assert.match(result.message, /Keyword/);
+      assert.deepEqual(await page.evaluate(() => window.sent), []);
+      assert.equal(await page.evaluate(() => document.querySelector('dialog#modal-submit').open), true);
+    } finally { await page.close(); }
+  }
+});
+
 test('pasteHtml: a rich editor receives the rendered HTML, keeps every block and passes the content check', async () => {
   const page = await pageAt('https://differ.blog/new-story');
   try {
     await page.evaluate(richEditor, false);
+    await page.evaluate(differDialog, ['Technology']);
     const job = { recipe: { ...EXTENSION_RECIPES.differ, inputMode: 'pasteHtml' }, targetOrigin: 'https://differ.blog', openUrl: page.url(), post: richPost, autoSubmit: true, options: { tags: [] } };
     const result = await page.evaluate(fill, job);
     assert.equal(result.status, 'submitted', JSON.stringify(result));

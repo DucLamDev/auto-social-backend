@@ -77,7 +77,7 @@ test('DZone opens More and submits to moderation without saving a draft or publi
   await page.close();
 });
 
-test('Differ pastes a multi-line Markdown post as rich content, selects a keyword chip and clicks its unique Publish control', async () => {
+test('Differ pastes a multi-line Markdown post as rich content, opens its publish dialog, selects the configured keyword and publishes there', async () => {
   const page = await pageAt('https://differ.blog/new-story');
   // Differ's editor is MDXEditor (Lexical): it builds headings, lists and code
   // blocks from pasted HTML, while typed text would stay raw Markdown on one line.
@@ -86,18 +86,27 @@ test('Differ pastes a multi-line Markdown post as rich content, selects a keywor
     + '<pre><code class="language-bash">sudo systemctl enable --now nginx\n</code></pre><p>Đọc thêm <a href="https://nginx.org/en/docs/">hướng dẫn</a> khi cần.</p>';
   await page.evaluate(() => {
     window.sent = [];
-    document.body.innerHTML = '<textarea name="title"></textarea><div contenteditable="true" aria-label="editable markdown"></div><input class="rs__input" role="combobox"><button>Publish</button><button id="post-submit-button">Publish</button>';
+    // The toolbar Publish only opens <dialog id="modal-submit">; its own submit button publishes.
+    document.body.innerHTML = '<textarea name="title"></textarea><div contenteditable="true" aria-label="editable markdown"></div><button id="post-submit-button">Publish</button>'
+      + '<dialog id="modal-submit" class="modal"><div class="rs__control"><div class="rs__placeholder">Select...</div><input class="rs__input" role="combobox"></div><div class="slot"></div><button type="submit">Publish</button></dialog>';
     const editor = document.querySelector('[contenteditable]');
+    const dialog = document.querySelector('dialog');
     editor.addEventListener('paste', event => { event.preventDefault(); editor.innerHTML = event.clipboardData.getData('text/html'); });
-    document.querySelector('input').oninput = () => { const option = document.createElement('div'); option.setAttribute('role', 'option'); option.textContent = 'nginx'; document.body.append(option); option.onclick = () => { option.removeAttribute('role'); option.className = 'rs__multi-value'; }; };
-    document.querySelector('#post-submit-button').onclick = () => window.sent.push(editor.innerHTML);
+    dialog.querySelector('.rs__control').addEventListener('mousedown', () => {
+      const option = document.createElement('div'); option.className = 'rs__option'; option.textContent = 'nginx';
+      option.onclick = () => { dialog.querySelector('.rs__placeholder').outerHTML = '<div class="rs__single-value">nginx</div>'; option.remove(); };
+      dialog.querySelector('.slot').append(option);
+    });
+    document.querySelector('#post-submit-button').onclick = () => dialog.showModal();
+    dialog.querySelector('button[type="submit"]').onclick = () => window.sent.push({ html: editor.innerHTML, keyword: dialog.querySelector('.rs__single-value')?.textContent ?? null });
   });
   const result = await page.evaluate(fill, { recipe: { ...EXTENSION_RECIPES.differ, inputMode: 'pasteHtml' }, targetOrigin: 'https://differ.blog', autoSubmit: true, options: { tags: ['nginx'] },
     post: { title: 'Cài Nginx trên Ubuntu 24.04', body, bodyHtml, maxChars: null, length: body.length, language: 'vi' } });
   assert.equal(result.status, 'submitted', JSON.stringify(result));
   const sent = await page.evaluate(() => window.sent);
   assert.equal(sent.length, 1);
-  assert.equal(sent[0], bodyHtml, 'the editor holds the rendered post, not raw Markdown');
+  assert.equal(sent[0].html, bodyHtml, 'the editor holds the rendered post, not raw Markdown');
+  assert.equal(sent[0].keyword, 'nginx');
   await page.close();
 });
 

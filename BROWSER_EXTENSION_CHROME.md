@@ -1,5 +1,18 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.17.1 / tiện ích 1.12.1: Differ chọn Keyword và ảnh bìa trong hộp Publish
+
+- Trên Differ, nút **Publish** ở thanh trên cùng chỉ mở hộp xuất bản (`dialog#modal-submit`).
+- Trong hộp, tiện ích:
+  - gắn ảnh bìa nếu bài có ảnh (JPG/PNG/GIF tối đa 5 MB; ảnh khác thì bỏ qua, bài vẫn đăng);
+  - chọn một **Keyword** trong danh sách topic của Differ:
+    - theo tag của tài khoản;
+    - rồi tag AI viết cho bài;
+    - rồi topic chung (technology, programming…);
+    - không hợp thì AI điền form chọn hoặc để bạn chọn;
+  - bấm **Publish** của hộp.
+- Bài Differ được AI tạo ảnh bìa như các kênh nhận được ảnh.
+
 ## Backend 1.17.0 / tiện ích 1.12.0: hàng đợi không kẹt, AI điền mục còn thiếu, giữ định dạng bài
 
 Cần cả backend 1.17.0 và tiện ích 1.12.0. Sau khi cập nhật, nạp lại tiện ích trong `chrome://extensions`.
