@@ -86,6 +86,66 @@ test('Discuit recognizes its own navbar username and excludes a feed author', as
   } finally { await page.close(); }
 });
 
+test('Discuit reads the signed-in user from its API when the navbar name is hidden, and a feed post about passwords is not a rejection', async () => {
+  // A narrow window hides the navbar name; the feed talks about a "wrong password".
+  const html = '<nav><a href="/@alice/bookmarks">Bookmarks</a></nav><div class="navbar-profile"><span class="navbar-name" style="display:none">@alice</span></div><article><h2>Wrong password on my server again</h2><p>Invalid credentials after the update.</p><a href="/@bob">bob</a></article>';
+  const page = await browser.newPage();
+  let user = { username: 'alice' };
+  await page.route('**/*', route => new URL(route.request().url()).pathname === '/api/_initial'
+    ? route.fulfill({ json: { user, communities: [] } }) : route.fulfill({ contentType: 'text/html', body: html }));
+  await page.goto('https://discuit.org/');
+  const scoped = { ...job, targetOrigin: 'https://discuit.org', recipe: { engine: 'discuit' } };
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+    user = { username: 'bob' };
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'mismatch');
+    // Signed out and no login form shown: never "credentials rejected".
+    user = null;
+    const result = await page.evaluate(accountAuthStep, { job: scoped, action: 'password', payload: { username: 'alice', password: 'fixture' } }); // vpsttt-secretscan: ignore
+    assert.notEqual(result.state, 'challenge', result.message);
+  } finally { await page.close(); }
+});
+
+test('Blogger opens its "Đăng nhập" link outside any header, then verifies the Google account email of the dashboard', async () => {
+  const google = { ...job, targetOrigin: 'https://www.blogger.com', recipe: { engine: 'blogger' }, auth: { ...job.auth, provider: 'google', loginUsername: 'owner@example.test', expectedUsername: 'vpsttt' } };
+  let page = await pageAt('https://www.blogger.com/about/', '<header class="header"><img alt="Blogger"></header><div class="sign-in-wrap"><a href="/go/signin?hl=vi" class="sign-in ga-header-sign-in" style="text-transform:uppercase"> <span>Đăng nhập</span> </a></div><a href="/onboarding" class="cta">Tạo blog của bạn</a>');
+  try {
+    await page.evaluate(() => { document.querySelector('.sign-in').onclick = event => { event.preventDefault(); window.opened = true; }; });
+    assert.equal((await page.evaluate(accountAuthStep, { job: google })).state, 'openLogin');
+    assert.equal((await page.evaluate(accountAuthStep, { job: google, action: 'openLogin' })).state, 'submitted');
+    assert.equal(await page.evaluate(() => window.opened), true);
+  } finally { await page.close(); }
+  const dashboard = email => `<header><a aria-label="Tài khoản Google: Huy Nguyễn  (${email})" href="https://accounts.google.com/SignOutOptions"><img alt=""></a></header><main><a href="https://www.blogger.com/profile/123">Bài của tác giả khác</a></main>`;
+  page = await pageAt('https://www.blogger.com/blog/posts/123', dashboard('Owner@Example.test'));
+  try {
+    const result = await page.evaluate(accountAuthStep, { job: google });
+    assert.equal(result.state, 'authenticated');
+    assert.equal(result.verifiedGoogleIdentity, true);
+    assert.equal(result.detectedUsername, 'vpsttt');
+    await page.evaluate(html => { document.body.innerHTML = html; }, dashboard('someone.else@example.test'));
+    assert.equal((await page.evaluate(accountAuthStep, { job: google })).state, 'mismatch');
+  } finally { await page.close(); }
+});
+
+test('Warrior Forum: never presses its login or Google buttons (its terms forbid automation), and a signed-in page goes on to the profile check', async () => {
+  const google = { ...job, targetOrigin: 'https://www.warriorforum.com', recipe: { engine: 'xenforo' }, auth: { ...job.auth, provider: 'google', loginUsername: 'owner@example.test' } };
+  let page = await pageAt('https://www.warriorforum.com/', '<div class="modal"><button class="fb">Continue with Facebook</button><button class="google">Continue with Google</button><input name="username" placeholder="Username"><input type="password" placeholder="Password"><button disabled>Log in</button></div>');
+  try {
+    await page.evaluate(() => { for (const button of document.querySelectorAll('button')) button.onclick = () => { window.clicked = button.innerText; }; });
+    for (const action of [undefined, 'google', 'password', 'openLogin']) {
+      const result = await page.evaluate(accountAuthStep, { job: google, action, payload: { username: 'a', password: 'b' } });
+      assert.equal(result.state, 'challenge');
+      assert.match(result.message, /cấm bot/);
+    }
+    assert.equal(await page.evaluate(() => window.clicked), undefined);
+    assert.equal(await page.locator('input[type=password]').inputValue(), '');
+  } finally { await page.close(); }
+  page = await pageAt('https://www.warriorforum.com/', '<header><a href="/members/someone.html">Latest member</a></header><main>Welcome back</main>');
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job: google })).state, 'unknown');
+  } finally { await page.close(); }
+});
+
 test('Lemmy opens only the own account dropdown and reads its profile handle', async () => {
   const page = await pageAt('https://lemmy.world/', '<nav><li id="dropdownUser"><button class="dropdown-toggle">Display name</button><ul hidden><li><a href="/u/alice">Tài khoản</a></li></ul></li></nav><article><a href="/u/bob">bob</a></article>');
   const scoped = { ...job, targetOrigin: 'https://lemmy.world', recipe: { engine: 'lemmy' }, auth: { ...job.auth, autoLogin: false } };
