@@ -583,6 +583,15 @@ Sau khi xác nhận đúng tài khoản, các luồng đã đủ đích đăng t
 Bộ lọc phân biệt kết nối có thể đăng, đã đăng nhập nhưng chưa đủ cấu hình, đang kiểm tra,
 và cần thao tác. Có phiên đăng nhập không đồng nghĩa nền tảng đã cấp quyền đăng bài.
 Nhiều danh tính khác nhau trên cùng website vẫn cần các hồ sơ Chrome riêng để giữ đúng phiên.
+- Form **Phiên Chrome / 2FA** không cho chuyển một tài khoản sang hồ sơ đang giữ tài khoản khác của cùng website. Câu
+  báo nêu tên tài khoản đó.
+- Tài khoản đã dùng chung hồ sơ từ trước (ví dụ nhập file đặt hai tài khoản MeWe vào cùng "Chrome VPS") vẫn sửa và lưu
+  được. Form và câu báo sau khi lưu nhắc rằng mỗi lúc hồ sơ chỉ đăng nhập được một tài khoản của website đó.
+- Để chạy cả hai, tạo thêm một hồ sơ Chrome trên VPS Windows:
+  1. Bấm biểu tượng hồ sơ → **Thêm**.
+  2. Nạp tiện ích (Load unpacked cùng thư mục `browser-extension`).
+  3. Ghép nối với web, cài lại proxy nếu dùng.
+  4. Chọn hồ sơ mới cho tài khoản thứ hai.
 
 Chọn **Tạo bài & đăng tự động**, nhập mô tả chung rồi bấm **Tạo bằng AI & đăng ngay**.
 Các tài khoản sẵn sàng trong nhóm nhập đã chọn được chọn sẵn. Hệ thống tạo một biến thể cho
