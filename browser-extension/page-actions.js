@@ -257,9 +257,13 @@ export async function fillAndSubmit(task) {
     return { status: 'filled', message: 'Nội dung đã thay đổi trong lúc chọn tag. Kiểm tra lại bài trong tab trước khi đăng.' };
   }
 
-  const submit = recipe.engine === 'discourse'
+  const findSubmit = () => (recipe.engine === 'discourse'
     ? find([...recipe.submitSelectors, 'button.create', '.save-or-cancel button.btn-primary'], finalComposer)
-    : find(recipe.submitSelectors);
+    : find(recipe.submitSelectors));
+  const usable = (button) => button && !button.disabled && button.getAttribute('aria-disabled') !== 'true';
+  // Vanilla disables Post Discussion while its draft autosaves: give it a few seconds.
+  let submit = findSubmit();
+  for (let round = 0; round < 20 && submit && !usable(submit); round += 1) { await sleep(500); submit = findSubmit(); }
   // The post is in the editor: the operator can finish it, so this is not a missing editor.
   if (!submit || submit.disabled || submit.getAttribute('aria-disabled') === 'true') return { status: 'filled', message: 'Đã điền bài nhưng không thấy nút Đăng hoặc nút đang bị khoá. Kiểm tra rồi bấm Đăng trong tab.', missing: ['submit'] };
   submit.click();
@@ -277,6 +281,11 @@ export function readErrors(recipe) {
 
 /** A successful submission can enter moderation instead of yielding a URL. */
 export function readModeration(recipe) {
+  // Vanilla replaces the form with "Your discussion will appear after it is approved."
+  if (recipe.engine === 'vanilla') {
+    const info = [...document.querySelectorAll('#Content .Info, div.Info')].find((node) => node.getClientRects().length > 0);
+    return info && /will appear after it is approved/i.test(info.textContent) ? 'Diễn đàn đã nhận bài và đang chờ quản trị viên duyệt. Không gửi lại bài này.' : null;
+  }
   if (recipe.engine !== 'discourse' && recipe.workflow !== 'social') return null;
   // Social editors announce a queued submission in different words (DZone
   // "submitted to moderation", Stack Exchange "Staging Ground"). Help text such
@@ -306,6 +315,7 @@ export function readPublishedPost(task) {
     discourse: ['#topic-title h1', '.topic-post .cooked, #post_1 .cooked'],
     xenforo: ['h1.p-title-value', '.message--post .message-body .bbWrapper'],
     phpbb: ['h2.topic-title', '.post .content'],
+    vanilla: ['.PageTitle h1, #Item_0 h1', '[id^="Discussion_"] .Message.userContent, .ItemDiscussion .Message.userContent'],
   }[task.job.recipe.engine];
   if (!selectors) return null;
   const visible = element => element && element.getClientRects().length > 0;

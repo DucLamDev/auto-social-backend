@@ -28,6 +28,20 @@ describe('per-platform Chrome flows', () => {
     expect(() => validateExtensionFlow('discourse', { engine: 'medium', targetUrl: 'https://example.com', autoSubmit: true })).toThrow('matching platform');
   });
 
+  it('keeps Blogger on a blog post list, Hugging Face on Posts, Ubiquiti on its question form and the Linux Foundation Forum on a category', () => {
+    const ok = (slug: string, engine: string, targetUrl: string) => validateExtensionFlow(slug, { engine: engine as never, targetUrl, autoSubmit: true })?.id;
+    expect(ok('blogger', 'blogger', 'https://www.blogger.com/blog/posts/_')).toBe('blogger');
+    expect(ok('blogger', 'blogger', 'https://www.blogger.com/blog/posts/6753539875398087695')).toBe('blogger');
+    expect(ok('hugging-face', 'huggingface', 'https://huggingface.co/posts?post=true')).toBe('hugging-face');
+    expect(ok('ubiquiti-community', 'ubiquiti', 'https://community.ui.com/questions/create')).toBe('ubiquiti-community');
+    expect(ok('linux-foundation-forum', 'vanilla', 'https://forum.linuxfoundation.org/post/discussion/system-management')).toBe('linux-foundation-forum');
+    for (const [slug, engine, targetUrl] of [
+      ['blogger', 'blogger', 'https://www.blogger.com/blog/post/edit/1/2'], ['blogger', 'blogger', 'https://vpsttt.blogspot.com/'],
+      ['hugging-face', 'huggingface', 'https://huggingface.co/new-blog'], ['hugging-face', 'huggingface', 'https://huggingface.co/posts?post=false'],
+      ['ubiquiti-community', 'ubiquiti', 'https://community.ui.com/releases/create'], ['linux-foundation-forum', 'vanilla', 'https://forum.example.org/post/discussion/x'],
+    ] as const) expect(() => ok(slug, engine, targetUrl)).toThrow();
+  });
+
   it('keeps Disqus on a channel discussion page and MeWe on the own feed', () => {
     expect(validateExtensionFlow('disqus', { engine: 'disqus', targetUrl: 'https://disqus.com/home/discuss/channel-discussdisqus/', autoSubmit: true })?.id).toBe('disqus');
     expect(validateExtensionFlow('mewe', { engine: 'mewe', targetUrl: 'https://mewe.com/myworld', autoSubmit: true })?.id).toBe('mewe');

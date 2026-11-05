@@ -11,6 +11,16 @@ describe('posting flow status shown after a login check', () => {
     expect(extensionFlowAudit('voz-forums', {})).toMatchObject({ status: 'DESTINATION_REQUIRED', implemented: true, engine: 'xenforo' });
   });
 
+  it('lists Blogger, Hugging Face, Ubiquiti and the Linux Foundation Forum as ready to configure, each with a default page', () => {
+    for (const [slug, engine] of [['blogger', 'blogger'], ['hugging-face', 'huggingface'], ['ubiquiti-community', 'ubiquiti'], ['linux-foundation-forum', 'vanilla']] as const) {
+      expect(extensionFlowAudit(slug, {})).toMatchObject({ status: 'CONFIGURATION_REQUIRED', implemented: true, engine });
+    }
+    // Still without a flow: video only, a closed forum, and terms that forbid automation.
+    expect(extensionFlowAudit('dailymotion', {})).toMatchObject({ status: 'FLOW_REQUIRED', implemented: false });
+    expect(extensionFlowAudit('redis-community-forum', {})).toMatchObject({ status: 'DESTINATION_UNAVAILABLE' });
+    expect(extensionFlowAudit('warrior-forum', {})).toMatchObject({ status: 'MANUAL_ONLY' });
+  });
+
   it('lists Disqus and MeWe as ready to configure now that they have posting flows, each with a default page', () => {
     expect(extensionFlowAudit('disqus', {})).toMatchObject({ status: 'CONFIGURATION_REQUIRED', implemented: true, engine: 'disqus' });
     expect(extensionFlowAudit('mewe', {})).toMatchObject({ status: 'CONFIGURATION_REQUIRED', implemented: true, engine: 'mewe' });

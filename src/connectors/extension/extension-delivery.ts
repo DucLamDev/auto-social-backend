@@ -10,7 +10,7 @@ import { SOCIAL_EXTENSION_ENGINES, SOCIAL_EXTENSION_RECIPES } from './social-rec
  */
 export const EXTENSION_CONNECTOR_KEY = 'extension';
 
-export const EXTENSION_ENGINES = ['xenforo', 'discourse', 'phpbb', ...SOCIAL_EXTENSION_ENGINES] as const;
+export const EXTENSION_ENGINES = ['xenforo', 'discourse', 'phpbb', 'vanilla', ...SOCIAL_EXTENSION_ENGINES] as const;
 export type ExtensionEngine = (typeof EXTENSION_ENGINES)[number];
 
 export const EXTENSION_SETTING_KEYS = ['delivery', 'extensionEngine', 'extensionTargetUrl', 'extensionAutoSubmit', 'extensionTags', 'extensionCategory', 'extensionFlair'] as const;
@@ -125,6 +125,21 @@ export const EXTENSION_RECIPES: Record<ExtensionEngine, ExtensionRecipe> = {
     captchaSelectors: CAPTCHA_SELECTORS,
     bodyFormat: 'paragraphs',
   },
+  // Vanilla Forums, classic form (forum.linuxfoundation.org): target is /post/discussion/<category
+  // code>, so the category is preset. Body is a Markdown textarea; Post Discussion is briefly
+  // disabled while the draft autosaves. Save Draft / Preview are never pressed.
+  vanilla: {
+    engine: 'vanilla',
+    readySelectors: ['#DiscussionForm form', 'form#DiscussionForm'],
+    titleSelectors: ['#DiscussionForm input#Form_Name[name="Name"]', '#DiscussionForm input[name="Name"]'],
+    bodySelectors: ['#DiscussionForm textarea#Form_Body[name="Body"]', '#DiscussionForm textarea[name="Body"]'],
+    submitSelectors: ['#DiscussionForm input#Form_PostDiscussion[type="submit"]', '#DiscussionForm input[type="submit"][name="Post Discussion"]'],
+    successUrlPattern: '/discussion/\\d+/[^/?#]+(?:/p\\d+)?/?(?:[?#].*)?$',
+    loginSelectors: ['form#Form_User_SignIn', '#Form_User_SignIn'],
+    errorSelectors: ['#DiscussionForm .Messages.Errors li', '.Popup .Content', '.InformMessages .InformWrapper'],
+    captchaSelectors: CAPTCHA_SELECTORS,
+    bodyFormat: 'paragraphs',
+  },
   // phpBB 3 (forum.mikrotik.com…): target is posting.php?mode=post&f=<forum id>.
   phpbb: {
     engine: 'phpbb',
@@ -183,6 +198,9 @@ export function parseExtensionDeliverySettings(input: unknown): ExtensionDeliver
   }
   if (engine === 'phpbb' && !(url.pathname.endsWith('/posting.php') && url.searchParams.get('mode') === 'post' && /^\d+$/.test(url.searchParams.get('f') ?? ''))) {
     throw new BadRequestException('phpBB target must be posting.php?mode=post&f=<forum id>');
+  }
+  if (engine === 'vanilla' && !/\/post\/discussion(?:\/[A-Za-z0-9_-]+)?\/?$/.test(url.pathname)) {
+    throw new BadRequestException('Vanilla target must be the new discussion page of a category, e.g. https://forum.linuxfoundation.org/post/discussion/system-management');
   }
   // Subfolder installs (https://example.com/forum) are allowed; a topic URL is not.
   if (engine === 'discourse' && /\/t\//.test(url.pathname)) {

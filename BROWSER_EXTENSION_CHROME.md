@@ -1,5 +1,29 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.20.0 / tiện ích 1.15.0: Linux Foundation Forum (Vanilla), Ubiquiti, Blogger, Hugging Face Posts
+
+Cần backend 1.20.0 và tiện ích 1.15.0. Sau khi cập nhật backend chạy `scripts/sync-extension-flows.cjs --apply` và
+`scripts/sync-ai-prompts.cjs --apply`, nạp lại tiện ích, rồi bấm **Test** ở các tài khoản để tự kết nối.
+
+- **Vanilla** (kiểu diễn đàn mới, luồng `vanilla`, workflow forum): trang `/post/discussion/<mã-chuyên-mục>` (chuyên mục
+  có sẵn trong URL). Form cũ `#DiscussionForm`: `#Form_Name`, textarea Markdown `#Form_Body`, nút
+  `#Form_PostDiscussion` (chờ tối đa 10 giây khi nút bị khoá lúc diễn đàn tự lưu nháp). Không bấm Save Draft / Preview.
+  Bài mới: `/discussion/<id>/<slug>`; "Your discussion will appear after it is approved" được ghi là chờ duyệt.
+  Linux Foundation Forum mặc định `https://forum.linuxfoundation.org/post/discussion/system-management`.
+- **Ubiquiti Community** (luồng `ubiquiti`): `https://community.ui.com/questions/create`. Chủ đề bắt buộc chọn bằng tên
+  (ô Chuyên mục, mặc định General; ví dụ Network, Protect, UISP, Site Manager). Tiêu đề 10–200 ký tự, nội dung ít nhất
+  25 ký tự (TipTap, dán HTML). Bấm Publish; bài mới ở `/questions/<slug>/<uuid>`.
+- **Blogger** (luồng `blogger`): `https://www.blogger.com/blog/posts/_` (blog chính) hoặc `/blog/posts/<blogId>`.
+  Bấm New Post / Bài đăng mới (Blogger tạo bản nháp), tiêu đề `[jsname=r4nke] input`, nội dung chèn HTML vào iframe
+  `designMode` của trình soạn, bấm Đăng (`[jsname=vdQQuc]`) rồi Xác nhận. Link bài: nút Xem của dòng có đúng tiêu đề
+  trong danh sách bài, trên `<blog>.blogspot.com` (backend chỉ nhận tên miền này cho luồng Blogger).
+- **Hugging Face Posts** (luồng `huggingface`): `https://huggingface.co/posts?post=true`, textarea `content` tối đa
+  1.999 ký tự, nút Post. Trước khi điền, tiện ích gọi `/api/posts/can-post`; `canPost: false` thì báo "hạn chế" kèm lý
+  do của Hugging Face. Bài mới ở `/posts/<user>/<id>`.
+- Chưa làm luồng: Dailymotion (chỉ video), Redis Community Forum (đã đóng), Warrior Forum (điều khoản cấm tự động).
+- Kiểm thử bằng trang giả lập dựng theo mã giao diện công khai: `scripts/extension-e2e/more-flows.test.cjs` và
+  `page-actions.test.cjs` (Vanilla). Chưa thay được lần đăng thật trên tài khoản.
+
 ## Backend 1.19.0 / tiện ích 1.14.0: đăng bài lên Discuss Disqus và MeWe
 
 Cần backend 1.19.0 và tiện ích 1.14.0. Sau khi cập nhật backend, chạy `scripts/sync-extension-flows.cjs --apply` để

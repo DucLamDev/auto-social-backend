@@ -93,6 +93,10 @@ describe('login completion and automatic connection', () => {
     ['tinhte', 'https://tinhte.vn/editorv2/create/795/'],
     ['disqus', 'https://disqus.com/home/discuss/channel-discussdisqus/'],
     ['mewe', 'https://mewe.com/myworld'],
+    ['blogger', 'https://www.blogger.com/blog/posts/_'],
+    ['hugging-face', 'https://huggingface.co/posts?post=true'],
+    ['ubiquiti-community', 'https://community.ui.com/questions/create'],
+    ['linux-foundation-forum', 'https://forum.linuxfoundation.org/post/discussion/system-management'],
   ])('connects a signed-in imported %s account that never got a posting route, using the flow default page', async (slug, page) => {
     // daily.dev still carries the reason saved before its flow existed.
     const { service, tx } = fixture({ extensionAutoConnect: true, extensionSetup: { status: 'FLOW_REQUIRED' } }, false, true, slug);

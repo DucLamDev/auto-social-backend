@@ -13690,6 +13690,7 @@
               "xenforo",
               "discourse",
               "phpbb",
+              "vanilla",
               "medium",
               "substack",
               "quora",
@@ -13712,7 +13713,10 @@
               "dailydev",
               "producthunt",
               "disqus",
-              "mewe"
+              "mewe",
+              "ubiquiti",
+              "huggingface",
+              "blogger"
             ]
           },
           "targetUrl": {

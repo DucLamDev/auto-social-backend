@@ -504,7 +504,9 @@ export class ExtensionAgentService {
     const url = new URL(dto.url);
     const target = new URL(settings.targetUrl);
     // The URL must be on the configured forum; a report cannot complete a job with an arbitrary link.
-    if (url.hostname !== target.hostname || (url.protocol !== 'https:' && target.protocol === 'https:')) {
+    // Blogger posts are written on www.blogger.com and published on <blog>.blogspot.com.
+    const bloggerPost = settings.engine === 'blogger' && url.protocol === 'https:' && /^[a-z0-9-]+\.blogspot\.com$/.test(url.hostname);
+    if ((url.hostname !== target.hostname && !bloggerPost) || (url.protocol !== 'https:' && target.protocol === 'https:')) {
       throw new BadRequestException('The reported thread URL is not on the configured forum');
     }
     if (!new RegExp(EXTENSION_RECIPES[settings.engine].successUrlPattern).test(url.href)) {

@@ -28,11 +28,17 @@ const definitions: Array<[string, string, ExtensionEngine, string]> = [
   ['voz-forums', 'Voz Forums', 'xenforo', 'https://voz.vn'],
   ['directadmin-forums', 'DirectAdmin Forums', 'xenforo', 'https://forum.directadmin.com'],
   ['cloudpanel-forum', 'CloudPanel Forum', 'xenforo', 'https://www.cloudpanelforum.org'],
+  ['linux-foundation-forum', 'Linux Foundation Forum', 'vanilla', 'https://forum.linuxfoundation.org'],
 ];
 
 // Boxes the owner chose (04/11/2026) for forums whose new-thread page belongs to
 // one box: the general technical discussion of each site. An account can still
 // set its own box in "Tiện ích"; other XenForo forums have no default.
+// Vanilla: the new discussion page of one category (System Management fits server topics).
+const VANILLA_DEFAULT_CATEGORIES: Record<string, string> = {
+  'linux-foundation-forum': 'https://forum.linuxfoundation.org/post/discussion/system-management',
+};
+
 const XENFORO_DEFAULT_BOXES: Record<string, string> = {
   'directadmin-forums': 'https://forum.directadmin.com/forums/general-technical-discussion-troubleshooting.32/post-thread',
   'cloudpanel-forum': 'https://www.cloudpanelforum.org/forums/install-config/post-thread',
@@ -42,8 +48,10 @@ const XENFORO_DEFAULT_BOXES: Record<string, string> = {
 // Category, tags and login belong to each account.
 const forumFlows: ExtensionFlow[] = definitions.map(([id, name, engine, forumUrl]) => ({
   id, name, engine, forumUrl, revision: 1,
-  targetUrl: engine === 'discourse' ? `${forumUrl}/new-topic` : XENFORO_DEFAULT_BOXES[id] ?? '',
-  setupHint: engine === 'discourse'
+  targetUrl: engine === 'discourse' ? `${forumUrl}/new-topic` : engine === 'vanilla' ? VANILLA_DEFAULT_CATEGORIES[id] ?? '' : XENFORO_DEFAULT_BOXES[id] ?? '',
+  setupHint: engine === 'vanilla'
+    ? `Mặc định đăng vào chuyên mục ${VANILLA_DEFAULT_CATEGORIES[id] ?? ''}. Muốn chuyên mục khác thì dán ${forumUrl}/post/discussion/<mã-chuyên-mục> (ví dụ applications, linux-security, ubuntu) vào Trang tạo chủ đề. Nội dung là Markdown; tiện ích điền tiêu đề, nội dung rồi bấm Post Discussion, không bấm Save Draft hay Preview.`
+    : engine === 'discourse'
     ? 'Đăng nhập diễn đàn trong Chrome, chọn chuyên mục được phép đăng và tag có sẵn của chuyên mục. Cấu hình này chỉ áp dụng cho diễn đàn này.'
     : XENFORO_DEFAULT_BOXES[id]
       ? `Mặc định đăng vào box ${XENFORO_DEFAULT_BOXES[id].replace(/\/post-thread$/, '')}. Muốn box khác thì vào box đó, bấm tạo chủ đề và dán URL kết thúc bằng /post-thread vào Trang tạo chủ đề.`
@@ -90,6 +98,12 @@ export const EXTENSION_FLOWS: readonly ExtensionFlow[] = [...forumFlows,
   // site owners talking about their communities (Community Growth by default).
   { id: 'disqus', name: 'Discuss Disqus', engine: 'disqus', forumUrl: 'https://disqus.com', targetUrl: 'https://disqus.com/home/discuss/channel-discussdisqus/', revision: 1,
     setupHint: 'Tạo discussion trong kênh Discuss Disqus (kênh của Disqus cho chủ website), mặc định chuyên mục Community Growth: chia sẻ hoặc hỏi về phát triển cộng đồng, bình luận trên website. Đổi chuyên mục bằng ô Chuyên mục (Community Growth, Reveal, Installation, Admin, Plans and Pricing, API, Bug Reports & Feedback, Embed). Tiện ích điền tiêu đề, topic từ tag của bài, nội dung rồi bấm Create Discussion.' },
+  { id: 'ubiquiti-community', name: 'Ubiquiti Community', engine: 'ubiquiti', forumUrl: 'https://community.ui.com', targetUrl: 'https://community.ui.com/questions/create', revision: 1,
+    setupHint: 'Đăng một Post (câu hỏi / thảo luận) lên community.ui.com. Chủ đề lấy ở ô Chuyên mục của tài khoản (mặc định General; ví dụ Network, Protect, UISP, Site Manager). Tiêu đề 10–200 ký tự, nội dung ít nhất 25 ký tự. Tiện ích điền tiêu đề, nội dung, chọn chủ đề rồi bấm Publish.' },
+  { id: 'hugging-face', name: 'Hugging Face Posts', engine: 'huggingface', forumUrl: 'https://huggingface.co', targetUrl: 'https://huggingface.co/posts?post=true', revision: 1,
+    setupHint: 'Đăng bài ngắn (Posts, tối đa 1.999 ký tự) lên hồ sơ Hugging Face. Hugging Face chỉ cho một số tài khoản đăng Posts (tài khoản PRO và một số tài khoản được mở quyền): tiện ích hỏi quyền trước khi điền và báo lý do nếu chưa được phép. Blog Article cần PRO nên không dùng.' },
+  { id: 'blogger', name: 'Blogger', engine: 'blogger', forumUrl: 'https://www.blogger.com', targetUrl: 'https://www.blogger.com/blog/posts/_', revision: 1,
+    setupHint: 'Đăng bài lên blog Blogger của tài khoản Google đang đăng nhập. Mặc định là blog chính (/blog/posts/_); có nhiều blog thì dán https://www.blogger.com/blog/posts/<blogId> của blog cần đăng. Tiện ích bấm Bài đăng mới (Blogger tạo một bản nháp), điền tiêu đề và nội dung, bấm Đăng rồi Xác nhận.' },
   { id: 'mewe', name: 'MeWe', engine: 'mewe', forumUrl: 'https://mewe.com', targetUrl: 'https://mewe.com/myworld', revision: 1,
     setupHint: 'Đăng lên dòng thời gian MeWe của tài khoản đang đăng nhập: tiện ích mở ô "How is your day going?", điền nội dung, gắn ảnh nếu bài có ảnh rồi bấm Post. Ai xem được bài theo mặc định của tài khoản MeWe.' },
 ];
@@ -108,7 +122,7 @@ export function extensionFlowDefaults(slug: string): Record<string, string | num
     extensionTargetUrl: flow.targetUrl,
     extensionSetupHint: flow.setupHint,
     extensionTargetScope: flow.targetScope ?? 'origin',
-    extensionWorkflow: ['discourse', 'xenforo', 'phpbb'].includes(flow.engine) ? 'forum' : 'social',
+    extensionWorkflow: ['discourse', 'xenforo', 'phpbb', 'vanilla'].includes(flow.engine) ? 'forum' : 'social',
   } : {};
 }
 
@@ -142,7 +156,7 @@ export function validateExtensionFlow(slug: string, settings: ExtensionDeliveryS
     differ: ['/new-story'], dzone: ['/content/article/post.html'], producthunt: ['/p/new'],
     stackexchange: ['/questions/ask'], lemmy: ['/create_post'], discuit: ['/new'], linkedin: ['/feed'],
     minds: ['/newsfeed/subscriptions'],
-    medium: ['/new-story'], slideshare: ['/upload'], 'aws-builder': ['/create/content'], pixelfed: ['/i/web', '/i/web/compose'], mewe: ['/myworld'],
+    medium: ['/new-story'], slideshare: ['/upload'], 'aws-builder': ['/create/content'], pixelfed: ['/i/web', '/i/web/compose'], mewe: ['/myworld'], ubiquiti: ['/questions/create'], huggingface: ['/posts'],
     mastodon: ['/publish'], bluesky: ['/intent/compose'], tumblr: ['/new/text'], devto: ['/new'], dailydev: ['/squads/create'],
   };
   if (createPaths[flow.engine] && !createPaths[flow.engine]!.includes(target.pathname.replace(/\/$/, ''))) {
@@ -152,6 +166,8 @@ export function validateExtensionFlow(slug: string, settings: ExtensionDeliveryS
   // account cannot post in, so only the plain composer page (own profile) is accepted.
   if (flow.engine === 'dailydev' && (target.search || target.hash)) throw new BadRequestException(flow.setupHint);
   if (flow.engine === 'tinhte' && !/^\/editorv2\/create\/\d+\/?$/.test(target.pathname)) throw new BadRequestException(flow.setupHint);
+  if (flow.engine === 'blogger' && !/^\/blog\/posts\/(?:_|\d+)\/?$/.test(target.pathname)) throw new BadRequestException(flow.setupHint);
+  if (flow.engine === 'huggingface' && target.search && target.search !== '?post=true') throw new BadRequestException(flow.setupHint);
   if (flow.engine === 'disqus' && (!/^\/home\/discuss\/channel-[a-z0-9-]+\/?$/.test(target.pathname) || target.search || target.hash)) throw new BadRequestException(flow.setupHint);
   return flow;
 }

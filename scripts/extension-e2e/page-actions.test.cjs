@@ -30,6 +30,7 @@ for (const [engine, topicUrl, titleHtml, bodyHtml] of [
   ['discourse', '/t/new-topic/123', '<div id="topic-title"><h1>__TITLE__</h1></div>', '<div class="topic-post"><div class="cooked">__BODY__</div></div>'],
   ['xenforo', '/threads/new-topic.123/', '<h1 class="p-title-value">__TITLE__</h1>', '<article class="message--post"><div class="message-body"><div class="bbWrapper">__BODY__</div></div></article>'],
   ['phpbb', '/viewtopic.php?t=123', '<h2 class="topic-title">__TITLE__</h2>', '<div class="post"><div class="content">__BODY__</div></div>'],
+  ['vanilla', '/discussion/123/a-community-topic/p1?new=1', '<div class="PageTitle"><h1>__TITLE__</h1></div>', '<div id="Discussion_123" class="Item ItemDiscussion"><div class="Message userContent">__BODY__</div></div>'],
 ]) test(`verifies ${engine} title and posted content before accepting a topic URL`, async () => {
   const page = await browser.newPage();
   try {
@@ -82,6 +83,34 @@ async function runForum(html, currentTask = task) {
     return { result, state };
   } finally { await page.close(); }
 }
+
+test('Vanilla (Linux Foundation Forum): fills the classic discussion form, waits while the draft autosave disables Post Discussion, never presses Save Draft or Preview', async () => {
+  const page = await browser.newPage();
+  const form = `<div id="DiscussionForm"><form method="post" action="/post/discussion/system-management">
+    <input type="hidden" name="TransientKey" value="t"><input type="hidden" name="CategoryID" value="1258"><input type="hidden" name="DraftID" value="">
+    <label for="Form_Name">Discussion Title</label><input id="Form_Name" name="Name" class="InputBox BigInput" maxlength="250">
+    <div class="bodybox-wrap"><div class="editor editor-format-markdown"></div><textarea id="Form_Body" name="Body" class="TextBox BodyBox js-bodybox" placeholder="Type your message"></textarea><input type="hidden" id="Form_Format" name="Format" value="Markdown"></div>
+    <div class="Buttons"><a class="Button Cancel" href="/">Cancel</a><input type="submit" id="Form_Preview" name="Preview" value="Preview" class="Button PreviewButton"><input type="submit" id="Form_SaveDraft" name="Save Draft" value="Save Draft" class="Button DraftButton"><input type="submit" id="Form_PostDiscussion" name="Post Discussion" value="Post Discussion" class="Button Primary DiscussionButton"></div>
+  </form></div>`;
+  try {
+    await page.route('https://forum.linuxfoundation.org/**', route => route.fulfill({ contentType: 'text/html', body: form }));
+    await page.goto('https://forum.linuxfoundation.org/post/discussion/system-management');
+    await page.evaluate(() => {
+      window.pressed = [];
+      const post = document.querySelector('#Form_PostDiscussion');
+      // The draft autosave runs on input and disables Post Discussion for a moment.
+      document.querySelector('#Form_Body').addEventListener('input', () => { post.disabled = true; setTimeout(() => { post.disabled = false; }, 1500); });
+      document.querySelector('form').addEventListener('submit', event => { event.preventDefault(); window.pressed.push(event.submitter.value); window.sent = { name: document.querySelector('#Form_Name').value, body: document.querySelector('#Form_Body').value }; });
+    });
+    const job = { recipe: EXTENSION_RECIPES.vanilla, autoSubmit: true, post: { title: 'Keeping a small VPS patched without breaking services', body: '## What we do\n\n- `unattended-upgrades` for security only\n- reboot window on Sunday' } };
+    assert.equal((await page.evaluate(fillAndSubmit, job)).status, 'submitted');
+    assert.deepEqual(await page.evaluate(() => window.pressed), ['Post Discussion']);
+    assert.deepEqual(await page.evaluate(() => window.sent), { name: job.post.title, body: job.post.body });
+    // A held discussion replaces the form with Vanilla's notice.
+    await page.setContent('<div id="Content"><div class="Info">Your discussion will appear after it is approved.</div></div>');
+    assert.match(await page.evaluate(readModeration, EXTENSION_RECIPES.vanilla), /chờ quản trị viên duyệt/);
+  } finally { await page.close(); }
+});
 
 test('opens a redirected Discourse composer once and waits for both fields', async () => {
   const { result, state } = await runForum(`
