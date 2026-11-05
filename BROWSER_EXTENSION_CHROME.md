@@ -1,5 +1,16 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.18.0 / tiện ích 1.13.0: thread trên forum Product Hunt
+
+- **Trang đăng:** `https://www.producthunt.com/p/new` (Start new thread). Launch sản phẩm vẫn làm tay.
+- **Ô Chuyên mục của tài khoản:** ghi đúng tên forum / product như trong ô "Search for a product":
+  - `General`, `Vibecoding`, `Introduce yourself`, `Self-Promotion`, hoặc tên product (ví dụ `Google Cloud Platform`);
+  - để trống là `Self-Promotion`.
+- **Tiện ích chọn forum trước khi điền bài.** Không thấy forum thì dừng, chưa điền gì.
+- **Sau đó** tiện ích điền tiêu đề, dán nội dung đã định dạng và bấm **Submit** của form, không bấm nút Submit đăng sản
+  phẩm trên thanh đầu trang.
+- **Bài đã đăng** nằm ở `/p/<forum>/<slug>`.
+
 ## Backend 1.17.1 / tiện ích 1.12.1: Differ chọn Keyword và ảnh bìa trong hộp Publish
 
 - Trên Differ, nút **Publish** ở thanh trên cùng chỉ mở hộp xuất bản (`dialog#modal-submit`).

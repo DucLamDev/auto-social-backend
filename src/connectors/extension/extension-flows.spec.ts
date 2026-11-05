@@ -36,4 +36,12 @@ describe('per-platform Chrome flows', () => {
       expect(() => validateExtensionFlow('daily-dev', { engine: 'dailydev', targetUrl, autoSubmit: true })).toThrow();
     }
   });
+
+  it('posts Product Hunt threads only from the forum composer page, not the product launch form', () => {
+    expect(validateExtensionFlow('product-hunt', { engine: 'producthunt', targetUrl: 'https://www.producthunt.com/p/new', autoSubmit: true })?.engine).toBe('producthunt');
+    for (const targetUrl of ['https://www.producthunt.com/posts/new', 'https://www.producthunt.com/p/general', 'https://producthunt.com/p/new']) {
+      expect(() => validateExtensionFlow('product-hunt', { engine: 'producthunt', targetUrl, autoSubmit: true })).toThrow();
+    }
+  });
 });
+

@@ -1,6 +1,26 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+
+## 1.18.0 · 05/11/2026
+### Tính năng
+- Đăng thread lên forum Product Hunt bằng tiện ích Chrome, tự chọn forum / product
+  Cần nạp lại tiện ích 1.13.0. Đây là luồng **Start new thread** (`https://www.producthunt.com/p/new`), không phải Launch
+  sản phẩm.
+  - **Chọn forum trước khi điền bài:**
+    - Tiện ích chọn trong ô "Search for a product" đúng tên ghi ở ô **Chuyên mục** của tài khoản: General, Vibecoding,
+      Introduce yourself, Self-Promotion, hoặc tên một product (tiện ích gõ để tìm).
+    - Để trống thì đăng vào **Self-Promotion**.
+    - Không thấy tên đó thì dừng, chưa điền gì.
+  - **Điền bài:** tiêu đề, nội dung dán dạng định dạng (Markdown → HTML), rồi bấm **Submit của form**. Nút "Submit" trên
+    thanh đầu trang (đăng sản phẩm) không bao giờ được bấm.
+  - **Ghi nhận bài:** thread mới ở `/p/<forum>/<slug>`.
+  - **AI viết theo kiểu thread forum:** tiêu đề cụ thể, nội dung trò chuyện, nhắc sản phẩm một lần kèm công khai, câu hỏi
+    mời trả lời; không tagline kiểu Launch.
+  - Product Hunt không còn bị liệt kê "chưa có luồng".
+  - **Sau khi triển khai:** bấm **Test** ở tài khoản Product Hunt để gắn trang đăng mặc định. Muốn cập nhật lời nhắc AI và
+    trang mặc định của nền tảng trong database thì chạy seed như trong `DEPLOYMENT.md`.
+
 ## 1.17.2 · 05/11/2026
 ### Sửa lỗi
 - Sửa được Phiên Chrome / 2FA của tài khoản đang dùng chung hồ sơ Chrome với tài khoản khác cùng nền tảng
@@ -184,7 +204,6 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   rõ bằng tiếng Việt từng tài khoản và lý do, không tạo việc đăng nào. "Duyệt hết" đăng các nền tảng đã có tài khoản sẵn
   sàng, để các bài còn lại tiếp tục chờ duyệt (`waitingVariantIds`) cho tới khi bạn kết nối lại tài khoản hoặc từ chối
   bài. Tài khoản bị bỏ qua sẽ không tự nhận bài này khi kết nối lại sau.
-
 
 ## 1.11.0 · 04/11/2026
 ### Tính năng
