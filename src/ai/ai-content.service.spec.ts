@@ -886,6 +886,13 @@ describe('AiContentService quality-checked generation', () => {
     });
   });
 
+  it('judges a new draft on its own, without any earlier review', async () => {
+    const create = jest.fn().mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed());
+    const { service } = setup(create);
+    await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+    expect(request(create, 1).instructions).not.toContain('revises an earlier version');
+  });
+
   it('stops rewriting as soon as a rewrite passes', async () => {
     const create = jest.fn()
       .mockResolvedValueOnce(variant(shortBody))
@@ -932,9 +939,15 @@ describe('AiContentService quality-checked generation', () => {
     const { service } = setup(create);
     await service.reviseDraft('owner-1', {
       contentId: 'content-1', platformSlug: 'bluesky',
-      revision: { previous: { title: null, body: 'Bản cũ nhạt', hashtags: ['vps'] }, instruction: '', notes: null, chosenNotes: ['Lời mở đầu hơi chung chung', 'Thêm một ví dụ cụ thể'] },
+      revision: { previous: { title: null, body: 'Bản cũ nhạt', hashtags: ['vps'] }, instruction: '', notes: null, chosenNotes: ['Lời mở đầu hơi chung chung', 'Thêm một ví dụ cụ thể'], previousScore: 7 },
     }, 'openai');
 
+    // Both reviews (after the revision and after the rewrite) check the chosen fixes against the old 7/10.
+    for (const review of [request(create, 1), request(create, 3)]) {
+      expect(review.text.format.name).toBe('content_review');
+      expect(review.instructions).toContain('This draft revises an earlier version that you scored 7/10. The operator asked the writer to fix:\n- Lời mở đầu hơi chung chung\n- Thêm một ví dụ cụ thể');
+      expect(review.instructions).toContain('the score must be higher than 7');
+    }
     const writer = request(create, 0);
     expect(writer.input).toContain("Fix each of these points from the editor's last review, chosen by the operator (other earlier notes do not apply):\n- Lời mở đầu hơi chung chung\n- Thêm một ví dụ cụ thể");
     expect(writer.input).not.toContain("Editor's notes from the last review");

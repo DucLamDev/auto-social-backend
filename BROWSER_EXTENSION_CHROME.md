@@ -1,6 +1,6 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
-## Backend 1.17.3 / tiện ích 1.12.3: kiểm tra đăng nhập Discuit, Blogger, Warrior Forum
+## Backend 1.18.3 / tiện ích 1.13.2: kiểm tra đăng nhập Discuit, Blogger, Warrior Forum
 
 - Discuit: tài khoản đang đăng nhập đọc từ `GET /api/_initial` (`user.username`; `null` khi chưa đăng nhập), không phụ
   thuộc tên trên thanh menu (bị ẩn khi cửa sổ hẹp).
@@ -10,7 +10,27 @@
   tài khoản bằng email trong nhãn nút tài khoản Google ("Tài khoản Google: Tên (email)").
 - Warrior Forum: điều khoản cấm truy cập tự động, nên tiện ích không dùng form đăng nhập hay nút Google; trang không
   hiện form thì đi tiếp bước xác nhận bằng trang hồ sơ. Đăng nhập tay rồi bấm "Tôi đã đăng nhập · Kiểm tra".
-- Nạp lại tiện ích 1.12.3 trong `chrome://extensions`.
+- Nạp lại tiện ích 1.13.2 trong `chrome://extensions`.
+
+## Backend 1.18.2 / tiện ích 1.13.1: Quora tự đăng nhập bằng mật khẩu
+
+- Nút **Login** của Quora bị khoá tới khi điền đủ email và mật khẩu, và form không có thẻ `<form>`. Tiện ích nhận nút
+  này (`button.puppeteer_test_login_button`); trang khác cùng kiểu thì lấy nút có chữ Login / Log in / Sign in / Đăng
+  nhập gần ô vừa điền nhất, kể cả khi đang khoá.
+- Điền xong tiện ích chờ tối đa 3 giây cho nút bật rồi mới bấm; nút không bật thì báo "Nút xác nhận đăng nhập chưa
+  được bật sau khi điền thông tin", không bấm.
+- Nạp lại tiện ích 1.13.1 trong `chrome://extensions`, rồi bấm **Test** ở tài khoản Quora.
+
+## Backend 1.18.0 / tiện ích 1.13.0: thread trên forum Product Hunt
+
+- **Trang đăng:** `https://www.producthunt.com/p/new` (Start new thread). Launch sản phẩm vẫn làm tay.
+- **Ô Chuyên mục của tài khoản:** ghi đúng tên forum / product như trong ô "Search for a product":
+  - `General`, `Vibecoding`, `Introduce yourself`, `Self-Promotion`, hoặc tên product (ví dụ `Google Cloud Platform`);
+  - để trống là `Self-Promotion`.
+- **Tiện ích chọn forum trước khi điền bài.** Không thấy forum thì dừng, chưa điền gì.
+- **Sau đó** tiện ích điền tiêu đề, dán nội dung đã định dạng và bấm **Submit** của form, không bấm nút Submit đăng sản
+  phẩm trên thanh đầu trang.
+- **Bài đã đăng** nằm ở `/p/<forum>/<slug>`.
 
 ## Backend 1.17.1 / tiện ích 1.12.1: Differ chọn Keyword và ảnh bìa trong hộp Publish
 
@@ -595,6 +615,15 @@ Sau khi xác nhận đúng tài khoản, các luồng đã đủ đích đăng t
 Bộ lọc phân biệt kết nối có thể đăng, đã đăng nhập nhưng chưa đủ cấu hình, đang kiểm tra,
 và cần thao tác. Có phiên đăng nhập không đồng nghĩa nền tảng đã cấp quyền đăng bài.
 Nhiều danh tính khác nhau trên cùng website vẫn cần các hồ sơ Chrome riêng để giữ đúng phiên.
+- Form **Phiên Chrome / 2FA** không cho chuyển một tài khoản sang hồ sơ đang giữ tài khoản khác của cùng website. Câu
+  báo nêu tên tài khoản đó.
+- Tài khoản đã dùng chung hồ sơ từ trước (ví dụ nhập file đặt hai tài khoản MeWe vào cùng "Chrome VPS") vẫn sửa và lưu
+  được. Form và câu báo sau khi lưu nhắc rằng mỗi lúc hồ sơ chỉ đăng nhập được một tài khoản của website đó.
+- Để chạy cả hai, tạo thêm một hồ sơ Chrome trên VPS Windows:
+  1. Bấm biểu tượng hồ sơ → **Thêm**.
+  2. Nạp tiện ích (Load unpacked cùng thư mục `browser-extension`).
+  3. Ghép nối với web, cài lại proxy nếu dùng.
+  4. Chọn hồ sơ mới cho tài khoản thứ hai.
 
 Chọn **Tạo bài & đăng tự động**, nhập mô tả chung rồi bấm **Tạo bằng AI & đăng ngay**.
 Các tài khoản sẵn sàng trong nhóm nhập đã chọn được chọn sẵn. Hệ thống tạo một biến thể cho
