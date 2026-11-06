@@ -1,9 +1,9 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
-## 1.29.2 · 06/11/2026
+## 1.30.1 · 06/11/2026
 ### Sửa lỗi
-- Chrome trên VPS "mở social rồi để đó": MeWe, Linux Foundation Forum và các tài khoản đăng nhập bằng Google (tiện ích 1.16.1)
+- Chrome trên VPS "mở social rồi để đó": MeWe, Linux Foundation Forum và các tài khoản đăng nhập bằng Google (tiện ích 1.17.1)
   - **Trang tải chậm không còn bị bỏ.** Khi xác nhận tài khoản, tiện ích mở trang hồ sơ; qua proxy trang Linux
     Foundation tải hơn 8 giây, tiện ích coi là "Trang không phản hồi kiểm tra trong 8 giây" và dừng ngay lần đầu. Nay
     trang còn đang tải thì chờ tiếp trong thời hạn đăng nhập; chỉ dừng khi trang đã tải xong mà 2 lần liền không phản
@@ -14,7 +14,17 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   - **Tài khoản Google không còn xếp hàng chờ nhau.** Trước đây mọi bài của tài khoản đăng nhập bằng Google xác nhận
     lần lượt, nên một bài kẹt 3 phút làm các tab khác đứng chờ. Nay chỉ bước đăng nhập Google thật (bấm "Sign in with
     Google", chọn tài khoản, nhập mật khẩu) mới lần lượt; phiên đã đăng nhập sẵn được kiểm tra song song.
-  - Cần nạp lại tiện ích 1.16.1 rồi bấm "Giao lại cho tiện ích" ở các bài đang chờ; máy chủ không đổi.
+  - Cần nạp lại tiện ích 1.17.1 rồi bấm "Giao lại cho tiện ích" ở các bài đang chờ; máy chủ không đổi.
+
+## 1.30.0 · 06/11/2026
+### Tính năng
+- Tiện ích Chrome đăng 3 bài cùng lúc (tiện ích 1.17.0)
+  - Trước đây một Chrome chỉ chạy tối đa 2 bài song song; nay 3 bài, mỗi bài một tab trên một trang khác nhau. Chạy
+    chiến dịch nhiều social trên VPS Windows nhanh hơn khoảng một phần ba.
+  - Giữ nguyên quy tắc an toàn: không bao giờ chạy 2 bài trên cùng một trang (bài sau có thể ghi đè bản nháp của bài
+    trước). Tab chờ bạn xử lý (CAPTCHA, chưa đăng nhập, bài lỗi để xem) vẫn không chiếm chỗ. Kiểm tra đăng nhập (Test)
+    vẫn chạy từng cái một.
+  - Chỉ cần nạp lại tiện ích 1.17.0; máy chủ không đổi.
 
 ## 1.29.1 · 06/11/2026
 ### Sửa lỗi

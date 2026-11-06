@@ -1,12 +1,18 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
-## Tiện ích 1.16.1: trang tải chậm, MeWe, đăng nhập Google song song
+## Tiện ích 1.17.1: trang tải chậm, MeWe, đăng nhập Google song song
 
 - Lần hỏi trang khi xác nhận tài khoản có hạn `AUTH_PROBE_TIMEOUT_MS` (8 giây). Hết hạn khi tab còn `loading` thì chờ
   tiếp trong thời hạn đăng nhập; tab đã tải xong mà 2 lần liền không phản hồi mới dừng.
 - MeWe: thêm cách nhận tài khoản bằng tên trên thẻ hồ sơ của /myworld (khối có Followers / Following), so khớp bỏ dấu,
   hoa thường, khoảng trắng với username / URL hồ sơ.
 - Khoá đăng nhập Google (`googleSignIns`) chỉ giữ khi đang ở bước đăng nhập Google thật; kiểm tra phiên sẵn có không giữ khoá.
+## Tiện ích 1.17.0: 3 bài cùng lúc
+
+Một Chrome chạy tối đa **3 bài cùng lúc** (trước đây 2), mỗi bài một tab trên một trang khác nhau; không bao giờ 2 bài
+trên cùng một trang. Tab chờ bạn không chiếm chỗ; kiểm tra đăng nhập vẫn chạy từng cái một. Giới hạn nằm ở
+`MAX_ACTIVE_FLOWS` trong `browser-extension/background.js`; máy chủ không giới hạn số bài mỗi Chrome nhận.
+
 
 ## Backend 1.29.0 / tiện ích 1.16.0: Unraid Forums (Invision), aaPanel Forum (Flarum), cPanel Community (Zendesk)
 

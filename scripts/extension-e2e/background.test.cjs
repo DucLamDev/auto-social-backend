@@ -325,30 +325,31 @@ test('work arriving during a poll runs immediately instead of waiting for the ne
   assert.equal(state.fills, 1);
 });
 
-test('two flows run at once on different sites, never two on one site, and a finished flow frees its slot', async () => {
+test('three flows run at once on different sites, never two on one site, and a finished flow frees its slot', async () => {
   const { state, worker, chrome } = setup();
   const makeJob = (id, host) => ({ ...job, jobId: id, targetOrigin: `http://${host}.test`, openUrl: `http://${host}.test/new-topic` });
-  state.jobs = [makeJob('a1', 'a'), makeJob('a2', 'a'), makeJob('b1', 'b'), makeJob('c1', 'c'), makeJob('d1', 'd')];
+  state.jobs = [makeJob('a1', 'a'), makeJob('a2', 'a'), makeJob('b1', 'b'), makeJob('c1', 'c'), makeJob('d1', 'd'), makeJob('e1', 'e')];
   const release = new Map();
   state.fillResult = pending => new Promise(resolve => release.set(pending.jobId, resolve));
   await worker.tick();
-  await settleUntil(() => state.fills === 2);
-  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['a1', 'b1']);
+  await settleUntil(() => state.fills === 3);
+  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['a1', 'b1', 'c1']);
   assert.deepEqual(state.claimRequests[1].excludeOrigins, ['http://a.test'], 'the second flow is claimed on another site');
-  assert.deepEqual(state.jobs.map(t => t.jobId), ['a2', 'c1', 'd1']);
+  assert.deepEqual(state.claimRequests[2].excludeOrigins, ['http://a.test', 'http://b.test'], 'the third flow too');
+  assert.deepEqual(state.jobs.map(t => t.jobId), ['a2', 'd1', 'e1']);
   await worker.tick();
-  assert.equal(state.fills, 2, 'never a third flow');
+  assert.equal(state.fills, 3, 'never a fourth flow');
   release.get('a1')({ status: 'submitted' });
   await settleUntil(async () => (await worker.getTasks())[1]?.phase === 'submitted');
   await new Promise(setImmediate);
   state.publishedUrl = 'http://a.test/t/post/1';
   await Promise.all(chrome.tabs.onUpdated.listeners.map(listener => listener(1, { url: 'http://a.test/t/post/1' }, { url: 'http://a.test/t/post/1' })));
   await worker.tick();
-  await settleUntil(() => state.fills === 3);
+  await settleUntil(() => state.fills === 4);
   assert.deepEqual(state.closedTabs, [1]);
-  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['b1', 'a2'], 'the next post on the freed site starts beside the running one');
-  assert.ok(state.claimRequests.slice(2).every(request => request.excludeOrigins.includes('http://b.test')), 'b stays excluded while it runs');
-  assert.deepEqual(state.jobs.map(t => t.jobId), ['c1', 'd1']);
+  assert.deepEqual(Object.values(await worker.getTasks()).map(t => t.job.jobId), ['b1', 'c1', 'a2'], 'the next post on the freed site starts beside the running ones');
+  assert.ok(state.claimRequests.slice(3).every(request => request.excludeOrigins.includes('http://b.test') && request.excludeOrigins.includes('http://c.test')), 'b and c stay excluded while they run');
+  assert.deepEqual(state.jobs.map(t => t.jobId), ['d1', 'e1']);
   for (const resolve of release.values()) resolve({ status: 'filled' });
 });
 
@@ -725,18 +726,18 @@ test('a paused extension does not claim the next post after one finishes', async
   assert.deepEqual(state.jobs.map(item => item.jobId), ['b']);
 });
 
-test('the early poll never starts a third flow while two are still filling', async () => {
+test('three posts on three sites run in parallel, and the early poll never starts a fourth', async () => {
   const { state, worker } = setup({ nextJobDelay: 0 });
-  state.jobs = [forumJob('a'), forumJob('b'), forumJob('c')];
+  state.jobs = [forumJob('a'), forumJob('b'), forumJob('c'), forumJob('d')];
   const releases = [];
   state.fillResult = () => new Promise(resolve => { releases.push(resolve); });
   await worker.tick();
-  await settleUntil(() => state.fills === 2);
+  await settleUntil(() => state.fills === 3);
   worker.tickSoon();
   worker.tickSoon();
   await pause(30);
-  assert.equal(state.fills, 2, 'MAX_ACTIVE_FLOWS still holds');
-  assert.deepEqual(state.jobs.map(item => item.jobId), ['c']);
+  assert.equal(state.fills, 3, 'MAX_ACTIVE_FLOWS still holds');
+  assert.deepEqual(state.jobs.map(item => item.jobId), ['d']);
   for (const release of releases) release({ status: 'filled' });
 });
 
@@ -1007,20 +1008,22 @@ test('a tab waiting for 10 minutes is closed and forgotten, so its site is claim
 
 test('a FAILED post frees its flow at once; the kept tab expires like any waiting tab', async () => {
   const { state, worker } = setup();
-  state.jobs = [forumJob('a'), forumJob('b'), forumJob('c')];
+  state.jobs = [forumJob('a'), forumJob('b'), forumJob('c'), forumJob('d')];
   const results = { a: { status: 'contentMismatch', message: 'Editor không giữ đúng nội dung' }, b: { status: 'notReady', missing: ['body'], message: 'Không thấy form' } };
-  let resolveC;
-  state.fillResult = pending => results[pending.jobId] ?? new Promise(resolve => { resolveC = resolve; });
+  const pending = [];
+  state.fillResult = job => results[job.jobId] ?? new Promise(resolve => { pending.push(resolve); });
   await worker.tick();
   await settleUntil(() => state.reports.length === 2);
   assert.deepEqual(state.reports.map(report => [report.outcome, report.reason]).sort(), [['FAILED', 'CONTENT_MISMATCH'], ['FAILED', 'EDITOR_NOT_FOUND']]);
-  const held = Object.values(await worker.getTasks());
+  // The third post (c) is still filling beside them.
+  const held = Object.values(await worker.getTasks()).filter(task => ['a', 'b'].includes(task.job.jobId));
+  assert.equal(held.length, 2);
   assert.ok(held.every(task => task.phase === 'waitingUser' && task.reportedOutcome === 'FAILED'));
   assert.ok(held.every(task => task.deadline - Date.now() <= 10 * 60_000));
   await worker.tick();
-  await settleUntil(() => state.fills === 3);
-  assert.deepEqual(state.jobs, [], 'the failed posts do not hold the two flows');
-  resolveC({ status: 'filled' });
+  await settleUntil(() => state.fills === 4);
+  assert.deepEqual(state.jobs, [], 'the failed posts do not hold their flows');
+  for (const resolve of pending) resolve({ status: 'filled' });
 });
 
 for (const [status, outcome, reason] of [['draft', 'NEEDS_ACTION', 'WAITING_USER'], ['contentMismatch', 'FAILED', 'CONTENT_MISMATCH'], ['somethingNew', 'NEEDS_ACTION', 'SUBMIT_UNCONFIRMED'], [undefined, 'NEEDS_ACTION', 'SUBMIT_UNCONFIRMED']]) {
