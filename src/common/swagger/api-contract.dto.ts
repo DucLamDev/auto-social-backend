@@ -186,6 +186,10 @@ export class ContentVariantContractDto {
   @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true }) mediaRecommendation?: Record<string, unknown> | null;
   @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true, description: 'Last "rewrite with AI" request: status generating | done | failed, instruction, notes (review points chosen by the operator, when sent), startedAt, finishedAt, error.' })
   aiRevision?: Record<string, unknown> | null;
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true, description: 'Final AI approver verdict: status running | approved | rejected | failed, approver (provider:model), approverLabel, textHash (the text it read), score, risk, seeding, reasons, startedAt, finishedAt, error. Null when the variant was never sent to the approver.' })
+  aiApproval?: Record<string, unknown> | null;
+  @ApiPropertyOptional({ description: 'True when the stored aiApproval was given on the current title, body and hashtags; false after an edit or when there is none.' })
+  aiApprovalCurrent?: boolean;
   @ApiProperty({ enum: VariantStatus }) status!: VariantStatus;
   @ApiProperty() version!: number;
   @ApiPropertyOptional({ type: PlatformNameContractDto }) platform?: PlatformNameContractDto;
@@ -240,6 +244,12 @@ export class OverLimitVariantContractDto {
   @ApiProperty({ description: 'Vietnamese explanation shown to the reviewer.' }) message!: string;
 }
 
+export class UnapprovedVariantContractDto {
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ description: 'Platform display name.' }) platform!: string;
+  @ApiProperty({ description: 'Vietnamese reason from the final AI approver gate shown to the reviewer.' }) message!: string;
+}
+
 export class AutomatedCampaignContractDto {
   @ApiProperty({ type: CampaignContractDto }) campaign!: CampaignContractDto;
   @ApiProperty({ type: ContentContractDto }) content!: ContentContractDto;
@@ -252,6 +262,8 @@ export class AutomatedCampaignContractDto {
   waitingVariantIds?: string[];
   @ApiPropertyOptional({ type: [OverLimitVariantContractDto], description: 'Review decisions only: drafts left waiting because they exceed their destination character limit.' })
   overLimitVariants?: OverLimitVariantContractDto[];
+  @ApiPropertyOptional({ type: [UnapprovedVariantContractDto], description: 'Review decisions only: drafts left waiting because the final AI approver has not approved their current text.' })
+  unapprovedVariants?: UnapprovedVariantContractDto[];
 }
 
 export class AiProviderContractDto {

@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { AccountStatus, CampaignStatus, ContentStatus, PlatformMode, VariantStatus } from '@prisma/client';
 import { AiContentService } from '../ai/ai-content.service';
+import { approvalHash } from '../ai/content-approval';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../database/prisma.service';
 import { RedisService } from '../queue/redis.service';
@@ -37,7 +38,7 @@ function setup() {
     $queryRaw: jest.fn(),
   };
   prisma.$transaction.mockImplementation((fn: (tx: typeof prisma) => unknown) => fn(prisma));
-  const ai = { resolveProvider: jest.fn().mockReturnValue('openai'), assertReady: jest.fn(), generate: jest.fn().mockResolvedValue([variant]) };
+  const ai = { resolveProvider: jest.fn().mockReturnValue('openai'), assertReady: jest.fn(), generate: jest.fn().mockResolvedValue([variant]), approvalEnabled: jest.fn().mockReturnValue(false) };
   const campaigns = { get: jest.fn().mockResolvedValue(campaign), publish: jest.fn() };
   const service = new CampaignAutomationService(prisma as unknown as PrismaService, ai as unknown as AiContentService, campaigns as unknown as CampaignsService, { recordBestEffort: jest.fn() } as unknown as AuditService);
   return { dto, campaign, variant, prisma, ai, campaigns, service };
@@ -486,6 +487,124 @@ describe('Approval of a post over its character limit', () => {
     ]);
     prisma.contentVariant.findMany.mockResolvedValue([withSource]);
     await expect(service.approveVariant('owner-1', 'campaign-1', 'variant-2')).rejects.toThrow('Bài MASTODON-SOCIAL dài 502/500 ký tự');
+  });
+});
+
+describe('Final AI approver gate on campaign approval', () => {
+  const verdict = (text: { body: string }, status: string, extra: Record<string, unknown> = {}) => ({
+    status, approver: 'vpsttt:claude:opus', approverLabel: 'Claude Opus', textHash: approvalHash(text), startedAt: new Date().toISOString(), ...extra,
+  });
+  function gated(enabled = true) {
+    const ctx = setup();
+    ctx.ai.approvalEnabled.mockReturnValue(enabled);
+    const passed = { ...ctx.variant, aiApproval: verdict(ctx.variant, 'approved') };
+    const second = { ...ctx.variant, id: 'variant-2', platformId: 'platform-2', body: 'Second text' };
+    const refused = { ...second, aiApproval: verdict(second, 'rejected', { reasons: ['Giả làm khách hàng khen sản phẩm'] }) };
+    const waiting = { ...ctx.campaign, automationVariantIds: ['variant-1', 'variant-2'], automationRequest: { ...ctx.dto, platformAccountIds: ['account-1', 'account-2'] } };
+    ctx.prisma.campaign.findFirstOrThrow.mockResolvedValue(waiting);
+    ctx.prisma.campaign.findFirst.mockResolvedValue(waiting);
+    ctx.prisma.platformAccount.findMany.mockResolvedValue([readyAccount('account-1', 'platform-1', 'devto'), readyAccount('account-2', 'platform-2', 'x')]);
+    Object.assign(ctx.prisma, { campaignTarget: { create: jest.fn().mockResolvedValue({ id: 'target-1' }), count: jest.fn().mockResolvedValue(1) } });
+    return { ...ctx, passed, second, refused };
+  }
+  const refusal = 'AI duyệt cuối (Claude Opus) từ chối: Giả làm khách hàng khen sản phẩm';
+
+  it('refuses to approve one post by hand unless the approver said yes to its current text, with the reason', async () => {
+    const { variant } = setup();
+    const cases: Array<[unknown, string]> = [
+      [null, 'Chưa được AI duyệt cuối; bấm Cho AI duyệt.'],
+      [verdict(variant, 'running'), 'AI duyệt cuối đang đọc bài…'],
+      [verdict(variant, 'rejected', { reasons: ['Giả làm khách hàng khen sản phẩm'] }), refusal],
+      [verdict(variant, 'failed', { error: 'Key VPSTTT AI không được dùng claude:opus.' }), 'AI duyệt cuối chưa chạy được: Key VPSTTT AI không được dùng claude:opus.'],
+      [verdict({ body: 'Older text' }, 'approved'), 'Bài đã sửa sau khi AI duyệt; đang chờ duyệt lại.'],
+    ];
+    for (const [aiApproval, message] of cases) {
+      const { service, prisma, campaigns } = gated();
+      prisma.contentVariant.findMany.mockResolvedValue([{ ...variant, aiApproval }]);
+      const error = await service.approveVariant('owner-1', 'campaign-1', 'variant-1').catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).message).toBe(message);
+      expect(prisma.contentVariant.updateMany).not.toHaveBeenCalled();
+      expect(prisma.publishJob.create).not.toHaveBeenCalled();
+      expect(campaigns.publish).not.toHaveBeenCalled();
+    }
+  });
+
+  it('approves a post the approver passed, and does not check anything with the approver off', async () => {
+    const on = gated();
+    on.prisma.contentVariant.findMany.mockResolvedValue([on.passed]);
+    await on.service.approveVariant('owner-1', 'campaign-1', 'variant-1');
+    expect(on.prisma.publishJob.create).toHaveBeenCalledWith({ data: expect.objectContaining({ platformAccountId: 'account-1', status: 'SCHEDULED' }) as unknown });
+    const off = gated(false);
+    off.prisma.contentVariant.findMany.mockResolvedValue([off.refused]);
+    await off.service.approveVariant('owner-1', 'campaign-1', 'variant-2');
+    expect(off.prisma.publishJob.create).toHaveBeenCalledWith({ data: expect.objectContaining({ platformAccountId: 'account-2' }) as unknown });
+  });
+
+  it('"approve all" posts what the approver passed, keeps the rest waiting and reports why', async () => {
+    const { service, prisma, campaigns, passed, refused } = gated();
+    prisma.contentVariant.findMany.mockResolvedValue([passed, refused]);
+    // Nothing decided before the click; the refused post is still waiting after it.
+    prisma.contentVariant.count.mockResolvedValueOnce(0).mockResolvedValue(1);
+    const result = await service.approve('owner-1', 'campaign-1');
+    // Not the one-step approval of everything: the per-platform decision is used.
+    expect(prisma.campaign.updateMany).not.toHaveBeenCalled();
+    expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['variant-1'] } }, data: { status: VariantStatus.APPROVED } });
+    expect(prisma.publishJob.create).toHaveBeenCalledTimes(1);
+    expect(campaigns.publish).toHaveBeenCalledWith('owner-1', 'campaign-1');
+    expect(result).toMatchObject({ waitingVariantIds: ['variant-2'], unapprovedVariants: [{ id: 'variant-2', platform: 'X', message: refusal }] });
+  });
+
+  it('"approve all" fails without changes when the approver passed none of the posts', async () => {
+    const { service, prisma, refused, second } = gated();
+    prisma.contentVariant.findMany.mockResolvedValue([refused, { ...second, id: 'variant-1', platformId: 'platform-1', aiApproval: null }]);
+    prisma.contentVariant.count.mockResolvedValueOnce(0).mockResolvedValue(2);
+    await expect(service.approve('owner-1', 'campaign-1')).rejects.toThrow(`X: ${refusal} DEVTO: Chưa được AI duyệt cuối`);
+    expect(prisma.contentVariant.updateMany).not.toHaveBeenCalled();
+    expect(prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses the one-step approval when a post was edited after the check', async () => {
+    const { service, prisma, passed, second } = gated();
+    const passedSecond = { ...second, aiApproval: verdict(second, 'approved') };
+    prisma.contentVariant.findMany.mockResolvedValueOnce([passed, passedSecond]).mockResolvedValue([passed, { ...passedSecond, body: 'Edited meanwhile' }]);
+    await expect(service.approve('owner-1', 'campaign-1')).rejects.toThrow('Bài đã sửa sau khi AI duyệt');
+    expect(prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+
+  it('publishes an existing Studio variant only once the approver passed it', async () => {
+    const blocked = gated();
+    // No review campaign yet for this content; then the one just created.
+    blocked.prisma.campaign.findFirst.mockResolvedValueOnce(null).mockResolvedValue(blocked.campaign);
+    blocked.prisma.campaign.findFirstOrThrow.mockResolvedValue(blocked.campaign);
+    blocked.prisma.platformAccount.findMany.mockResolvedValue([readyAccount('account-1', 'platform-1', 'devto')]);
+    blocked.prisma.contentVariant.findMany.mockResolvedValue([{ ...blocked.variant, aiApproval: null }]);
+    await expect(blocked.service.approveExistingContent('owner-1', 'content-1', { variantIds: ['variant-1'], platformAccountIds: ['account-1'] }))
+      .rejects.toThrow('Chưa được AI duyệt cuối');
+    expect(blocked.prisma.publishJob.create).not.toHaveBeenCalled();
+  });
+
+  it('auto-publishes only a post the approver passed; the others wait for review', async () => {
+    for (const [aiApproval, published] of [[null, false], ['rejected', false], ['approved', true]] as const) {
+      const { service, prisma, ai, campaigns, dto, campaign, variant } = setup();
+      ai.approvalEnabled.mockReturnValue(true);
+      const request = { ...dto, autoPublish: true };
+      await service.automate('owner-1', request, `request-key-gate-${String(aiApproval)}`, undefined, { enqueue: true });
+      const created = prisma.campaign.create.mock.results[0]?.value as typeof campaign;
+      const running = { ...created, automationState: 'PROCESSING', automationVariantIds: ['variant-1'], automationRequest: request };
+      prisma.campaign.findFirst.mockResolvedValue(running);
+      prisma.campaign.findFirstOrThrow.mockResolvedValue(running);
+      const draft = { ...variant, aiApproval: aiApproval && verdict(variant, aiApproval) };
+      prisma.contentVariant.findMany.mockResolvedValueOnce([]).mockResolvedValue([draft]);
+      ai.generate.mockImplementation(async (...args: unknown[]) => {
+        await (args[6] as (saved: typeof draft) => Promise<void>)(draft);
+        return [draft];
+      });
+      await service.automate('owner-1', { ...request, publishImmediately: false }, `request-key-gate-${String(aiApproval)}`, undefined, { processingId: campaign.id, assertOwnership: jest.fn() });
+      // (The mocked queries return the draft as still waiting, so a passed post may be approved twice here.)
+      expect(prisma.publishJob.create.mock.calls.length > 0).toBe(published);
+      expect(campaigns.publish.mock.calls.length > 0).toBe(published);
+    }
   });
 });
 

@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RoleName } from '@prisma/client';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -144,6 +145,21 @@ describe('McpToolsService', () => {
     const approved = await service.call({ principal: editor }, 'approve_campaign', { id: ACCOUNT_ID, confirm: true });
     expect(JSON.parse(textOf(approved))).toMatchObject({ status: 'RUNNING' });
     expect(mocks.automation.approve).toHaveBeenCalledWith('owner-1', ACCOUNT_ID, { publishMode: 'NOW', scheduledAt: undefined });
+  });
+
+  it('tells the agent which drafts the final AI approver held back, and why it refused an approval', async () => {
+    const { service, mocks } = setup({ MCP_ALLOW_PUBLISH: true });
+    const message = 'AI duyệt cuối (Claude Opus) từ chối: Giả làm khách hàng';
+    mocks.automation.approve.mockResolvedValueOnce({
+      campaign: { id: 'campaign-1', name: 'Launch', status: 'RUNNING', automationState: 'WAITING_REVIEW', automationErrorCode: null },
+      waitingVariantIds: ['variant-2'], unapprovedVariants: [{ id: 'variant-2', platform: 'X', message }],
+    });
+    const partial = await service.call({ principal: editor }, 'approve_campaign', { id: ACCOUNT_ID, confirm: true });
+    expect(JSON.parse(textOf(partial))).toMatchObject({ status: 'RUNNING', heldVariants: [{ id: 'variant-2', platform: 'X', message }] });
+    mocks.automation.approve.mockRejectedValueOnce(new BadRequestException(message));
+    const refused = await service.call({ principal: editor }, 'approve_campaign', { id: ACCOUNT_ID, confirm: true });
+    expect(refused.isError).toBe(true);
+    expect(textOf(refused)).toBe(message);
   });
 
   it('hides unexpected internal errors from the agent', async () => {

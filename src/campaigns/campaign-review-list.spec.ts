@@ -1,6 +1,10 @@
 import { PrismaService } from '../database/prisma.service';
 import { PublishQueueService } from '../queue/publish-queue.service';
 import { CampaignsService } from './campaigns.service';
+import type { AiContentService } from '../ai/ai-content.service';
+
+/** Final AI approver off unless a test turns it on. */
+const approverOff = { approvalEnabled: () => false } as unknown as AiContentService;
 
 describe('AI review list', () => {
   it('includes legacy campaign variants and Studio drafts without changing historical publishing state', async () => {
@@ -16,7 +20,7 @@ describe('AI review list', () => {
     }];
     const contentRows = [{ id: 'studio-content', title: 'Studio', status: 'GENERATED', createdAt, updatedAt: createdAt, variants: [{ id: 'studio-variant', platformId: 'platform-1', status: 'GENERATED' }, { id: 'older-studio-variant', platformId: 'platform-1', status: 'APPROVED' }] }];
     const prisma = { campaign: { findMany: jest.fn().mockResolvedValue(campaignRows) }, content: { findMany: jest.fn().mockResolvedValue(contentRows) } };
-    const service = new CampaignsService(prisma as unknown as PrismaService, {} as PublishQueueService);
+    const service = new CampaignsService(prisma as unknown as PrismaService, {} as PublishQueueService, approverOff);
     const result = await service.listAiReview('owner-1');
     expect(result).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'old-campaign', status: 'PARTIAL', reviewMode: 'EXISTING_CAMPAIGN', automationState: 'APPROVED', automationVariantIds: ['old-variant-1', 'old-variant-2'], automationAccountIds: ['account-1', 'account-2'] }),
@@ -38,7 +42,7 @@ describe('AI review list', () => {
         { id: 'generating-content', status: 'AI_GENERATING', createdAt, updatedAt: createdAt, variants: [] },
       ]) },
     };
-    const service = new CampaignsService(prisma as unknown as PrismaService, {} as PublishQueueService);
+    const service = new CampaignsService(prisma as unknown as PrismaService, {} as PublishQueueService, approverOff);
     const result = await service.listAiReview('owner-1');
     expect(result).toHaveLength(2);
     expect(result.find((row) => row.id === 'generating-content')).toMatchObject({ reviewMode: 'CONTENT', automationState: 'PROCESSING', automationVariantIds: [] });

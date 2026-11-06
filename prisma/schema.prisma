@@ -363,6 +363,9 @@ model ContentVariant {
   mediaRecommendation Json?
   /// Last "rewrite with AI" request on this draft: status generating | done | failed, instruction, times, error.
   aiRevision          Json?
+  /// Final AI approver's verdict (status running | approved | rejected | failed, textHash of the text it read, reasons, times).
+  /// Null on variants created before the approver existed; such approved variants keep publishing.
+  aiApproval          Json?
   status              VariantStatus    @default(GENERATED)
   version             Int              @default(1)
   createdAt           DateTime         @default(now())

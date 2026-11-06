@@ -1,9 +1,13 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { AccountStatus, CampaignStatus, MediaType, Prisma, PublishJobStatus } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { PublishQueueService } from '../queue/publish-queue.service';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
+import type { AiContentService } from '../ai/ai-content.service';
 import { PublishJobsService } from './publish-jobs.service';
+
+/** Final AI approver off unless a test turns it on. */
+const approverOff = { approvalEnabled: () => false } as unknown as AiContentService;
 import { WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
 
 describe('PublishJobsService', () => {
@@ -14,7 +18,7 @@ describe('PublishJobsService', () => {
     ]);
     const count = jest.fn().mockResolvedValue(2);
     const prisma = { publishJob: { findMany, count }, $transaction: (operations: Promise<unknown>[]) => Promise.all(operations) } as unknown as PrismaService;
-    const service = new PublishJobsService(prisma, {} as PublishQueueService, {} as CampaignStatusService);
+    const service = new PublishJobsService(prisma, {} as PublishQueueService, {} as CampaignStatusService, approverOff);
     const result = await service.list('owner-1', { page: 2, limit: 1, reviewState: 'MODERATION', search: 'launch' });
     const options = findMany.mock.calls[0][0];
     expect(options).toMatchObject({ skip: 1, take: 1, where: { target: { campaign: { ownerId: 'owner-1' } }, AND: [{ status: 'NEEDS_ACTION' }, { OR: expect.arrayContaining([{ lastErrorCode: 'EXTENSION_MODERATION_PENDING' }]) as unknown }] } });
@@ -68,6 +72,7 @@ describe('PublishJobsService', () => {
       prisma,
       {} as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.manualPayload('owner-1', 'job-manual')).resolves.toEqual({
@@ -110,7 +115,7 @@ describe('PublishJobsService', () => {
       attempts: [{ responseMetadata: { moderationQueue: true } }],
     };
     const findFirstOrThrow = jest.fn().mockResolvedValue(record);
-    const service = new PublishJobsService({ publishJob: { findFirstOrThrow } } as unknown as PrismaService, {} as PublishQueueService, {} as CampaignStatusService);
+    const service = new PublishJobsService({ publishJob: { findFirstOrThrow } } as unknown as PrismaService, {} as PublishQueueService, {} as CampaignStatusService, approverOff);
     const payload = await service.manualPayload('owner-1', record.id);
     expect(payload).toMatchObject({
       title: 'Stored title', body: 'First line\n\nSecond line', moderationPending: true,
@@ -132,7 +137,7 @@ describe('PublishJobsService', () => {
       publishJob: { count },
       $transaction: jest.fn((operations: Array<Promise<unknown>>) => Promise.all(operations)),
     } as unknown as PrismaService;
-    const service = new PublishJobsService(prisma, {} as PublishQueueService, {} as CampaignStatusService);
+    const service = new PublishJobsService(prisma, {} as PublishQueueService, {} as CampaignStatusService, approverOff);
 
     await expect(service.metrics('owner-1', {
       todayFrom: '2026-10-07T17:00:00.000Z',
@@ -152,6 +157,7 @@ describe('PublishJobsService', () => {
       prisma,
       {} as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.list('owner-1', {
@@ -203,6 +209,7 @@ describe('PublishJobsService', () => {
       prisma,
       { enqueue } as unknown as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.retry('owner-1', 'job-1')).resolves.toEqual({ queued: true });
@@ -242,8 +249,8 @@ describe('PublishJobsService', () => {
         publishJob: { findFirstOrThrow },
         $transaction: jest.fn((callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
       } as unknown as PrismaService;
-      const service = new PublishJobsService(prisma, { enqueue: jest.fn() } as unknown as PublishQueueService, {} as CampaignStatusService);
-      return { service, transaction, findFirstOrThrow };
+      const service = new PublishJobsService(prisma, { enqueue: jest.fn() } as unknown as PublishQueueService, {} as CampaignStatusService, approverOff);
+      return { service, transaction, findFirstOrThrow, prisma };
     }
 
     it('creates an approved variant with the operator edits, repoints the target and schedules the job', async () => {
@@ -281,6 +288,15 @@ describe('PublishJobsService', () => {
       expect(transaction.contentVariant.create).not.toHaveBeenCalled();
     });
 
+    it('refuses with the final AI approver on: the new version would skip it', async () => {
+      const { transaction, findFirstOrThrow, prisma } = setup(heldJob);
+      const service = new PublishJobsService(prisma, { enqueue: jest.fn() } as unknown as PublishQueueService, {} as CampaignStatusService, { approvalEnabled: () => true } as unknown as AiContentService);
+      await expect(service.approveContent('owner-1', 'job-1', { body: 'Nội dung đã sửa' })).rejects.toThrow(new BadRequestException('AI duyệt cuối đang bật: bài phải được AI duyệt trước khi đăng. Sửa và duyệt bài ở "Content đợi duyệt".'));
+      expect(findFirstOrThrow).not.toHaveBeenCalled();
+      expect(transaction.contentVariant.create).not.toHaveBeenCalled();
+      expect(transaction.publishJob.updateMany).not.toHaveBeenCalled();
+    });
+
     it('rejects a blank body and a job that changed concurrently', async () => {
       await expect(setup(heldJob).service.approveContent('owner-1', 'job-1', { body: '   ' })).rejects.toThrow('body must not be blank');
       await expect(setup(heldJob, 0).service.approveContent('owner-1', 'job-1', {})).rejects.toThrow('changed while it was being approved');
@@ -315,6 +331,7 @@ describe('PublishJobsService', () => {
       prisma,
       { enqueue: jest.fn().mockRejectedValue(enqueueError) } as unknown as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.retry('owner-1', 'job-1')).rejects.toBe(enqueueError);
@@ -362,6 +379,7 @@ describe('PublishJobsService', () => {
       prisma,
       { enqueue } as unknown as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.reconcileNotFound('owner-1', 'job-uncertain', true))
@@ -426,6 +444,7 @@ describe('PublishJobsService', () => {
       prisma,
       { enqueue: jest.fn().mockRejectedValue(enqueueError) } as unknown as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.reconcileNotFound('owner-1', 'job-uncertain', true))
@@ -479,6 +498,7 @@ describe('PublishJobsService', () => {
       prisma,
       { enqueue } as unknown as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.resumeBrowser('owner-1', 'job-browser'))
@@ -549,6 +569,7 @@ describe('PublishJobsService', () => {
       prisma,
       { enqueue } as unknown as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.resumeBrowser('owner-1', 'job-browser')).rejects.toThrow(
@@ -593,6 +614,7 @@ describe('PublishJobsService', () => {
       prisma,
       { enqueue: jest.fn().mockRejectedValue(enqueueError) } as unknown as PublishQueueService,
       { refresh } as unknown as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.resumeBrowser('owner-1', 'job-browser')).rejects.toBe(enqueueError);
@@ -629,6 +651,7 @@ describe('PublishJobsService', () => {
       prisma,
       { enqueue } as unknown as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.reconcileNotFound('owner-1', 'job-crashed', true))
@@ -665,6 +688,7 @@ describe('PublishJobsService', () => {
       prisma,
       { enqueue } as unknown as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.reconcileNotFound('owner-1', 'job-1', confirmed)).rejects.toThrow();
@@ -714,6 +738,7 @@ describe('PublishJobsService', () => {
       prisma,
       {} as PublishQueueService,
       new CampaignStatusService(prisma),
+      approverOff,
     );
 
     await expect(service.markPublished('owner-1', 'job-1', {
@@ -788,6 +813,7 @@ describe('PublishJobsService', () => {
       prisma,
       {} as PublishQueueService,
       {} as CampaignStatusService,
+      approverOff,
     );
 
     await expect(service.markPublished('owner-1', 'job-1', {

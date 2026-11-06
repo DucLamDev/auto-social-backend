@@ -5,6 +5,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CampaignSuggestionsDto } from './dto/campaign-suggestions.dto';
+import { AiRolesContractDto } from './dto/ai-roles.dto';
 import { AiImageStatusContractDto, AiProviderContractDto, ApiOkEnvelope } from '../common/swagger/api-contract.dto';
 import { AiContentService } from './ai-content.service';
 import { AiImageService } from './ai-image.service';
@@ -19,6 +20,13 @@ export class AiController {
   @ApiOkEnvelope(AiProviderContractDto, true)
   providers() {
     return this.ai.providers();
+  }
+
+  @Get('roles')
+  @ApiOperation({ summary: 'AI chấm điểm và AI duyệt cuối đang cấu hình trên máy chủ (không có key).' })
+  @ApiOkEnvelope(AiRolesContractDto)
+  roles() {
+    return this.ai.roles();
   }
 
   @Post('campaign-suggestions')

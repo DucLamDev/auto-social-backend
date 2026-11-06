@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { countChars, detectLanguage, PlatformContract } from '../platforms/platform-contract';
 import { publishedLength } from '../platforms/post-text';
+import { BRAND_RISKS, BRAND_RISK_LABELS_VI, brandRiskAcceptable, normalizeBrandRisk, type BrandRisk } from './content-approval';
 
 export const QUALITY_PASS_SCORE = 7;
 /** Rewrites after a failing first draft; the best-scoring attempt is kept. */
@@ -66,7 +67,9 @@ export function deterministicIssues(draft: DraftForCheck, contract: PlatformCont
 }
 
 // Ranges are enforced by clampReview, not the schema: strict structured-output
-// modes do not all accept numeric bounds.
+// modes do not all accept numeric bounds. The seeding and brand-risk fields are
+// required by the JSON schema but tolerated when a model leaves them out:
+// clampReview treats a missing one as "not detected" / "none".
 export const ReviewSchema = z.object({
   score: z.number(),
   hook: z.number(),
@@ -76,13 +79,36 @@ export const ReviewSchema = z.object({
   languageOk: z.boolean(),
   unsupportedClaims: z.array(z.string()),
   issues: z.array(z.string()),
+  seeding: z.object({ detected: z.boolean(), notes: z.array(z.string()).nullable().optional() }).nullable().optional(),
+  brandRisk: z.string().nullable().optional(),
+  riskNotes: z.array(z.string()).nullable().optional(),
 });
 
-export type ContentReview = z.infer<typeof ReviewSchema>;
+/** The review as a model returned it. */
+export type ReviewOutput = z.infer<typeof ReviewSchema>;
+
+/** The review after clampReview: every field present and within range. */
+export interface ContentReview extends Omit<ReviewOutput, 'seeding' | 'brandRisk' | 'riskNotes'> {
+  /** Clumsy seeding / astroturfing; notes are Vietnamese, at most three. */
+  seeding: { detected: boolean; notes: string[] };
+  /** Risk for the company if the draft went out as is. */
+  brandRisk: BrandRisk;
+  /** Vietnamese, at most three. */
+  riskNotes: string[];
+}
 
 const clampScore = (value: number) => Math.min(10, Math.max(1, Math.round(Number.isFinite(value) ? value : 1)));
+const cleanList = (items: readonly string[] | null | undefined, max: number) => (items ?? []).map((item) => item.trim()).filter(Boolean).slice(0, max);
 
-export function clampReview(review: ContentReview): ContentReview {
+/** The seeding / brand-risk fields a model left out or made unreadable; clampReview filled them with safe defaults. */
+export function missingSafetyFields(review: ReviewOutput): string[] {
+  return [
+    ...(review.seeding ? [] : ['seeding']),
+    ...(normalizeBrandRisk(review.brandRisk) ? [] : ['brandRisk']),
+  ];
+}
+
+export function clampReview(review: ReviewOutput): ContentReview {
   return {
     ...review,
     score: clampScore(review.score),
@@ -90,17 +116,21 @@ export function clampReview(review: ContentReview): ContentReview {
     specificity: clampScore(review.specificity),
     platformFit: clampScore(review.platformFit),
     naturalness: clampScore(review.naturalness),
-    unsupportedClaims: review.unsupportedClaims.map((claim) => claim.trim()).filter(Boolean).slice(0, 5),
-    issues: review.issues.map((issue) => issue.trim()).filter(Boolean).slice(0, 5),
+    unsupportedClaims: cleanList(review.unsupportedClaims, 5),
+    issues: cleanList(review.issues, 5),
+    seeding: { detected: review.seeding?.detected === true, notes: cleanList(review.seeding?.notes, 3) },
+    brandRisk: normalizeBrandRisk(review.brandRisk) ?? 'none',
+    riskNotes: cleanList(review.riskNotes, 3),
   };
 }
 
 const score = { type: 'integer' } as const;
+const notes = { type: 'array', items: { type: 'string' } } as const;
 
 export const reviewJsonSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['score', 'hook', 'specificity', 'platformFit', 'naturalness', 'languageOk', 'unsupportedClaims', 'issues'],
+  required: ['score', 'hook', 'specificity', 'platformFit', 'naturalness', 'languageOk', 'unsupportedClaims', 'issues', 'seeding', 'brandRisk', 'riskNotes'],
   properties: {
     score,
     hook: score,
@@ -110,6 +140,14 @@ export const reviewJsonSchema = {
     languageOk: { type: 'boolean' },
     unsupportedClaims: { type: 'array', items: { type: 'string' } },
     issues: { type: 'array', items: { type: 'string' } },
+    seeding: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['detected', 'notes'],
+      properties: { detected: { type: 'boolean' }, notes },
+    },
+    brandRisk: { type: 'string', enum: [...BRAND_RISKS] },
+    riskNotes: notes,
   },
 } as const;
 
@@ -128,6 +166,17 @@ export function scoreFromReason(reason: string | null | undefined): number | nul
   const match = reason?.match(/AI chấm (\d{1,2})\/10/);
   return match ? clampScore(Number(match[1])) : null;
 }
+
+/**
+ * What the editor checks besides quality: clumsy seeding (a community calls it
+ * out as a disguised advert) and the risk the post creates for the company.
+ * Either one fails the draft whatever its score.
+ */
+const SAFETY_REVIEW_RULES = [
+  'seeding: clumsy seeding (astroturfing) is promotion a community would call out as a disguised advertisement. Set seeding.detected to true when the draft: pretends to be an unaffiliated customer or a neutral user while promoting the brand; contains fake or invented testimonials, reviews or "a friend tried it" stories; repeats the brand or product name, or forces it in where it does not help the reader; over-praises (superlatives, no downside or trade-off); stacks links or calls to action; uses an advertising tone in a technical community or forum; disparages competitors, by name or by implication; promotes the brand in a forum or community without saying the author is affiliated (the brand facts may give the disclosure line). One relevant, neutral mention of the brand, disclosed where needed, is not seeding. seeding.notes lists at most three short notes in Vietnamese that point to the sentence and say how to fix it; empty when nothing is detected.',
+  'brandRisk: the risk for the company publishing the post (the brand in the brand facts: VPSTTT, a VPS and proxy provider) if it went out as is. Risks: false or exaggerated claims about its products; guarantees the brief and the brand facts do not back (cheapest, 100% uptime, unlimited, never blocked, undetectable, guaranteed results); explaining how to use proxies or VPS to break laws or website terms (evading bans or blocks, scraping against terms of service, spam, mass account creation, fraud); sensitive political, legal, religious or offensive content; anything that would embarrass the company if a reader took a screenshot. Rate it none (nothing), low (a small wording issue a reader would hardly notice), medium (must change before publishing) or high (must never be published). riskNotes lists at most three short notes in Vietnamese saying what to change; empty for none.',
+  'A draft with seeding detected or a medium or high brandRisk fails whatever its score: keep score for the writing quality and report these problems in their own fields.',
+];
 
 /**
  * The editor's instructions. With the draft's published length, the editor
@@ -154,6 +203,7 @@ export function reviewInstructions(contract: PlatformContract, publishedLength?:
     `languageOk is true only when the draft is written in ${LANGUAGE_NAMES[contract.language]}.`,
     'unsupportedClaims lists only statements about the brand, its products, prices, customers, performance, locations or offers that add facts the brief and the brand facts do not give. Whatever the brief or the brand facts state, even in a few words, is supported: if the brief says the brand offers VPS and proxies, "the brand has VPS and proxies" is supported. General, widely known technical knowledge is not an unsupported claim. Never list a statement you consider supported or partly supported.',
     'issues lists at most five short, actionable fixes written in Vietnamese for the operator, most important first: only changes that would raise the score, not matters of taste. Fixes must not contradict each other. Leave it empty for a score of 9 or 10. Do not rewrite the post.',
+    ...SAFETY_REVIEW_RULES,
     previous && (fixes.length || previous.score !== null)
       ? [
           `This draft revises an earlier version${previous.score !== null ? ` that you scored ${previous.score}/10` : ''}.${fixes.length ? ` The operator asked the writer to fix:\n${fixes.map((fix) => `- ${fix}`).join('\n')}` : ''}`,
@@ -190,13 +240,41 @@ export function draftRank(passed: boolean, review: ContentReview | null, issues:
 }
 
 export function reviewPassed(review: ContentReview): boolean {
-  return review.score >= QUALITY_PASS_SCORE && review.languageOk && review.unsupportedClaims.length === 0;
+  return review.score >= QUALITY_PASS_SCORE
+    && review.languageOk
+    && review.unsupportedClaims.length === 0
+    && !review.seeding.detected
+    && brandRiskAcceptable(review.brandRisk);
+}
+
+/** The seeding notes of a review that found seeding, with a generic one when the editor gave none. */
+function seedingNotes(review: ContentReview): string[] {
+  if (!review.seeding.detected) return [];
+  return review.seeding.notes.length ? review.seeding.notes : ['bài đọc như quảng cáo trá hình'];
+}
+
+/** The risk notes of a review whose brand risk blocks publishing. */
+function riskNotes(review: ContentReview): string[] {
+  if (brandRiskAcceptable(review.brandRisk)) return [];
+  return review.riskNotes.length ? review.riskNotes : [`mức ${BRAND_RISK_LABELS_VI[review.brandRisk]}`];
+}
+
+/** Seeding and company-risk problems in the stored reason ("Seeding: …", "Rủi ro cho công ty: …"). */
+export function safetyProblems(review: ContentReview | null): string[] {
+  if (!review) return [];
+  return [
+    ...seedingNotes(review).map((note) => `Seeding: ${note}`),
+    ...riskNotes(review).map((note) => `Rủi ro cho công ty: ${note}`),
+  ];
 }
 
 /** Feedback for the single rewrite, in the language the writer prompt uses. */
 export function rewriteFeedback(issues: string[], review: ContentReview | null): string {
   const lines = [
     ...issues,
+    // Seeding and company risk come first: they block publishing whatever the score.
+    ...(review ? seedingNotes(review).map((note) => `Clumsy seeding (reads as a disguised advert), fix it: ${note}`) : []),
+    ...(review ? riskNotes(review).map((note) => `Risk for the company (${review.brandRisk}), remove it: ${note}`) : []),
     ...(review?.unsupportedClaims.map((claim) => `Remove or ground this claim: ${claim}`) ?? []),
     ...(review?.issues ?? []),
   ];
@@ -205,4 +283,22 @@ export function rewriteFeedback(issues: string[], review: ContentReview | null):
     ? [`Editor scores (1-10): overall ${review.score}, hook ${review.hook}, specificity ${review.specificity}, platform fit ${review.platformFit}, naturalness ${review.naturalness}. Raise the lowest first.`]
     : [];
   return [...[...new Set(lines)].slice(0, 10), ...scores].map((line) => `- ${line}`).join('\n');
+}
+
+/**
+ * The editor's final assessment of a draft, for the final approver: context,
+ * not a verdict. `issues` are the machine checks still failing.
+ */
+export function reviewSummary(review: ContentReview | null, issues: readonly string[] = []): string {
+  const machine = issues.length ? `Machine checks still failing: ${issues.join('; ')}.` : 'Machine checks: passed.';
+  if (!review) return `The editor could not score this draft (reviewer unavailable). ${machine}`;
+  return [
+    `Editor score ${review.score}/10 (hook ${review.hook}, specificity ${review.specificity}, platform fit ${review.platformFit}, naturalness ${review.naturalness}); ${reviewPassed(review) ? 'passed' : 'not passed'}.`,
+    review.languageOk ? '' : 'Wrong language.',
+    review.unsupportedClaims.length ? `Unsupported claims: ${review.unsupportedClaims.join('; ')}.` : '',
+    `Seeding: ${review.seeding.detected ? `detected${review.seeding.notes.length ? ` (${review.seeding.notes.join('; ')})` : ''}` : 'not detected'}.`,
+    `Brand risk: ${review.brandRisk}${review.riskNotes.length ? ` (${review.riskNotes.join('; ')})` : ''}.`,
+    review.issues.length ? `Open notes: ${review.issues.join('; ')}.` : '',
+    machine,
+  ].filter(Boolean).join('\n');
 }

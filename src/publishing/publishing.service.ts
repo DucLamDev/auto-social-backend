@@ -1,5 +1,5 @@
 import { EXTENSION_CONNECTOR_KEY, effectiveConnectorKey } from '../connectors/extension/extension-delivery';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import {
   AccountStatus,
   AttemptStatus,
@@ -21,6 +21,8 @@ import {
   PublishResult,
 } from '../connectors/core/connector.types';
 import { ErrorCode } from '../common/exceptions/application.exception';
+import { AiContentService } from '../ai/ai-content.service';
+import { storedApprovalProblem, type ApprovalVariant } from '../content-variants/ai-approval-gate';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
 import { PrismaService } from '../database/prisma.service';
 import { RedisService } from '../queue/redis.service';
@@ -51,13 +53,20 @@ export function publishFingerprintLockKey(platformAccountId: string, contentHash
   return `lock:publish-fingerprint:${sha256(`${platformAccountId}:${contentHash}`)}`;
 }
 
-export function assertVariantApproved(status: VariantStatus): void {
+export function assertVariantApproved(status: VariantStatus, post?: ApprovalVariant, approverOn = true): void {
   if (status !== VariantStatus.APPROVED) {
     throw new ConnectorError(
       ErrorCode.PLATFORM_CONTENT_REJECTED,
       'Content variant is no longer approved for publishing',
       false,
     );
+  }
+  // Backstop for the final AI approver: a stored verdict must be "yes" for the
+  // exact text about to be sent. Variants approved before the approver existed
+  // (nothing stored) publish as before.
+  const problem = post ? storedApprovalProblem(post, approverOn) : null;
+  if (problem) {
+    throw new ConnectorError(ErrorCode.PLATFORM_CONTENT_REJECTED, `Không đăng bài này: ${problem}`, false);
   }
 }
 
@@ -248,6 +257,8 @@ export class PublishingService {
     private readonly connectorAccounts: ConnectorAccountsService,
     private readonly registry: ConnectorRegistryService,
     private readonly campaignStatus: CampaignStatusService,
+    /** Absent only in isolated tests; the backstop then stays on. */
+    @Optional() private readonly ai?: AiContentService,
   ) {}
 
   async process(jobId: string): Promise<void> {
@@ -459,7 +470,7 @@ export class PublishingService {
         const connectorKey = effectiveConnectorKey(job.platformAccount.platform.connectorKey || platform, job.platformAccount.settings);
         const connector = this.registry.get(connectorKey);
         const variant = job.target.contentVariant;
-        assertVariantApproved(variant.status);
+        assertVariantApproved(variant.status, variant, this.ai?.approvalEnabled() ?? true);
         const capability = effectiveConnectorCapability(
           connector.capability,
           job.platformAccount.platform.capability,

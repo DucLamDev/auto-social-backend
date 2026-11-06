@@ -115,6 +115,29 @@ describe('validateEnvironment', () => {
     expect(() => validateEnvironment({ ...productionEnvironment(), VPSTTT_AI_RPM: '0' })).toThrow('VPSTTT_AI_RPM');
   });
 
+  it('defaults the reviewer to Claude Sonnet and the final approver to Claude Opus on VPSTTT AI, with approval on', () => {
+    expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({
+      AI_REVIEWER: 'vpsttt:claude:sonnet', AI_APPROVER: 'vpsttt:claude:opus', AI_APPROVAL_ENABLED: true,
+    });
+    expect(validateEnvironment({ ...productionEnvironment(), AI_REVIEWER: ' ', AI_APPROVER: '' }))
+      .toMatchObject({ AI_REVIEWER: 'vpsttt:claude:sonnet', AI_APPROVER: 'vpsttt:claude:opus' });
+  });
+
+  it('normalizes configured AI roles and the approval switch', () => {
+    expect(validateEnvironment({
+      ...productionEnvironment(), AI_REVIEWER: ' VPSTTT:claude:haiku ', AI_APPROVER: 'openai', AI_APPROVAL_ENABLED: 'false',
+    })).toMatchObject({ AI_REVIEWER: 'vpsttt:claude:haiku', AI_APPROVER: 'openai', AI_APPROVAL_ENABLED: false });
+    expect(validateEnvironment({ ...productionEnvironment(), AI_APPROVER: 'gemini:gemini-3.5-pro' })).toMatchObject({ AI_APPROVER: 'gemini:gemini-3.5-pro' });
+  });
+
+  it.each([
+    ['AI_REVIEWER', 'anthropic:claude-opus'],
+    ['AI_APPROVER', 'claude:opus'],
+    ['AI_APPROVAL_ENABLED', 'yes'],
+  ])('refuses an invalid %s at startup', (key, value) => {
+    expect(() => validateEnvironment({ ...productionEnvironment(), [key]: value })).toThrow(key);
+  });
+
   it('keeps the MCP endpoint and agent publishing off unless enabled', () => {
     expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({ MCP_ENABLED: false, MCP_ALLOW_PUBLISH: false, MCP_RATE_LIMIT_PER_MINUTE: 60 });
     expect(validateEnvironment({ ...productionEnvironment(), MCP_ENABLED: 'true', MCP_ALLOW_PUBLISH: 'false' }))

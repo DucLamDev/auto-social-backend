@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AiModule } from '../ai/ai.module';
 import { ConnectorsModule } from '../connectors/connectors.module';
 import { CampaignsModule } from '../campaigns/campaigns.module';
 import { PublishJobsController } from './publish-jobs.controller';
@@ -7,7 +8,7 @@ import { PublishedPostsController } from './published-posts.controller';
 import { PublishingService } from './publishing.service';
 
 @Module({
-  imports: [ConnectorsModule, CampaignsModule],
+  imports: [AiModule, ConnectorsModule, CampaignsModule],
   controllers: [PublishJobsController, PublishedPostsController],
   providers: [PublishingService, PublishJobsService],
   exports: [PublishingService, PublishJobsService],

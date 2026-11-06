@@ -23,7 +23,8 @@ import { isExtensionDelivery } from '../connectors/extension/extension-delivery'
 import { checkPostLength, deliveryEngine, postLengthMessage } from '../platforms/post-length';
 import { CONTENT_REVIEW_REQUIRED_CODE } from '../publishing/publishing.constants';
 import { MediaService } from '../media/media.service';
-import { rewriteRunning } from '../content-variants/variant-rewrite.service';
+import { aiApprovalProblem, type ApprovalVariant } from '../content-variants/ai-approval-gate';
+import { rewriteRunning } from '../content-variants/rewrite-state';
 import { CampaignsService } from './campaigns.service';
 import { PlatformImagePlan, planImages } from './image-plan';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
@@ -75,7 +76,15 @@ type SkippedAccount = { id: string; name: string; platform: string; reason: Acco
 /** A draft one of its accounts could not post because it is over the character limit. */
 type OverLimitVariant = { id: string; platform: string; length: number; maxChars: number; message: string };
 
-type ReviewOutcome = { skippedAccounts: SkippedAccount[]; waitingVariantIds: string[]; overLimitVariants?: OverLimitVariant[] };
+/** A draft kept waiting because the final AI approver has not said yes to its current text. */
+type UnapprovedVariant = { id: string; platform: string; message: string };
+
+type ReviewOutcome = {
+  skippedAccounts: SkippedAccount[];
+  waitingVariantIds: string[];
+  overLimitVariants?: OverLimitVariant[];
+  unapprovedVariants?: UnapprovedVariant[];
+};
 
 function skippedAccount(account: ReviewAccount, reason: AccountBlocker): SkippedAccount {
   return { id: account.id, name: account.name, platform: account.platform.name, reason, reasonLabel: ACCOUNT_BLOCKER_LABELS[reason] };
@@ -104,6 +113,21 @@ function overLimitDrafts(drafts: readonly LengthDraft[], accounts: readonly Revi
   return result;
 }
 
+/** Drafts the final AI approver does not let out (approver on), each with the reason and its platform name. */
+function unapprovedDrafts(drafts: readonly (ApprovalVariant & { id: string; platformId: string })[], accounts: readonly ReviewAccount[], enabled: boolean): UnapprovedVariant[] {
+  if (!enabled) return [];
+  return drafts.flatMap((draft) => {
+    const message = aiApprovalProblem(draft, true);
+    const platform = accounts.find((account) => account.platformId === draft.platformId)?.platform.name ?? '';
+    return message ? [{ id: draft.id, platform, message }] : [];
+  });
+}
+
+/** One reviewer message for several held drafts: "Bluesky: …" per draft. */
+function unapprovedMessage(drafts: readonly UnapprovedVariant[]): string {
+  return drafts.length === 1 ? drafts[0]!.message : drafts.map((draft) => `${draft.platform || 'Bài'}: ${draft.message}`).join(' ');
+}
+
 /** "Chưa có tài khoản nào sẵn sàng…" naming every account of the held platforms and why. */
 function noReadyAccountMessage(blocked: SkippedAccount[]): string {
   if (!blocked.length) return 'Không còn tài khoản nào của nền tảng này trong chiến dịch. Thêm hoặc kết nối lại tài khoản rồi duyệt lại.';
@@ -115,9 +139,13 @@ function noReadyAccountMessage(blocked: SkippedAccount[]): string {
 type DraftVariant = {
   id: string;
   platformId: string;
+  title: string | null;
+  body: string;
+  hashtags: string[];
   recommended: boolean;
   reason: string | null;
   mediaRecommendation?: Prisma.JsonValue | null;
+  aiApproval?: Prisma.JsonValue | null;
 };
 
 type SelectedMediaAsset = {
@@ -307,7 +335,7 @@ export class CampaignAutomationService {
             OR: [{ status: VariantStatus.GENERATED, targets: { none: {} } }, { id: { in: reservation.campaign.automationVariantIds ?? [] } }],
           },
           orderBy: { version: 'desc' },
-          select: { id: true, platformId: true, recommended: true, reason: true, mediaRecommendation: true },
+          select: { id: true, platformId: true, title: true, body: true, hashtags: true, recommended: true, reason: true, mediaRecommendation: true, aiApproval: true },
         });
       const reusableByPlatform = new Map<string, (typeof reusable)[number]>();
       for (const variant of reusable) {
@@ -364,9 +392,12 @@ export class CampaignAutomationService {
       // Credentials and account state can change while the model is generating.
       accounts = await this.loadConnectedAccounts(ownerId, dto.platformAccountIds);
 
-      // Only drafts that passed the AI quality check are auto-approved. The rest
-      // wait in "needs action" until an operator approves or edits them.
-      const approvable = variants.filter((variant) => variant.recommended);
+      // Only drafts that passed the AI quality check (and, when it is on, the final
+      // AI approver) are auto-approved. The rest wait in "needs action" until an
+      // operator approves or edits them.
+      const approverOn = this.ai.approvalEnabled();
+      const approverProblem = new Map(variants.map((variant) => [variant.id, aiApprovalProblem(variant, approverOn)]));
+      const approvable = variants.filter((variant) => variant.recommended && !approverProblem.get(variant.id));
       await this.prisma.$transaction(async (transaction) => {
         const approved = await transaction.contentVariant.updateMany({
           where: {
@@ -397,12 +428,12 @@ export class CampaignAutomationService {
               platformAccountId: account.id,
               idempotencyKey: stableIdempotencyKey(reservation.campaign.id, account.id, variant.id),
               scheduledAt,
-              ...(variant.recommended
+              ...(approvable.includes(variant)
                 ? { status: PublishJobStatus.SCHEDULED }
                 : {
                   status: PublishJobStatus.NEEDS_ACTION,
                   lastErrorCode: CONTENT_REVIEW_REQUIRED_CODE,
-                  lastErrorMessage: (variant.reason ?? 'Nội dung cần được duyệt trước khi đăng').slice(0, 1_000),
+                  lastErrorMessage: (approverProblem.get(variant.id) ?? variant.reason ?? 'Nội dung cần được duyệt trước khi đăng').slice(0, 1_000),
                 }),
             },
           });
@@ -499,10 +530,13 @@ export class CampaignAutomationService {
     const canonicalUrl = await this.canonicalUrlOf(ownerId, campaign.contentId);
     const drafts = await this.prisma.contentVariant.findMany({
       where: { id: { in: campaign.automationVariantIds }, contentId: campaign.contentId },
-      select: { id: true, platformId: true, title: true, body: true, hashtags: true },
+      select: { id: true, platformId: true, title: true, body: true, hashtags: true, aiApproval: true },
     });
-    // A post too long for one of its accounts keeps waiting; the others are posted.
+    // A post too long for one of its accounts, or one the final AI approver has
+    // not passed, keeps waiting; the others are posted.
     if (overLimitDrafts(drafts, accounts, canonicalUrl).length) return this.decideVariants(ownerId, id, 'approve', dto);
+    const approverOn = this.ai.approvalEnabled();
+    if (unapprovedDrafts(drafts, accounts, approverOn).length) return this.decideVariants(ownerId, id, 'approve', dto);
     await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.campaign.updateMany({
         where: { id, ownerId, status: CampaignStatus.DRAFT, automationState: 'WAITING_REVIEW' },
@@ -519,6 +553,8 @@ export class CampaignAutomationService {
       // Edited since the check above: refuse rather than send a post the site rejects.
       const tooLong = overLimitDrafts(variants, accounts, canonicalUrl);
       if (tooLong.length) throw new BadRequestException(tooLong.map((variant) => variant.message).join(' '));
+      const unapproved = unapprovedDrafts(variants, accounts, approverOn);
+      if (unapproved.length) throw new BadRequestException(unapprovedMessage(unapproved));
       await tx.contentVariant.updateMany({ where: { id: { in: variants.map((variant) => variant.id) } }, data: { status: VariantStatus.APPROVED } });
       for (const account of accounts) {
         const variant = byPlatform.get(account.platformId)!;
@@ -571,6 +607,7 @@ export class CampaignAutomationService {
     const request = campaign.automationRequest as unknown as AutomateCampaignDto;
     const { ready: accounts, blocked } = action === 'approve' ? await this.reviewAccounts(ownerId, request.platformAccountIds) : { ready: [], blocked: [] };
     const outcome: ReviewOutcome = { skippedAccounts: [], waitingVariantIds: [] };
+    const approverOn = action === 'approve' && this.ai.approvalEnabled();
     let publishDraft = false;
     await this.prisma.$transaction(async (tx) => {
       // Serializes decisions on one campaign so a draft never gets two sets of jobs.
@@ -599,6 +636,17 @@ export class CampaignAutomationService {
         }
         for (const variant of approvable) {
           if (!variant.body.trim()) throw new ConflictException('A draft is empty. Edit it before approving.');
+        }
+        // The final AI approver must have said yes to exactly this text: approving
+        // one such draft by hand is refused with the approver's reason; "approve
+        // all" and auto-publish leave it waiting and post the others.
+        const unapproved = unapprovedDrafts(approvable, accounts, approverOn);
+        if (unapproved.length) {
+          if ((variantId && trigger === 'review') || unapproved.length === approvable.length) throw new BadRequestException(unapprovedMessage(unapproved));
+          const unapprovedIds = new Set(unapproved.map((variant) => variant.id));
+          held.push(...approvable.filter((variant) => unapprovedIds.has(variant.id)));
+          approvable = approvable.filter((variant) => !unapprovedIds.has(variant.id));
+          outcome.unapprovedVariants = unapproved;
         }
         // A post the site would refuse as too long is never sent: approving it
         // alone is refused, "approve all" leaves it waiting and posts the others.
@@ -657,6 +705,7 @@ export class CampaignAutomationService {
         ...(outcome.skippedAccounts.length ? { skippedAccountIds: outcome.skippedAccounts.map((account) => account.id) } : {}),
         ...(outcome.waitingVariantIds.length ? { waitingVariantIds: outcome.waitingVariantIds } : {}),
         ...(outcome.overLimitVariants?.length ? { overLimitVariantIds: outcome.overLimitVariants.map((variant) => variant.id) } : {}),
+        ...(outcome.unapprovedVariants?.length ? { unapprovedVariantIds: outcome.unapprovedVariants.map((variant) => variant.id) } : {}),
       },
     });
     if (publishDraft) {

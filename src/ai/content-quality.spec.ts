@@ -1,9 +1,15 @@
 import { platformContract } from '../platforms/platform-contract';
-import { clampReview, deterministicIssues, draftRank, qualityInstructions, reviewInstructions, reviewPassed, rewriteFeedback, scoreFromReason } from './content-quality';
+import {
+  clampReview, ContentReview, deterministicIssues, draftRank, missingSafetyFields, qualityInstructions, reviewInstructions, reviewJsonSchema,
+  reviewPassed, ReviewSchema, reviewSummary, rewriteFeedback, safetyProblems, scoreFromReason,
+} from './content-quality';
 
 const VI = 'Mình vừa chuyển website sang máy chủ mới và thời gian tải trang giảm hẳn, chia sẻ lại các bước đã làm.';
 const EN = 'We moved our website to a new server and page load time dropped a lot, here are the steps we followed.';
-const review = { score: 8, hook: 8, specificity: 8, platformFit: 8, naturalness: 8, languageOk: true, unsupportedClaims: [], issues: [] };
+const review: ContentReview = {
+  score: 8, hook: 8, specificity: 8, platformFit: 8, naturalness: 8, languageOk: true, unsupportedClaims: [], issues: [],
+  seeding: { detected: false, notes: [] }, brandRisk: 'none', riskNotes: [],
+};
 
 describe('content quality checks', () => {
   it('accepts a draft that fits its destination', () => {
@@ -101,6 +107,66 @@ describe('content quality checks', () => {
     expect(many).toContain(`- 9:${'x'.repeat(398)}\n`);
     expect(many).not.toContain('- 10:');
     expect(many).not.toContain('x'.repeat(399));
+  });
+
+  it('fails clumsy seeding and a medium or high company risk whatever the score', () => {
+    expect(reviewPassed({ ...review, score: 9, seeding: { detected: true, notes: ['Giả làm khách hàng'] } })).toBe(false);
+    expect(reviewPassed({ ...review, score: 9, brandRisk: 'medium' })).toBe(false);
+    expect(reviewPassed({ ...review, score: 9, brandRisk: 'high' })).toBe(false);
+    expect(reviewPassed({ ...review, score: 9, brandRisk: 'low', riskNotes: ['Chữ "nhanh nhất" hơi quá'] })).toBe(true);
+  });
+
+  it('sends seeding and company-risk notes to the writer first and into the stored problems', () => {
+    const flagged: ContentReview = {
+      ...review, score: 9, issues: ['Mở bài chung chung'],
+      seeding: { detected: true, notes: ['Câu "mình là khách quen" giả làm người dùng độc lập'] },
+      brandRisk: 'high', riskNotes: ['Hướng dẫn dùng proxy để lách lệnh cấm tài khoản'],
+    };
+    const feedback = rewriteFeedback([], flagged).split('\n');
+    expect(feedback.slice(0, 2)).toEqual([
+      '- Clumsy seeding (reads as a disguised advert), fix it: Câu "mình là khách quen" giả làm người dùng độc lập',
+      '- Risk for the company (high), remove it: Hướng dẫn dùng proxy để lách lệnh cấm tài khoản',
+    ]);
+    expect(feedback).toContain('- Mở bài chung chung');
+    expect(safetyProblems(flagged)).toEqual([
+      'Seeding: Câu "mình là khách quen" giả làm người dùng độc lập',
+      'Rủi ro cho công ty: Hướng dẫn dùng proxy để lách lệnh cấm tài khoản',
+    ]);
+    // Without notes the problem is still named.
+    expect(safetyProblems({ ...review, seeding: { detected: true, notes: [] }, brandRisk: 'medium' }))
+      .toEqual(['Seeding: bài đọc như quảng cáo trá hình', 'Rủi ro cho công ty: mức trung bình']);
+    expect(safetyProblems({ ...review, brandRisk: 'low', riskNotes: ['nhỏ'] })).toEqual([]);
+    expect(safetyProblems(null)).toEqual([]);
+  });
+
+  it('takes a review without the seeding and risk fields as not detected, and reports them missing', () => {
+    const old = ReviewSchema.parse({ score: 8, hook: 8, specificity: 8, platformFit: 8, naturalness: 8, languageOk: true, unsupportedClaims: [], issues: [] });
+    expect(missingSafetyFields(old)).toEqual(['seeding', 'brandRisk']);
+    expect(clampReview(old)).toMatchObject({ seeding: { detected: false, notes: [] }, brandRisk: 'none', riskNotes: [] });
+    expect(reviewPassed(clampReview(old))).toBe(true);
+    const loose = ReviewSchema.parse({ ...old, seeding: { detected: true }, brandRisk: 'Moderate', riskNotes: [' a ', '', 'b', 'c', 'd'] });
+    expect(missingSafetyFields(loose)).toEqual([]);
+    expect(clampReview(loose)).toMatchObject({ seeding: { detected: true, notes: [] }, brandRisk: 'medium', riskNotes: ['a', 'b', 'c'] });
+    expect(reviewJsonSchema.required).toEqual(expect.arrayContaining(['seeding', 'brandRisk', 'riskNotes']));
+  });
+
+  it('defines seeding and company risk for the editor', () => {
+    const text = reviewInstructions(platformContract('bluesky'), 280);
+    expect(text).toContain('pretends to be an unaffiliated customer or a neutral user');
+    expect(text).toContain('fake or invented testimonials');
+    expect(text).toContain('disparages competitors');
+    expect(text).toContain('without saying the author is affiliated');
+    expect(text).toContain('VPSTTT, a VPS and proxy provider');
+    expect(text).toContain('cheapest, 100% uptime, unlimited');
+    expect(text).toContain('evading bans or blocks, scraping against terms of service, spam');
+    expect(text).toContain('embarrass the company if a reader took a screenshot');
+    expect(text).toContain('A draft with seeding detected or a medium or high brandRisk fails whatever its score');
+  });
+
+  it('summarises the review for the final approver', () => {
+    expect(reviewSummary({ ...review, brandRisk: 'low', riskNotes: ['nhỏ'] }, [])).toContain('Editor score 8/10');
+    expect(reviewSummary({ ...review, brandRisk: 'low', riskNotes: ['nhỏ'] }, [])).toContain('Brand risk: low (nhỏ).');
+    expect(reviewSummary(null, ['Thiếu tiêu đề'])).toBe('The editor could not score this draft (reviewer unavailable). Machine checks still failing: Thiếu tiêu đề.');
   });
 
   it('reads the stored score from a reason', () => {

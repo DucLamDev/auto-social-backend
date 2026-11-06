@@ -4,6 +4,8 @@ import { ApplicationException, ErrorCode } from '../common/exceptions/applicatio
 import { PrismaService } from '../database/prisma.service';
 import { AiProvider } from './ai-provider';
 import { AiContentService, contractInstructions, extractJsonObject } from './ai-content.service';
+import { approvalHash, approvalJsonSchema, ApprovalSchema } from './content-approval';
+import { scoreFromReason } from './content-quality';
 import { platformContract } from '../platforms/platform-contract';
 import { checkPostLength } from '../platforms/post-length';
 import { BrandProfileService } from './brand-profile.service';
@@ -582,8 +584,18 @@ describe('AiContentService quality-checked generation', () => {
     }),
   });
   const reviewed = (review: Record<string, unknown> = passingReview) => ({ output_text: JSON.stringify(review) });
+  /** A VPSTTT AI chat reply (the reviewer and the approver run there by default). */
+  const chat = (value: Record<string, unknown>) => ({ choices: [{ message: { content: JSON.stringify(value) } }] });
+  const verdict = (extra: Record<string, unknown> = {}) => chat({ approved: true, score: 9, risk: 'none', seeding: false, reasons: [], ...extra });
 
-  function setup(create: jest.Mock, { slug = 'bluesky', canonicalUrl = null as string | null } = {}) {
+  /**
+   * The writer (and, unless `config` says otherwise, the reviewer) answer on
+   * the OpenAI mock `create`; the final approver (default vpsttt:claude:opus)
+   * answers on `approve`, which approves unless a test says otherwise. With
+   * `approve: null` VPSTTT AI has no key.
+   */
+  interface SetupOptions { slug?: string; canonicalUrl?: string | null; approve?: jest.Mock | null; config?: Record<string, ConfigValue> }
+  function setup(create: jest.Mock, { slug = 'bluesky', canonicalUrl = null, approve = jest.fn().mockResolvedValue(verdict()), config = {} }: SetupOptions = {}) {
     const created: Array<Record<string, unknown>> = [];
     const transaction = {
       contentVariant: {
@@ -625,17 +637,20 @@ describe('AiContentService quality-checked generation', () => {
       },
       $transaction: jest.fn((callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
     };
-    const config = isolatedConfig();
+    // The reviewer is pinned to the writer's provider here so each test lists
+    // write and review answers in order; the role tests below use the defaults.
+    const settings = isolatedConfig({ AI_REVIEWER: 'openai', VPSTTT_AI_RPM: 60_000, ...config });
     const brand = { load: () => Promise.resolve({ brandName: 'VPSTTT', facts: ['VPS NVMe triển khai trong 60 giây'] }) };
     const service = new AiContentService(
       prisma as unknown as PrismaService,
-      config,
+      settings,
       { configured: () => Promise.resolve(false), run: jest.fn() } as unknown as GeminiKeyPoolService,
       brand as unknown as BrandProfileService,
     );
     installClient(service, 'openai', { responses: { create } });
+    if (approve) installClient(service, 'vpsttt', { chat: { completions: { create: approve } } });
     const delay = skipGeminiRetryDelay(service);
-    return { service, created, delay };
+    return { service, created, delay, approve, prisma };
   }
 
   type Request = { instructions: string; input: string; text: { format: { name: string } } };
@@ -1012,7 +1027,7 @@ describe('AiContentService quality-checked generation', () => {
     expect(created[0]).toMatchObject({ recommended: false, reason: 'Cần xem lại (AI chấm 8/10): AI đánh giá không hợp nơi đăng: Không phải câu hỏi thật' });
   });
 
-  it('retries a rate-limited write once and still stores the draft when the reviewer is unavailable', async () => {
+  it('retries a rate-limited write once and stores, but never recommends, a draft the reviewer could not score', async () => {
     const create = jest.fn()
       .mockRejectedValueOnce({ status: 429, message: 'raw-limit' })
       .mockResolvedValueOnce(variant(shortBody))
@@ -1023,7 +1038,294 @@ describe('AiContentService quality-checked generation', () => {
 
     expect(delay).toHaveBeenCalledWith(2_000);
     expect(create).toHaveBeenCalledTimes(3);
-    expect(created[0]).toMatchObject({ recommended: true, reason: 'Hợp người đọc (AI chưa chấm được)' });
+    // Until 3 roles: recommended=true, reason "Hợp người đọc (AI chưa chấm được)".
+    expect(created[0]).toMatchObject({
+      recommended: false,
+      reason: 'Cần xem lại (AI chưa chấm được): Chưa có điểm của AI chấm (OpenAI · openai-test-model), đọc kỹ trước khi duyệt',
+    });
+  });
+
+  describe('three AI roles: writer, reviewer, final approver', () => {
+    type ChatRequest = { model: string; messages: Array<{ role: string; content: string }> };
+    const chatRequest = (mock: jest.Mock, index: number) => (mock.mock.calls[index] as [ChatRequest])[0];
+    const stored = (row: Record<string, unknown>) => row as { title: string | null; body: string; hashtags: string[]; recommended: boolean; reason: string; aiApproval?: Record<string, unknown> };
+
+    it('sends the writer to the campaign provider, the reviewer to Claude Sonnet and the approver to Claude Opus', async () => {
+      const create = jest.fn().mockResolvedValueOnce(variant(shortBody));
+      const vpsttt = jest.fn((request: ChatRequest) => Promise.resolve(request.model === 'claude:opus'
+        ? verdict({ reasons: ['Có thể thêm một ví dụ'] })
+        : chat({ ...passingReview, seeding: { detected: false, notes: [] }, brandRisk: 'none', riskNotes: [] })));
+      const { service, created } = setup(create, { approve: vpsttt, config: { AI_REVIEWER: '' } });
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai-test-model' }));
+      expect(vpsttt.mock.calls.map(([request]) => request.model)).toEqual(['claude:sonnet', 'claude:opus']);
+      const reviewer = chatRequest(vpsttt, 0);
+      expect(reviewer.messages[0]!.content).toContain('demanding but fair senior editor for Bluesky');
+      expect(reviewer.messages[0]!.content).toContain('clumsy seeding (astroturfing)');
+      const approver = chatRequest(vpsttt, 1);
+      expect(approver.messages[0]!.content).toContain('final approver for posts published on behalf of VPSTTT');
+      expect(approver.messages[1]!.content).toContain(`<body>\n${shortBody}\n</body>`);
+      expect(approver.messages[1]!.content).toContain('<brand_facts>');
+      expect(approver.messages[1]!.content).toContain('Editor score 8/10');
+      expect(approver.messages[1]!.content).toContain('Image: none, the post is text only.');
+      const row = stored(created[0]!);
+      expect(row).toMatchObject({ recommended: true, reason: 'Hợp người đọc (AI chấm 8/10)' });
+      expect(row.aiApproval).toMatchObject({
+        status: 'approved', approver: 'vpsttt:claude:opus', approverLabel: 'Claude Opus', score: 9, risk: 'none', seeding: false,
+        reasons: ['Có thể thêm một ví dụ'], error: null,
+        textHash: approvalHash({ title: row.title, body: row.body, hashtags: row.hashtags }),
+      });
+      expect(new Date(row.aiApproval!.startedAt as string).toISOString()).toBe(row.aiApproval!.startedAt);
+      expect(new Date(row.aiApproval!.finishedAt as string).toISOString()).toBe(row.aiApproval!.finishedAt);
+    });
+
+    it('reviews with the writer when the reviewer has no key, and fails the approval clearly when the approver has none', async () => {
+      const create = jest.fn().mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed());
+      const { service, created } = setup(create, { approve: null, config: { AI_REVIEWER: '' } });
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+      expect(request(create, 1).text.format.name).toBe('content_review');
+      const row = stored(created[0]!);
+      expect(row.recommended).toBe(false);
+      expect(row.reason).toBe('AI duyệt cuối chưa chạy được: Chưa cấu hình VPSTTT AI (VPSTTT_AI_BASE_URL, VPSTTT_AI_API_KEY) để chạy claude:opus (AI chấm 8/10)');
+      expect(row.aiApproval).toMatchObject({ status: 'failed', approver: 'vpsttt:claude:opus', error: expect.stringContaining('Chưa cấu hình VPSTTT AI') as unknown });
+    });
+
+    it('fails a 9/10 draft with seeding or a medium/high risk for the company, and sends the notes to the writer and the reason', async () => {
+      const create = jest.fn()
+        .mockResolvedValueOnce(variant(shortBody))
+        .mockResolvedValueOnce(reviewed({ ...passingReview, score: 9, seeding: { detected: true, notes: ['Giả làm khách hàng độc lập'] }, brandRisk: 'none', riskNotes: [] }))
+        .mockResolvedValueOnce(variant(shortBody))
+        .mockResolvedValueOnce(reviewed({ ...passingReview, score: 9, seeding: { detected: false, notes: [] }, brandRisk: 'high', riskNotes: ['Chỉ cách dùng proxy lách lệnh cấm'] }))
+        .mockResolvedValueOnce(variant(shortBody))
+        .mockResolvedValueOnce(reviewed({ ...passingReview, score: 9, seeding: { detected: false, notes: [] }, brandRisk: 'medium', riskNotes: ['Hứa "không bao giờ bị chặn"'] }));
+      const { service, created, approve } = setup(create);
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+      expect(create).toHaveBeenCalledTimes(6);
+      expect(request(create, 1).instructions).toContain('brandRisk: the risk for the company publishing the post');
+      expect(request(create, 2).input).toContain('- Clumsy seeding (reads as a disguised advert), fix it: Giả làm khách hàng độc lập');
+      expect(request(create, 4).input).toContain('- Risk for the company (high), remove it: Chỉ cách dùng proxy lách lệnh cấm');
+      // The approver still reads the final draft once; its yes does not lift a failed review.
+      expect(approve!).toHaveBeenCalledTimes(1);
+      expect(chatRequest(approve!, 0).messages[1]!.content).toContain('Brand risk: medium (Hứa "không bao giờ bị chặn")');
+      expect(stored(created[0]!)).toMatchObject({
+        recommended: false, reason: 'Cần xem lại (AI chấm 9/10): Rủi ro cho công ty: Hứa "không bao giờ bị chặn"',
+      });
+    });
+
+    it('keeps the draft unrecommended when the approver refuses, leading the reason and keeping the score readable', async () => {
+      const create = jest.fn().mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed());
+      const approve = jest.fn().mockResolvedValue(verdict({ approved: false, score: 5, risk: 'low', reasons: ['Câu cuối như quảng cáo.', 'Thiếu ví dụ cụ thể'] }));
+      const { service, created } = setup(create, { approve });
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+      const row = stored(created[0]!);
+      expect(row.recommended).toBe(false);
+      expect(row.reason).toBe('AI duyệt cuối (Claude Opus) từ chối: Câu cuối như quảng cáo; Thiếu ví dụ cụ thể (AI chấm 8/10)');
+      expect(scoreFromReason(row.reason)).toBe(8);
+      expect(row.aiApproval).toMatchObject({ status: 'rejected', score: 5, risk: 'low', textHash: approvalHash(row) });
+    });
+
+    it('puts the refusal before the review problems when both fail', async () => {
+      const create = jest.fn()
+        .mockResolvedValueOnce(variant(shortBody, { recommended: false, reason: 'Không hợp cộng đồng' }))
+        .mockResolvedValueOnce(reviewed());
+      const approve = jest.fn().mockResolvedValue(verdict({ approved: true, seeding: true, reasons: [] }));
+      const { service, created } = setup(create, { approve });
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+      expect(stored(created[0]!).reason).toBe('AI duyệt cuối (Claude Opus) từ chối: Bài có dấu hiệu seeding (quảng cáo trá hình). Cần xem lại (AI chấm 8/10): AI đánh giá không hợp nơi đăng: Không hợp cộng đồng');
+    });
+
+    it('never throws when VPSTTT AI refuses the approver model, and says so in Vietnamese', async () => {
+      const create = jest.fn().mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed());
+      const approve = jest.fn().mockRejectedValue({ status: 403, message: 'raw-upstream', error: { code: 'model_denied', message: 'raw-upstream' } });
+      const { service, created } = setup(create, { approve });
+
+      await expect(service.generate('owner-1', 'content-1', ['bluesky'], 'openai')).resolves.toHaveLength(1);
+
+      expect(approve).toHaveBeenCalledTimes(1);
+      const row = stored(created[0]!);
+      expect(row.recommended).toBe(false);
+      expect(row.reason).toMatch(/^AI duyệt cuối chưa chạy được: VPSTTT AI chưa cho key này dùng claude:opus \(kiểm tra quyền model và IP được phép của key trong mục AI API\) \(AI chấm 8\/10\)$/);
+      expect(row.aiApproval).toMatchObject({ status: 'failed', error: expect.stringContaining('VPSTTT AI chưa cho key này dùng claude:opus') as unknown });
+      expect(JSON.stringify(row.aiApproval)).not.toContain('raw-upstream');
+    });
+
+    it('hashes exactly the stored text, after repairing escaped line breaks and trimming hashtags', async () => {
+      const escaped = 'Triển khai VPS NVMe trong 60 giây.\\nCó người hỗ trợ bằng tiếng Việt.\\nBạn chạy dự án ở đâu? #vps';
+      const create = jest.fn().mockResolvedValueOnce(variant(escaped, { hashtags: ['#vps', ' vps ', 'nvme'] })).mockResolvedValueOnce(reviewed());
+      const { service, created } = setup(create);
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+      const row = stored(created[0]!);
+      expect(row.body).toContain('60 giây.\nCó người');
+      expect(row.hashtags).toEqual(['vps', 'nvme']);
+      expect(row.aiApproval!.textHash).toBe(approvalHash(row));
+    });
+
+    it('returns the approval with a revised draft, for the rewrite to store', async () => {
+      const create = jest.fn().mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed());
+      const { service } = setup(create);
+      const result = await service.reviseDraft('owner-1', {
+        contentId: 'content-1', platformSlug: 'bluesky',
+        revision: { previous: { title: null, body: 'Bản cũ', hashtags: ['vps'] }, instruction: 'Ngắn hơn' },
+      }, 'openai');
+      expect(result).toMatchObject({ recommended: true, approval: { status: 'approved', textHash: approvalHash(result) } });
+    });
+
+    it('works as before when the final approver is switched off', async () => {
+      const create = jest.fn()
+        .mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed())
+        .mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed());
+      const { service, created, approve } = setup(create, { config: { AI_APPROVAL_ENABLED: 'false' } });
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+      const revised = await service.reviseDraft('owner-1', {
+        contentId: 'content-1', platformSlug: 'bluesky', revision: { previous: { title: null, body: 'Bản cũ', hashtags: [] }, instruction: 'x' },
+      }, 'openai');
+
+      expect(approve).not.toHaveBeenCalled();
+      expect(created[0]).toMatchObject({ recommended: true, reason: 'Hợp người đọc (AI chấm 8/10)' });
+      expect(created[0]).not.toHaveProperty('aiApproval');
+      expect(revised).not.toHaveProperty('approval');
+      expect(service.approvalEnabled()).toBe(false);
+    });
+
+    describe('approveDraft', () => {
+      const draft = {
+        contentId: 'content-1', platformSlug: 'devto', engine: 'devto' as const,
+        title: 'Deploy NVMe VPS in 60 seconds', body: '## Steps\nCreate the server, then **connect** over SSH.', hashtags: ['#VPS', 'linux'],
+        image: { prompt: 'Isometric server rack, cyan glow', altText: 'A server rack' }, reviewNotes: 'Hợp người đọc (AI chấm 8/10)',
+      };
+
+      it('reads the post as published with its image, brief, brand facts and review, and hashes the given text', async () => {
+        const create = jest.fn();
+        const { service, approve } = setup(create);
+
+        const approval = await service.approveDraft('owner-1', draft);
+
+        expect(create).not.toHaveBeenCalled();
+        const sent = chatRequest(approve!, 0);
+        expect(sent.model).toBe('claude:opus');
+        expect(sent.messages[0]!.content).toContain('Return only one JSON object');
+        const input = sent.messages[1]!.content;
+        expect(input).toContain('Destination: dev.to');
+        expect(input).toContain('<title>Deploy NVMe VPS in 60 seconds</title>');
+        expect(input).toContain('<body>\n## Steps\nCreate the server, then **connect** over SSH.\n</body>');
+        expect(input).toContain('<tags>VPS, linux</tags>');
+        expect(input).toContain('- Generator prompt: Isometric server rack, cyan glow\n- Alt text: A server rack');
+        expect(input).toContain(`Brief or source (short marketing brief):\n${brief}`);
+        expect(input).toContain('Brand: VPSTTT');
+        expect(input).toContain("The editor's last review:\nHợp người đọc (AI chấm 8/10)");
+        expect(approval).toMatchObject({
+          status: 'approved', approver: 'vpsttt:claude:opus', approverLabel: 'Claude Opus',
+          textHash: approvalHash({ title: draft.title, body: draft.body, hashtags: draft.hashtags }),
+        });
+      });
+
+      it.each([
+        [{ name: 'APIConnectionTimeoutError', message: 'raw' }, 'VPSTTT AI trả lời quá thời gian chờ, thử lại sau', 2],
+        [{ status: 429, message: 'raw' }, 'VPSTTT AI đang giới hạn số lượt gọi (429), thử lại sau ít phút', 2],
+        [{ status: 400, message: 'raw' }, 'VPSTTT AI từ chối yêu cầu duyệt (model claude:opus không hợp lệ hoặc bài quá dài)', 1],
+      ])('turns a provider error into a failed verdict instead of throwing (%o)', async (providerError, message, calls) => {
+        const approve = jest.fn().mockRejectedValue(providerError);
+        const { service } = setup(jest.fn(), { approve });
+
+        const approval = await service.approveDraft('owner-1', draft);
+
+        expect(approve).toHaveBeenCalledTimes(calls);
+        expect(approval).toMatchObject({ status: 'failed', error: message, approver: 'vpsttt:claude:opus' });
+        expect(approval.textHash).toBe(approvalHash(draft));
+      });
+
+      it('shows a title only where readers see one: above the body on Quora, not at all on Bluesky', async () => {
+        const { service, approve } = setup(jest.fn());
+        await service.approveDraft('owner-1', { contentId: 'content-1', platformSlug: 'quora', title: 'Which VPS for a small API?', body: 'Short answer first.', hashtags: [] });
+        await service.approveDraft('owner-1', { contentId: 'content-1', platformSlug: 'bluesky', title: 'Not shown', body: shortBody, hashtags: ['vps'] });
+        const quora = chatRequest(approve!, 0).messages[1]!.content;
+        expect(quora).toContain('<post>\n<body>\nWhich VPS for a small API?\n\nShort answer first.\n</body>\n</post>');
+        expect(chatRequest(approve!, 1).messages[1]!.content).not.toContain('Not shown');
+      });
+
+      it('reports an approver without a key as failed, without calling anything', async () => {
+        const create = jest.fn();
+        const { service } = setup(create, { approve: null });
+        await expect(service.approveDraft('owner-1', draft)).resolves.toMatchObject({ status: 'failed', error: expect.stringContaining('Chưa cấu hình VPSTTT AI') as unknown });
+        expect(create).not.toHaveBeenCalled();
+      });
+
+      it('uses another provider as approver when configured, with its own model', async () => {
+        const create = jest.fn().mockResolvedValueOnce({ output_text: JSON.stringify({ approved: true, score: 8, risk: 'low', seeding: false, reasons: [] }) });
+        const { service, approve } = setup(create, { config: { AI_APPROVER: 'openai:gpt-5' } });
+        await expect(service.approveDraft('owner-1', draft)).resolves.toMatchObject({ status: 'approved', approver: 'openai:gpt-5', approverLabel: 'OpenAI · gpt-5' });
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5', text: { format: expect.objectContaining({ name: 'content_approval' }) as unknown } }));
+        expect(approve).not.toHaveBeenCalled();
+      });
+    });
+
+    it('describes the reviewer and the approver without keys', async () => {
+      const { service } = setup(jest.fn(), { config: { AI_REVIEWER: '' } });
+      expect(await service.roles()).toEqual({
+        reviewer: { provider: 'vpsttt', model: 'claude:sonnet', label: 'Claude Sonnet', configured: true },
+        approver: { provider: 'vpsttt', model: 'claude:opus', label: 'Claude Opus', configured: true },
+        approvalEnabled: true,
+      });
+      const { service: withoutKey } = setup(jest.fn(), { approve: null, config: { AI_APPROVER: 'gemini' } });
+      expect(await withoutKey.roles()).toEqual({
+        reviewer: { provider: 'openai', model: 'openai-test-model', label: 'OpenAI · openai-test-model', configured: true },
+        approver: { provider: 'gemini', model: 'gemini-test-model', label: 'Google Gemini · gemini-test-model', configured: false },
+        approvalEnabled: true,
+      });
+    });
+  });
+});
+
+describe('AiContentService per-call model', () => {
+  const output = { approved: true, score: 9, risk: 'none', seeding: false, reasons: [] };
+  const spec = { name: 'content_approval', jsonSchema: approvalJsonSchema, zod: ApprovalSchema };
+  type Structured = { requestStructured(provider: AiProvider, instructions: string, input: string, s: typeof spec, model?: string): Promise<unknown> };
+
+  it.each([
+    ['openai', 'gpt-5', 'openai-test-model'],
+    ['deepseek', 'deepseek-reasoner', 'deepseek-test-model'],
+    ['vpsttt', 'claude:opus', 'claude:sonnet'],
+  ] as const)('sends %s the requested model, or its configured model when none is given', async (provider, model, configured) => {
+    const service = createService({} as PrismaService, isolatedConfig({ VPSTTT_AI_RPM: 60_000 }));
+    const create = jest.fn().mockResolvedValue(provider === 'openai'
+      ? { output_text: JSON.stringify(output) }
+      : { choices: [{ message: { content: JSON.stringify(output) } }] });
+    installClient(service, provider, provider === 'openai' ? { responses: { create } } : { chat: { completions: { create } } });
+    const target = service as unknown as Structured;
+
+    await target.requestStructured(provider, 'Judge.', 'Post', spec, model);
+    await target.requestStructured(provider, 'Judge.', 'Post', spec);
+
+    expect(create).toHaveBeenNthCalledWith(1, expect.objectContaining({ model }));
+    expect(create).toHaveBeenNthCalledWith(2, expect.objectContaining({ model: configured }));
+  });
+
+  it('uses the requested Gemini model first and still falls back after it fails', async () => {
+    const parse = jest.fn()
+      .mockRejectedValueOnce({ status: 503, message: 'raw' })
+      .mockRejectedValueOnce({ status: 503, message: 'raw' })
+      .mockResolvedValueOnce({ choices: [{ message: { parsed: output, content: null } }] });
+    const service = createService({} as PrismaService, isolatedConfig());
+    skipGeminiRetryDelay(service);
+    installClient(service, 'gemini', { chat: { completions: { parse } } });
+
+    await (service as unknown as Structured).requestStructured('gemini', 'Judge.', 'Post', spec, 'gemini-3.5-pro');
+
+    expect(parse.mock.calls.map(([request]) => (request as { model: string }).model)).toEqual(['gemini-3.5-pro', 'gemini-3.5-pro', 'gemini-fallback-test-model']);
   });
 });
 
