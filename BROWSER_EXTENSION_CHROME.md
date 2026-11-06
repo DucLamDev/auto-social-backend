@@ -1,5 +1,13 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Tiện ích 1.16.1: trang tải chậm, MeWe, đăng nhập Google song song
+
+- Lần hỏi trang khi xác nhận tài khoản có hạn `AUTH_PROBE_TIMEOUT_MS` (8 giây). Hết hạn khi tab còn `loading` thì chờ
+  tiếp trong thời hạn đăng nhập; tab đã tải xong mà 2 lần liền không phản hồi mới dừng.
+- MeWe: thêm cách nhận tài khoản bằng tên trên thẻ hồ sơ của /myworld (khối có Followers / Following), so khớp bỏ dấu,
+  hoa thường, khoảng trắng với username / URL hồ sơ.
+- Khoá đăng nhập Google (`googleSignIns`) chỉ giữ khi đang ở bước đăng nhập Google thật; kiểm tra phiên sẵn có không giữ khoá.
+
 ## Backend 1.29.0 / tiện ích 1.16.0: Unraid Forums (Invision), aaPanel Forum (Flarum), cPanel Community (Zendesk)
 
 Cần backend 1.29.0 và tiện ích 1.16.0. Sau khi cập nhật backend chạy `scripts/sync-extension-flows.cjs --apply`, nạp

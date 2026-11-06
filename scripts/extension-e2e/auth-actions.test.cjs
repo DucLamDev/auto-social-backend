@@ -523,6 +523,20 @@ test('Flarum reads the session user from its boot payload, Zendesk from its user
   } finally { await page.close(); }
 });
 
+test('MeWe confirms the account from the name on the own profile card of /myworld', async () => {
+  const card = '<aside class="profile-card"><h2>VPSTTT Group</h2><div class="counters"><span>0 Followers</span><span>6 Following</span></div><span>0 Posts</span><p>Member since August 2026</p></aside>';
+  const feed = '<main class="c-mw-posts-feed"><div class="c-mw-post"><b>VPSTTT Group</b> 3 Followers 1 Following</div></main>';
+  const page = await pageAt('https://mewe.com/myworld', `${card}<nav><span>Following</span><span>Explore</span></nav>${feed}`);
+  const scoped = auth => ({ ...job, targetOrigin: 'https://mewe.com', recipe: { engine: 'mewe' }, auth: { ...job.auth, provider: 'google', profileUrl: 'https://mewe.com/vpsttt_group/posts', ...auth } });
+  try {
+    await page.route('**/api/v2/me/info', route => route.fulfill({ status: 401, json: {} }));
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped({ expectedUsername: 'vpsttt_group' }) })).state, 'authenticated');
+    // Another account's card proves nothing (and a post in the feed never counts).
+    await page.evaluate(() => { document.querySelector('.profile-card h2').textContent = 'VPSTTT'; });
+    assert.notEqual((await page.evaluate(accountAuthStep, { job: scoped({ expectedUsername: 'vpsttt_group' }) })).state, 'authenticated');
+  } finally { await page.close(); }
+});
+
 test('MeWe confirms the account from its own API or the own profile link, never from a feed post', async () => {
   const feed = '<main class="c-mw-posts-feed"><div class="c-mw-post"><a href="/vpsttt_group">VPSTTT Group</a></div></main>';
   const page = await pageAt('https://mewe.com/myworld', `<div class="c-mw-postbox-placeholder">How is your day going?</div>${feed}`);

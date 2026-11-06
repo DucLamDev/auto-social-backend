@@ -1,6 +1,21 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.29.2 · 06/11/2026
+### Sửa lỗi
+- Chrome trên VPS "mở social rồi để đó": MeWe, Linux Foundation Forum và các tài khoản đăng nhập bằng Google (tiện ích 1.16.1)
+  - **Trang tải chậm không còn bị bỏ.** Khi xác nhận tài khoản, tiện ích mở trang hồ sơ; qua proxy trang Linux
+    Foundation tải hơn 8 giây, tiện ích coi là "Trang không phản hồi kiểm tra trong 8 giây" và dừng ngay lần đầu. Nay
+    trang còn đang tải thì chờ tiếp trong thời hạn đăng nhập; chỉ dừng khi trang đã tải xong mà 2 lần liền không phản
+    hồi. Hết hạn vì trang quá chậm thì báo rõ là do mạng / proxy.
+  - **MeWe nhận đúng tài khoản.** Các cách trước (API, link hồ sơ) không khớp trang thật nên lượt đăng chờ 3 phút rồi
+    báo "Chưa xác nhận được đúng tài khoản". Nay tiện ích đọc tên trên thẻ hồ sơ của chính mình ở /myworld (khối có
+    Followers / Following, ví dụ "VPSTTT Group" khớp `vpsttt_group`); chỉ khớp đúng mới tính, bài trong bảng tin không tính.
+  - **Tài khoản Google không còn xếp hàng chờ nhau.** Trước đây mọi bài của tài khoản đăng nhập bằng Google xác nhận
+    lần lượt, nên một bài kẹt 3 phút làm các tab khác đứng chờ. Nay chỉ bước đăng nhập Google thật (bấm "Sign in with
+    Google", chọn tài khoản, nhập mật khẩu) mới lần lượt; phiên đã đăng nhập sẵn được kiểm tra song song.
+  - Cần nạp lại tiện ích 1.16.1 rồi bấm "Giao lại cho tiện ích" ở các bài đang chờ; máy chủ không đổi.
+
 ## 1.29.1 · 06/11/2026
 ### Sửa lỗi
 - Tiện ích 1.16.0 báo "Lỗi kết nối: supportedEngines must contain no more than 30 elements" và không nhận bài nào
