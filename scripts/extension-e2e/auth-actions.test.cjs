@@ -504,6 +504,21 @@ test('Hugging Face reads the signed-in user from its session endpoint', async ()
   } finally { await page.close(); }
 });
 
+test('Vanilla reads the signed-in user from the gdn.meta script of the page (guests have userID 0)', async () => {
+  const meta = user => `<script>gdn=window.gdn||{};gdn.meta={"siteTitle":"Linux Foundation - Forums","currentUser":${JSON.stringify(user).replace(/\//g, '\\/')},"inputFormat":"markdown"};</script>`;
+  const scoped = (expectedUsername, profileUrl) => ({ ...job, targetOrigin: 'https://forum.linuxfoundation.org', recipe: { engine: 'vanilla' }, auth: { ...job.auth, provider: 'google', expectedUsername, profileUrl } });
+  const signedIn = meta({ userID: 211511, name: 'Vpsttt', url: 'https://forum.linuxfoundation.org/profile/Vpsttt', dateLastActive: { date: '2026-11-06' } });
+  let page = await pageAt('https://forum.linuxfoundation.org/', `${signedIn}<main>Categories</main>`);
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped('Vpsttt', 'https://forum.linuxfoundation.org/profile/211511/Vpsttt') })).state, 'authenticated');
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped('other_member', 'https://forum.linuxfoundation.org/profile/42/other_member') })).state, 'mismatch');
+  } finally { await page.close(); }
+  page = await pageAt('https://forum.linuxfoundation.org/', `${meta({ userID: 0, name: 'guest', url: 'https://forum.linuxfoundation.org/profile/guest' })}<main>Categories</main>`);
+  try {
+    assert.notEqual((await page.evaluate(accountAuthStep, { job: scoped('Vpsttt', 'https://forum.linuxfoundation.org/profile/211511/Vpsttt') })).state, 'authenticated');
+  } finally { await page.close(); }
+});
+
 test('Flarum reads the session user from its boot payload, Zendesk from its users/me endpoint', async () => {
   const payload = JSON.stringify({ resources: [{ type: 'users', id: '7', attributes: { username: 'vpsttt', displayName: 'VPSTTT Team' } }], session: { userId: 7, csrfToken: 'x' } });
   let page = await pageAt('https://www.aapanel.com/forum/t/general', `<script id="flarum-json-payload" type="application/json">${payload}</script><main>Start a Discussion</main>`);

@@ -1,6 +1,17 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.30.2 · 06/11/2026
+### Sửa lỗi
+- Linux Foundation Forum (Vanilla) không còn "mở lên rồi để đấy" (tiện ích 1.17.2)
+  - Lượt đăng đứng 3 phút ở bước xác nhận tài khoản rồi báo "Chưa xác nhận được đúng tài khoản". Diễn đàn chạy Vanilla
+    bản cloud mới (2026): tên người dùng nằm trong menu ảnh đại diện chứ không có sẵn trên trang, và trang hồ sơ chỉ
+    hiện đủ khi tab đang mở trước mặt, còn lượt đăng diễn đàn chạy ở tab nền.
+  - Nay tiện ích đọc người dùng đang đăng nhập mà Vanilla ghi sẵn trong mã mỗi trang (`gdn.meta.currentUser`; khách có
+    mã người dùng 0), không phụ thuộc giao diện hay tab có đang hiện. Tài khoản khác thì báo rõ tên tài khoản đang đăng
+    nhập; khách thì không bao giờ được tính là đã đăng nhập.
+  - Cần nạp lại tiện ích 1.17.2 rồi bấm "Giao lại cho tiện ích"; máy chủ không đổi.
+
 ## 1.30.1 · 06/11/2026
 ### Sửa lỗi
 - Chrome trên VPS "mở social rồi để đó": MeWe, Linux Foundation Forum và các tài khoản đăng nhập bằng Google (tiện ích 1.17.1)

@@ -1,5 +1,10 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Tiện ích 1.17.2: Vanilla nhận tài khoản từ `gdn.meta`
+
+Vanilla ghi người dùng đang đăng nhập vào script `gdn.meta` của mọi trang (`"currentUser":{"userID":…,"name":…}`, khách
+có `userID` 0). Luồng `vanilla` đọc tên ở đó để xác nhận tài khoản, không cần menu ảnh đại diện hay trang hồ sơ.
+
 ## Tiện ích 1.17.1: trang tải chậm, MeWe, đăng nhập Google song song
 
 - Lần hỏi trang khi xác nhận tài khoản có hạn `AUTH_PROBE_TIMEOUT_MS` (8 giây). Hết hạn khi tab còn `loading` thì chờ
