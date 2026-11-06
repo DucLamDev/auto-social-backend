@@ -1,6 +1,16 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.30.0 · 06/11/2026
+### Tính năng
+- Tiện ích Chrome đăng 3 bài cùng lúc (tiện ích 1.17.0)
+  - Trước đây một Chrome chỉ chạy tối đa 2 bài song song; nay 3 bài, mỗi bài một tab trên một trang khác nhau. Chạy
+    chiến dịch nhiều social trên VPS Windows nhanh hơn khoảng một phần ba.
+  - Giữ nguyên quy tắc an toàn: không bao giờ chạy 2 bài trên cùng một trang (bài sau có thể ghi đè bản nháp của bài
+    trước). Tab chờ bạn xử lý (CAPTCHA, chưa đăng nhập, bài lỗi để xem) vẫn không chiếm chỗ. Kiểm tra đăng nhập (Test)
+    vẫn chạy từng cái một.
+  - Chỉ cần nạp lại tiện ích 1.17.0; máy chủ không đổi.
+
 ## 1.29.1 · 06/11/2026
 ### Sửa lỗi
 - Tiện ích 1.16.0 báo "Lỗi kết nối: supportedEngines must contain no more than 30 elements" và không nhận bài nào

@@ -1,5 +1,11 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Tiện ích 1.17.0: 3 bài cùng lúc
+
+Một Chrome chạy tối đa **3 bài cùng lúc** (trước đây 2), mỗi bài một tab trên một trang khác nhau; không bao giờ 2 bài
+trên cùng một trang. Tab chờ bạn không chiếm chỗ; kiểm tra đăng nhập vẫn chạy từng cái một. Giới hạn nằm ở
+`MAX_ACTIVE_FLOWS` trong `browser-extension/background.js`; máy chủ không giới hạn số bài mỗi Chrome nhận.
+
 ## Backend 1.29.0 / tiện ích 1.16.0: Unraid Forums (Invision), aaPanel Forum (Flarum), cPanel Community (Zendesk)
 
 Cần backend 1.29.0 và tiện ích 1.16.0. Sau khi cập nhật backend chạy `scripts/sync-extension-flows.cjs --apply`, nạp
