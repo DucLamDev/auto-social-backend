@@ -115,12 +115,12 @@ describe('validateEnvironment', () => {
     expect(() => validateEnvironment({ ...productionEnvironment(), VPSTTT_AI_RPM: '0' })).toThrow('VPSTTT_AI_RPM');
   });
 
-  it('defaults the reviewer to Claude Sonnet and the final approver to Claude Opus on VPSTTT AI, with approval on', () => {
+  it('defaults both the reviewer and the final approver to Claude Opus on VPSTTT AI, with approval on', () => {
     expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({
-      AI_REVIEWER: 'vpsttt:claude:sonnet', AI_APPROVER: 'vpsttt:claude:opus', AI_APPROVAL_ENABLED: true,
+      AI_REVIEWER: 'vpsttt:claude:opus', AI_APPROVER: 'vpsttt:claude:opus', AI_APPROVAL_ENABLED: true,
     });
     expect(validateEnvironment({ ...productionEnvironment(), AI_REVIEWER: ' ', AI_APPROVER: '' }))
-      .toMatchObject({ AI_REVIEWER: 'vpsttt:claude:sonnet', AI_APPROVER: 'vpsttt:claude:opus' });
+      .toMatchObject({ AI_REVIEWER: 'vpsttt:claude:opus', AI_APPROVER: 'vpsttt:claude:opus' });
   });
 
   it('normalizes configured AI roles and the approval switch', () => {
