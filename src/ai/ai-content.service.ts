@@ -58,6 +58,7 @@ import {
   SuggestionsOutput, SuggestionsSchema, suggestionsJsonSchema,
 } from './campaign-suggestions';
 import { ProviderThrottle } from './provider-throttle';
+import { VpstttQuota } from './vpsttt-quota';
 import {
   AI_PROVIDER_IDS,
   AI_PROVIDER_LABELS,
@@ -168,6 +169,12 @@ const DEFAULT_GEMINI_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
 const GEMINI_PRIMARY_MAX_ATTEMPTS = 2;
 const GEMINI_RETRY_DELAY_MS = 750;
 const GENERATION_RETRY_DELAY_MS = 2_000;
+/**
+ * Waits before retrying a call refused for quota (429) or a busy provider (503):
+ * the IDE AI API counts a user's calls over the last minute, so a 2-second retry
+ * is refused again and one refusal used to stop a whole campaign.
+ */
+const QUOTA_RETRY_DELAYS_MS = [15_000, 30_000, 60_000];
 const INVALID_JSON_MESSAGE = 'AI returned invalid JSON';
 const SCHEMA_MISMATCH_MESSAGE = 'AI output did not match the required schema';
 const MAX_REASON_LENGTH = 1_000;
@@ -207,6 +214,12 @@ const REVIEW_SPEC: StructuredSpec<ReviewOutput> = { name: 'content_review', json
 const APPROVAL_SPEC: StructuredSpec<ApprovalOutput> = { name: 'content_approval', jsonSchema: approvalJsonSchema, zod: ApprovalSchema };
 /** The approver's verdict leads the stored reason; capped so the "AI chấm N/10" after it always survives. */
 const MAX_APPROVAL_REASON_PREFIX = 450;
+/** The platform being written when a multi-platform run failed (shown to the operator). */
+const failedPlatforms = new WeakMap<object, string>();
+export function failedPlatformOf(error: unknown): string | undefined {
+  return error && typeof error === 'object' ? failedPlatforms.get(error) : undefined;
+}
+
 const SUGGESTIONS_SPEC: StructuredSpec<SuggestionsOutput> = { name: 'campaign_suggestions', jsonSchema: suggestionsJsonSchema, zod: SuggestionsSchema };
 
 type SourceContent = {
@@ -483,6 +496,7 @@ export class AiContentService {
     private readonly config: ConfigService,
     private readonly geminiKeys: GeminiKeyPoolService,
     @Optional() private readonly brandProfiles?: BrandProfileService,
+    @Optional() vpstttQuota?: VpstttQuota,
   ) {
     const configuredDefault = config.get<string>('AI_DEFAULT_PROVIDER', 'openai').trim().toLowerCase();
     this.defaultProvider = isAiProvider(configuredDefault) ? configuredDefault : 'openai';
@@ -509,7 +523,8 @@ export class AiContentService {
       config.get<number>('OPENAI_TIMEOUT_MS', 60_000),
     );
     this.vpstttBaseUrl = config.get<string>('VPSTTT_AI_BASE_URL')?.trim() || undefined;
-    this.vpstttThrottle = new ProviderThrottle(
+    // Shared with image generation: the IDE counts both against one quota.
+    this.vpstttThrottle = vpstttQuota?.throttle ?? new ProviderThrottle(
       Number(config.get<number>('VPSTTT_AI_MAX_CONCURRENCY', 2)),
       Number(config.get<number>('VPSTTT_AI_RPM', 10)),
     );
@@ -589,7 +604,7 @@ export class AiContentService {
       suggestionInput({ brandBlock: brandProfileBlock(brand), platforms, past, platformScores, hint: input.hint }),
       SUGGESTIONS_SPEC,
     ));
-    const suggestions = cleanSuggestions(output, platforms.map((platform) => platform.name));
+    const suggestions = cleanSuggestions(output);
     if (!suggestions.length) throw new ApplicationException(ErrorCode.PLATFORM_API_ERROR, 'AI chưa đưa ra gợi ý dùng được. Thử lại hoặc chọn nhà cung cấp AI khác.', HttpStatus.BAD_GATEWAY);
     return { suggestions };
   }
@@ -717,7 +732,7 @@ export class AiContentService {
       const brand = await this.brandProfiles?.load() ?? null;
       const generated: Array<CheckedVariant | undefined> = [];
       const saved: Array<ContentVariant | undefined> = [];
-      let failure: { error: unknown } | undefined;
+      let failure: { error: unknown; platform: string } | undefined;
       let next = 0;
       // Bound provider concurrency for large multi-platform campaigns: four at a
       // time, and a finished platform frees its slot for the next one at once.
@@ -735,11 +750,14 @@ export class AiContentService {
             const variant = await this.saveVariant(this.prisma, contentId, platform.id, result);
             saved[index] = variant;
             await onVariant(variant);
-          } catch (error) { failure ??= { error }; }
+          } catch (error) { failure ??= { error, platform: platform.slug }; }
         }
       };
       await Promise.all(Array.from({ length: Math.min(4, platforms.length) }, worker));
-      if (failure) throw failure.error;
+      if (failure) {
+        if (failure.error && typeof failure.error === 'object') failedPlatforms.set(failure.error, failure.platform);
+        throw failure.error;
+      }
       await assertOwnership?.();
       if (onVariant) {
         const completed = await this.prisma.content.updateMany({
@@ -1186,12 +1204,16 @@ export class AiContentService {
   }
 
   private async withGenerationRetry<T>(request: () => Promise<T>): Promise<T> {
-    try {
-      return await request();
-    } catch (error) {
-      if (!isRetryableGenerationError(error)) throw error;
-      await this.delay(GENERATION_RETRY_DELAY_MS);
-      return request();
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await request();
+      } catch (error) {
+        if (!isRetryableGenerationError(error)) throw error;
+        const status = error instanceof ApplicationException ? error.getStatus() : 0;
+        const waits = status === HttpStatus.TOO_MANY_REQUESTS || status === HttpStatus.SERVICE_UNAVAILABLE ? QUOTA_RETRY_DELAYS_MS : [GENERATION_RETRY_DELAY_MS];
+        if (attempt >= waits.length) throw error;
+        await this.delay(waits[attempt]!);
+      }
     }
   }
 

@@ -16,8 +16,8 @@ export interface CampaignSuggestion {
   brief: string;
   angle: string;
   whyEffective: string;
-  /** Names of the chosen platforms this idea suits best. */
-  bestFor: string[];
+  /** How the one brief is adapted to each kind of chosen platform (forums, short feeds, blogs…). */
+  platformFit: string;
 }
 
 /** One earlier campaign, with how its drafts were scored and how many went out. */
@@ -37,7 +37,7 @@ const SuggestionSchema = z.object({
   brief: z.string(),
   angle: z.string(),
   whyEffective: z.string(),
-  bestFor: z.array(z.string()),
+  platformFit: z.string(),
 });
 export const SuggestionsSchema = z.object({ suggestions: z.array(SuggestionSchema) });
 export type SuggestionsOutput = z.infer<typeof SuggestionsSchema>;
@@ -53,8 +53,8 @@ export const suggestionsJsonSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['name', 'brief', 'angle', 'whyEffective', 'bestFor'],
-        properties: { name: text, brief: text, angle: text, whyEffective: text, bestFor: { type: 'array', items: text } },
+        required: ['name', 'brief', 'angle', 'whyEffective', 'platformFit'],
+        properties: { name: text, brief: text, angle: text, whyEffective: text, platformFit: text },
       },
     },
   },
@@ -78,11 +78,11 @@ export function suggestionInstructions(today: string): string {
     'What makes an idea effective here:',
     '- It starts from a real problem or question the target readers have (performance, cost, security, setup, troubleshooting, migration), and the posts teach something concrete: steps, commands, settings, numbers, a checklist or a before/after.',
     '- The company and its product appear as the natural solution or tool, at most once per post; never an advertisement. Forums, communities and developer sites accept knowledge, questions and experience, not promotion.',
-    '- It suits every chosen platform: a discussion question or how-to for forums and Q&A sites, a strong hook and one takeaway for short social feeds, a structured article for blogs. Name in bestFor the chosen platforms it fits best.',
+    '- Every idea must work on ALL the chosen platforms at once: the same brief goes to each of them and the writer adapts it per platform. Choose topics every chosen audience cares about; never propose an idea that suits only some of them. When the chosen platforms mix forums or Q&A sites, short social feeds and blogs, the topic must work as a discussion or question on the forums, a short tip with one takeaway on the feeds and a how-to on the blogs, and must respect the strictest rule among them (for example a Q&A site needs a real, answerable technical question).',
     '- The ideas differ from each other (for example a tutorial, a troubleshooting story, a comparison or checklist, a question that starts a discussion) and do not repeat the earlier campaigns. Lean toward the kinds of brief that scored and published best; avoid the angles of low-scoring ones.',
     'Truthfulness: products, prices, offers, numbers and customers come only from the brand facts and the earlier briefs. Never invent discounts, statistics, benchmarks or testimonials. General, widely known technical knowledge is fine.',
     'Write everything in Vietnamese except product names and technical terms.',
-    `Fields: name is a short campaign name (at most ${NAME_MAX} characters). brief is the instruction the AI writer receives, 4 to 8 sentences: the topic and target reader, the reader's problem, 3 to 5 concrete points to cover, which product or service of the company to tie in and how, the call to action, and what to avoid. angle is the format in a few words. whyEffective is one or two sentences for the operator on why it will perform on these platforms.`,
+    `Fields: name is a short campaign name (at most ${NAME_MAX} characters). brief is the one instruction the AI writer receives for every chosen platform, 4 to 8 sentences: the topic and target reader, the reader's problem, 3 to 5 concrete points (enough to expand into a forum post and to cut down to a short post), which product or service of the company to tie in and how, the call to action, and what to avoid; no instruction that fits only one platform. angle is the format in a few words. whyEffective is one or two sentences for the operator on why it will perform on these platforms. platformFit is one or two sentences on how this idea is used on each kind of chosen platform (name them, for example "Diễn đàn: …; Bluesky, Mastodon: …").`,
     `Never use: ${CLICHES.map((phrase) => `"${phrase}"`).join(', ')}.`,
   ].join('\n');
 }
@@ -100,16 +100,15 @@ export function suggestionInput(input: {
   const scores = Object.entries(input.platformScores).map(([name, score]) => `- ${name}: ${score.averageScore}/10 over ${score.drafts} drafts`);
   return [
     input.brandBlock || '<brand_facts>\nNo brand profile is configured. Infer the company, its products and audience only from the earlier campaign briefs below.\n</brand_facts>',
-    `Chosen platforms:\n${platforms.join('\n')}`,
+    `Chosen platforms (every idea must fit all ${input.platforms.length} of them):\n${platforms.join('\n')}`,
     past.length ? `Earlier campaigns (newest first):\n${past.join('\n')}` : 'There are no earlier campaigns yet.',
     scores.length ? `Editor scores of earlier drafts per platform (7 is publishable):\n${scores.join('\n')}` : '',
     input.hint?.trim() ? `The operator wants ideas about: ${input.hint.trim().slice(0, MAX_SUGGESTION_HINT)}` : '',
   ].filter(Boolean).join('\n\n');
 }
 
-/** Trims and bounds the ideas; bestFor keeps only chosen platform names; empty or duplicate ideas are dropped. */
-export function cleanSuggestions(output: SuggestionsOutput, platformNames: readonly string[]): CampaignSuggestion[] {
-  const allowed = new Map(platformNames.map((name) => [name.toLowerCase(), name]));
+/** Trims and bounds the ideas; empty or duplicate ideas are dropped. */
+export function cleanSuggestions(output: SuggestionsOutput): CampaignSuggestion[] {
   const seen = new Set<string>();
   const clean = (value: string, max: number) => value.replace(/\s+\n/g, '\n').trim().slice(0, max);
   return output.suggestions.flatMap((idea) => {
@@ -117,7 +116,6 @@ export function cleanSuggestions(output: SuggestionsOutput, platformNames: reado
     const brief = clean(idea.brief, BRIEF_MAX);
     if (name.length < 3 || brief.length < 20 || seen.has(name.toLowerCase())) return [];
     seen.add(name.toLowerCase());
-    const bestFor = [...new Set(idea.bestFor.map((item) => allowed.get(item.trim().toLowerCase())).filter((item): item is string => Boolean(item)))];
-    return [{ name, brief, angle: clean(idea.angle, NOTE_MAX), whyEffective: clean(idea.whyEffective, NOTE_MAX), bestFor }];
+    return [{ name, brief, angle: clean(idea.angle, NOTE_MAX), whyEffective: clean(idea.whyEffective, NOTE_MAX), platformFit: clean(idea.platformFit, NOTE_MAX) }];
   }).slice(0, SUGGESTION_COUNT);
 }

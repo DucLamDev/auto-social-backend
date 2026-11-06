@@ -760,7 +760,7 @@ export class CampaignAutomationService {
   async retry(ownerId: string, id: string) {
     const updated = await this.prisma.campaign.updateMany({
       where: { id, ownerId, automationState: 'FAILED', targets: { none: {} } },
-      data: { automationState: 'QUEUED', automationErrorCode: null },
+      data: { automationState: 'QUEUED', automationErrorCode: null, automationErrorDetail: Prisma.DbNull },
     });
     if (!updated.count) throw new ConflictException('Only failed AI tasks can be retried');
     return this.result(ownerId, id);

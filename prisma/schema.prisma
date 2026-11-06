@@ -429,6 +429,8 @@ model Campaign {
   automationKey         String?
   automationRequestHash String?
   automationErrorCode   String?
+  /// Why the last AI run failed: { code, message, platform, platformName, provider, at }.
+  automationErrorDetail Json?
   automationState       String?
   automationRequest     Json?
   automationVariantIds  String[]         @default([]) @db.Uuid

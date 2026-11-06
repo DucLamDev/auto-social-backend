@@ -11,6 +11,8 @@ PostgreSQL là nguồn sự thật. Prisma schema ở `prisma/schema.prisma`; mi
   generating/done/failed, `instruction`, `startedAt`, `finishedAt`, `error`; migration
   `20261104160000_content_variant_ai_revision`.
 - Delivery: `Campaign`, `CampaignTarget`, `PublishJob`, `PublishAttempt`, `PublishedPost`.
+  `Campaign.automationErrorDetail` (JSON, có thể trống) giữ nguyên nhân lần chạy AI gần nhất bị lỗi: `code`, `message`,
+  `platform`, `platformName`, `provider`, `at`; được xoá khi chạy lại; migration `20261106090000_campaign_automation_error_detail`.
 - Operations: `AuditLog`, `SystemSetting`.
 - Agents: `ExtensionDevice` (tiện ích Chrome đã ghép nối), `McpToken` (token MCP cho Codex: chỉ lưu SHA-256, `scopes`
   `read`/`write`, `expiresAt`, `revokedAt`; migration `20261103100000_mcp_tokens`).
