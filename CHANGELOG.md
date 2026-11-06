@@ -3,13 +3,16 @@ Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cu�
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
 ## 1.28.2 · 06/11/2026
 ### Sửa lỗi
-- MeWe: tiện ích nhận ra đúng tài khoản đang đăng nhập nên đăng được bài (tiện ích 1.15.1)
-  - Trước đây trang MeWe không có dấu hiệu tài khoản mà tiện ích biết, nên lượt đăng đứng ở bước xác nhận tài khoản
-    3 phút rồi báo "Chưa xác nhận được đúng tài khoản sau đăng nhập"; kiểm tra đăng nhập cũng lúc được lúc không.
-  - Nay tiện ích hỏi chính MeWe tài khoản đang đăng nhập là ai (bằng phiên sẵn có trên Chrome) và chỉ chấp nhận khi
-    trùng username / URL hồ sơ đã cấu hình (ví dụ `vpsttt_group`). Dự phòng: link hồ sơ của chính mình ở đầu trang
-    hoặc thẻ hồ sơ trên /myworld; link trong bài đăng, story hay chat của người khác không được tính.
-  - Cần nạp lại tiện ích 1.15.1 trên máy Windows rồi bấm "Giao lại cho tiện ích" ở bài MeWe đang chờ.
+- Lượt đăng không còn kẹt ở bước xác nhận tài khoản: Linux Foundation Forum, MeWe (tiện ích 1.15.1)
+  - **Mở trang hồ sơ khi đăng bài, như khi bấm Test.** Trang của một số nền tảng (Linux Foundation Forum, MeWe…) không
+    cho biết tài khoản đang đăng nhập; chỉ trang hồ sơ (có nút Edit Profile của chủ hồ sơ) mới chứng minh được. Bấm
+    Test thì tiện ích có mở trang hồ sơ nên đạt, còn lượt đăng thì không: tiện ích nhảy về trang chủ diễn đàn rồi
+    chờ hết 3 phút và báo "Chưa xác nhận được đúng tài khoản sau đăng nhập", trông như "mở lên để đấy".
+    Nay lượt đăng cũng mở trang hồ sơ đã cấu hình; xác nhận xong thì vào thẳng trang soạn bài và điền.
+  - **MeWe:** tiện ích còn hỏi chính MeWe tài khoản đang đăng nhập là ai (bằng phiên sẵn có trên Chrome) và chỉ chấp
+    nhận khi trùng username / URL hồ sơ đã cấu hình (ví dụ `vpsttt_group`). Dự phòng: link hồ sơ của chính mình ở đầu
+    trang hoặc thẻ hồ sơ trên /myworld; link trong bài đăng, story hay chat của người khác không được tính.
+  - Cần nạp lại tiện ích 1.15.1 trên máy Windows rồi bấm "Giao lại cho tiện ích" ở các bài đang chờ.
 
 ## 1.28.1 · 06/11/2026
 ### Sửa lỗi

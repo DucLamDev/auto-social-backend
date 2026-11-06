@@ -873,6 +873,20 @@ test('an unrecognized signed-in page opens the configured profile once before gi
   assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
 });
 
+test('a publish job proves the account on its profile page, then fills the composer without asking again', async () => {
+  const { state, worker } = setup();
+  const profileUrl = 'http://forum.test/profile/211511/Vpsttt';
+  // Like Linux Foundation Forum: only the profile page (owner-only Edit Profile) proves the account.
+  state.authResult = () => ({ state: state.openedUrls.at(-1) === profileUrl ? 'authenticated' : 'unknown', url: state.openedUrls.at(-1) ?? 'http://forum.test/' });
+  const tasks = { 8: { tabId: 8, phase: 'authenticating', authUnknownSince: Date.now() - 2_500,
+    job: { ...job, auth: { provider: 'google', autoLogin: true, loginUrl: 'http://forum.test/', profileUrl } } } };
+  const proceeded = await worker.authenticateTask(tasks[8]);
+  // Never the sign-in page in between; the composer comes right after the profile.
+  assert.deepEqual(state.openedUrls, [profileUrl, job.openUrl]);
+  assert.equal(proceeded, true);
+  assert.equal(state.reports.length, 0);
+});
+
 test('a profile on another site is never opened during a login check', async () => {
   const { state, worker } = setup();
   state.authResult = { state: 'unknown', url: 'https://forum.test/' };
