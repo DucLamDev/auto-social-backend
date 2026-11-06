@@ -523,6 +523,22 @@ test('Flarum reads the session user from its boot payload, Zendesk from its user
   } finally { await page.close(); }
 });
 
+test('MeWe confirms the account from its own API or the own profile link, never from a feed post', async () => {
+  const feed = '<main class="c-mw-posts-feed"><div class="c-mw-post"><a href="/vpsttt_group">VPSTTT Group</a></div></main>';
+  const page = await pageAt('https://mewe.com/myworld', `<div class="c-mw-postbox-placeholder">How is your day going?</div>${feed}`);
+  const scoped = { ...job, targetOrigin: 'https://mewe.com', recipe: { engine: 'mewe' }, auth: { ...job.auth, provider: 'google', expectedUsername: 'vpsttt_group', profileUrl: 'https://mewe.com/vpsttt_group/posts' } };
+  try {
+    await page.route('**/api/v2/me/info', route => route.fulfill({ json: { user: { id: '6a1f', firstName: 'VPSTTT Group', publicLinkId: 'vpsttt_group' } } }));
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+    // The API refuses: a link to someone's profile inside the feed proves nothing...
+    await page.route('**/api/v2/me/info', route => route.fulfill({ status: 401, json: {} }));
+    assert.notEqual((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+    // ...but the own profile link in the header does.
+    await page.evaluate(() => document.body.insertAdjacentHTML('afterbegin', '<header><a href="/vpsttt_group"><img alt="" style="width:20px;height:20px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"></a></header>'));
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped })).state, 'authenticated');
+  } finally { await page.close(); }
+});
+
 test('a site without a known marker is identified by its own profile link in the navigation', async () => {
   const page = await pageAt('https://daily.dev/', '<aside><a href="/vpsttt"><img alt="" style="width:20px;height:20px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"></a></aside><main><a href="/someone">someone</a></main>');
   const scoped = { ...job, targetOrigin: 'https://daily.dev', recipe: { engine: 'generic' }, auth: { ...job.auth, provider: 'google', expectedUsername: 'vpsttt', profileUrl: 'https://daily.dev/vpsttt' } };

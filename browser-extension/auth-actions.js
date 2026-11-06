@@ -148,6 +148,31 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
     } else if (location.hostname === 'huggingface.co') {
       // The hub's own session endpoint names the signed-in user (the avatar menu is closed).
       try { const r = await fetch('/api/whoami-v2', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) }); if (r.ok) { const me = await r.json(); if (typeof me?.name === 'string') identity = me.name; } } catch { /* DOM fallback */ }
+    } else if (location.hostname === 'mewe.com') {
+      // MeWe's page has no account marker the generic checks know. Its own API names the
+      // signed-in user, but the field names are undocumented: only a value equal to the
+      // configured handle (mewe.com/<handle>/posts, or /i/<handle>) proves the account.
+      const segments = (() => { try { return new URL(auth.profileUrl).pathname.split('/').filter(Boolean); } catch { return []; } })();
+      const handles = new Set([auth.expectedUsername, segments[0] === 'i' ? segments[1] : segments[0]].map(norm).filter(handle => handle.length >= 3));
+      try {
+        // The web app sends its CSRF cookie back as a header; the request stays on mewe.com.
+        const csrf = /(?:^|;\s*)csrf-token=([^;]+)/.exec(document.cookie)?.[1];
+        const r = await fetch('/api/v2/me/info', { credentials: 'same-origin', headers: { Accept: 'application/json', ...(csrf ? { 'X-CSRF-Token': decodeURIComponent(csrf) } : {}) }, signal: AbortSignal.timeout(5000) });
+        if (r.ok) {
+          const values = [];
+          const walk = (value, depth) => { if (typeof value === 'string') values.push(value); else if (value && typeof value === 'object' && depth < 4) Object.values(value).forEach(item => walk(item, depth + 1)); };
+          walk(await r.json(), 0);
+          identity = values.find(value => handles.has(norm(value)));
+        }
+      } catch { /* Own profile link below */ }
+      // Fallback: a link to the own profile in the header or the profile card of /myworld,
+      // never one inside a feed post, a story or a chat (those name other people).
+      if (!identity && location.pathname.startsWith('/myworld')) {
+        const own = all('a[href]').filter(visible).filter(node => !node.closest('.c-mw-post, .c-mw-posts-feed, [class*="stor" i], [class*="chat" i]')).find(node => {
+          try { const url = new URL(node.href); const parts = url.pathname.split('/').filter(Boolean); return url.origin === location.origin && handles.has(norm(decodeURIComponent((parts[0] === 'i' ? parts[1] : parts[0]) ?? ''))); } catch { return false; }
+        });
+        if (own) identity = [...handles][0];
+      }
     }
     if (job.recipe.engine === 'flarum' && !identity) {
       // Flarum boots from a JSON payload that names the session user: read only its username.

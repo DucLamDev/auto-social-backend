@@ -24,6 +24,19 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
     chưa thử đăng thật vì chưa có tài khoản. Sau khi cập nhật backend chạy `scripts/sync-extension-flows.cjs --apply`,
     nạp lại tiện ích 1.16.0, thêm tài khoản rồi bấm Test.
 
+## 1.28.3 · 06/11/2026
+### Sửa lỗi
+- Lượt đăng không còn kẹt ở bước xác nhận tài khoản: Linux Foundation Forum, MeWe (tiện ích 1.15.1)
+  - **Mở trang hồ sơ khi đăng bài, như khi bấm Test.** Trang của một số nền tảng (Linux Foundation Forum, MeWe…) không
+    cho biết tài khoản đang đăng nhập; chỉ trang hồ sơ (có nút Edit Profile của chủ hồ sơ) mới chứng minh được. Bấm
+    Test thì tiện ích có mở trang hồ sơ nên đạt, còn lượt đăng thì không: tiện ích nhảy về trang chủ diễn đàn rồi
+    chờ hết 3 phút và báo "Chưa xác nhận được đúng tài khoản sau đăng nhập", trông như "mở lên để đấy".
+    Nay lượt đăng cũng mở trang hồ sơ đã cấu hình; xác nhận xong thì vào thẳng trang soạn bài và điền.
+  - **MeWe:** tiện ích còn hỏi chính MeWe tài khoản đang đăng nhập là ai (bằng phiên sẵn có trên Chrome) và chỉ chấp
+    nhận khi trùng username / URL hồ sơ đã cấu hình (ví dụ `vpsttt_group`). Dự phòng: link hồ sơ của chính mình ở đầu
+    trang hoặc thẻ hồ sơ trên /myworld; link trong bài đăng, story hay chat của người khác không được tính.
+  - Cần nạp lại tiện ích 1.15.1 trên máy Windows rồi bấm "Giao lại cho tiện ích" ở các bài đang chờ.
+
 ## 1.28.2 · 06/11/2026
 ### Sửa lỗi
 - Báo rõ khi tiện ích Chrome là bản cũ và bỏ qua bài, thay vì để bài "Chờ tiện ích" mãi

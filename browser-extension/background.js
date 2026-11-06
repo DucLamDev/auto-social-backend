@@ -382,8 +382,19 @@ async function authenticateTask(task) {
       }
       // A step that crashed in the page returns nothing; treat it like an
       // unrecognized page instead of waiting silently for the whole deadline.
-      if (task.job.kind === 'LOGIN_CHECK' && (result?.state === 'unknown' || !result?.state)) {
-        if (!current.authActivated) {
+      const unrecognized = result?.state === 'unknown' || !result?.state;
+      const profileUrl = task.job.auth.profileUrl;
+      let profileOrigin = '';
+      try { profileOrigin = profileUrl ? new URL(profileUrl).origin : ''; } catch { /* invalid URL: skip */ }
+      const profileUsable = Boolean(profileOrigin) && [task.job.targetOrigin, ...(task.job.auth.allowedOrigins ?? [])].includes(profileOrigin);
+      // The account was just proved on its own profile page; the composer page shows no
+      // account marker (that is why the profile page was needed), so it does not re-prove it.
+      if (unrecognized && task.job.kind !== 'LOGIN_CHECK' && current.authReturning && current.authByProfile && tabId === task.tabId) {
+        await setTask(task.tabId, { ...current, phase: 'loading', authVerified: true, deadline: Date.now() + LOAD_TIMEOUT_MS });
+        return true;
+      }
+      if (unrecognized) {
+        if (task.job.kind === 'LOGIN_CHECK' && !current.authActivated) {
           // Several SPAs defer account hydration until their tab becomes visible.
           // Activate this owned test tab once before deciding the form is absent.
           current = { ...current, authActivated: true, authUnknownSince: null };
@@ -393,19 +404,16 @@ async function authenticateTask(task) {
           continue;
         }
         // Open the configured profile page once: the owner-only controls there
-        // identify the account on sites without a known account marker.
-        const profileUrl = task.job.auth.profileUrl;
-        let profileOrigin = '';
-        try { profileOrigin = profileUrl ? new URL(profileUrl).origin : ''; } catch { /* invalid URL: skip */ }
-        if (profileOrigin && !current.authProfileVisited && current.authUnknownSince && Date.now() - current.authUnknownSince > PROFILE_CHECK_AFTER_MS
-          && [task.job.targetOrigin, ...(task.job.auth.allowedOrigins ?? [])].includes(profileOrigin)) {
+        // identify the account on sites without a known account marker. Publish
+        // jobs do this too, or they waited out the whole sign-in deadline.
+        if (profileUsable && !current.authProfileVisited && current.authUnknownSince && Date.now() - current.authUnknownSince > PROFILE_CHECK_AFTER_MS) {
           current = { ...current, authProfileVisited: true, authUnknownSince: null };
           await setTask(task.tabId, current);
           try { await chrome.tabs.update(tabId, { url: profileUrl }); } catch { /* closed: reported on the next round */ }
           await new Promise(resolve => setTimeout(resolve, 2_000));
           continue;
         }
-        if (current.authUnknownSince && Date.now() - current.authUnknownSince > 8_000) return stop('Trang đã tải nhưng chưa nhận diện được form đăng nhập hoặc đúng tài khoản. Cần cập nhật luồng của nền tảng này.');
+        if (task.job.kind === 'LOGIN_CHECK' && current.authUnknownSince && Date.now() - current.authUnknownSince > 8_000) return stop('Trang đã tải nhưng chưa nhận diện được form đăng nhập hoặc đúng tài khoản. Cần cập nhật luồng của nền tảng này.');
         if (!current.authUnknownSince) { current = { ...current, authUnknownSince: Date.now() }; await setTask(task.tabId, current); }
       } else if (current.authUnknownSince) { current = { ...current, authUnknownSince: null }; await setTask(task.tabId, current); }
       if (result?.state === 'cloudflare') {
@@ -433,7 +441,8 @@ async function authenticateTask(task) {
           // The destination creates a new menu after navigation. Only this
           // harmless menu action may repeat; never reset password/TOTP attempts.
           const { accountMenu: _previousMenu, ...authSteps } = current.authSteps ?? {};
-          current = { ...current, authTabId: null, authReturning: true, authSteps, authSourceDocumentId: tabId === task.tabId ? documentId : null };
+          current = { ...current, authTabId: null, authReturning: true, authSteps, authSourceDocumentId: tabId === task.tabId ? documentId : null,
+            authByProfile: tabId === task.tabId && profileUsable && current.authProfileVisited === true };
           await setTask(task.tabId, current);
           await chrome.tabs.update(task.tabId, { url: task.job.openUrl });
         } else {
@@ -476,6 +485,7 @@ async function authenticateTask(task) {
           finally { payload = undefined; }
         }
       } else if (!current.authLoginOpened && !current.authReturning && task.job.auth.autoLogin
+        && !(unrecognized && profileUsable && !current.authProfileVisited)
         && !Object.keys(current.authSteps ?? {}).some(step => step !== 'accountMenu')) {
         // Only use the configured login URL before authentication starts. SSO
         // callbacks can briefly be blank; navigating here would cancel them.
