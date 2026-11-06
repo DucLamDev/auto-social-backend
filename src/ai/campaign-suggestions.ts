@@ -18,6 +18,21 @@ export interface CampaignSuggestion {
   whyEffective: string;
   /** How the one brief is adapted to each kind of chosen platform (forums, short feeds, blogs…). */
   platformFit: string;
+  /** The reviewer's scores (absent when scoring was unavailable). */
+  review?: SuggestionReview;
+  /** The best-scored idea of the batch. */
+  recommended?: boolean;
+}
+
+/** An independent reviewer's 1-10 scores of one idea for the chosen platforms. */
+export interface SuggestionReview {
+  score: number;
+  platformFit: number;
+  readerValue: number;
+  brandFit: number;
+  engagement: number;
+  /** The main weakness or risk, one short sentence. */
+  weakness: string;
 }
 
 /** One earlier campaign, with how its drafts were scored and how many went out. */
@@ -55,6 +70,31 @@ export const suggestionsJsonSchema = {
         additionalProperties: false,
         required: ['name', 'brief', 'angle', 'whyEffective', 'platformFit'],
         properties: { name: text, brief: text, angle: text, whyEffective: text, platformFit: text },
+      },
+    },
+  },
+} as const;
+
+const ScoresSchema = z.object({
+  scores: z.array(z.object({
+    index: z.number(), score: z.number(), platformFit: z.number(), readerValue: z.number(), brandFit: z.number(), engagement: z.number(), weakness: z.string(),
+  })),
+});
+export type ScoresOutput = z.infer<typeof ScoresSchema>;
+export { ScoresSchema };
+const integer = { type: 'integer' } as const;
+export const scoresJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['scores'],
+  properties: {
+    scores: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['index', 'score', 'platformFit', 'readerValue', 'brandFit', 'engagement', 'weakness'],
+        properties: { index: integer, score: integer, platformFit: integer, readerValue: integer, brandFit: integer, engagement: integer, weakness: text },
       },
     },
   },
@@ -118,4 +158,48 @@ export function cleanSuggestions(output: SuggestionsOutput): CampaignSuggestion[
     seen.add(name.toLowerCase());
     return [{ name, brief, angle: clean(idea.angle, NOTE_MAX), whyEffective: clean(idea.whyEffective, NOTE_MAX), platformFit: clean(idea.platformFit, NOTE_MAX) }];
   }).slice(0, SUGGESTION_COUNT);
+}
+
+/**
+ * The reviewer is a separate request from the strategist, so an idea is not
+ * scored by the model that just wrote it. It ranks the ideas against each other
+ * for these platforms and this company, using the earlier campaigns' results.
+ */
+export function scoringInstructions(): string {
+  return [
+    'You are a demanding head of content. Score each campaign idea for the company and the chosen platforms described in the input, as the expected result if the campaign runs on all of them.',
+    'Criteria, each an integer from 1 to 10:',
+    '- platformFit: the idea works on every chosen platform at once and respects the strictest of their rules; an idea that reads as promotion on forums or communities scores low.',
+    '- readerValue: it solves a real, specific problem of the target readers with concrete steps, commands, numbers or a checklist.',
+    "- brandFit: the company's product appears naturally as the solution, and every brand claim is supported by the brand facts or the earlier briefs.",
+    '- engagement: readers of these platforms are likely to read it to the end, save, answer or share it; take into account what scored and published well before.',
+    'score is the overall expected result from 1 to 10, not the average of the criteria. Use the full range and compare the ideas with each other: do not give two ideas the same score unless they are truly equal.',
+    'weakness is one short sentence in Vietnamese: the main weakness or risk of the idea.',
+    'Return one entry per idea, with index equal to the number shown before the idea.',
+  ].join('\n');
+}
+
+export function scoringInput(context: string, suggestions: readonly CampaignSuggestion[]): string {
+  const ideas = suggestions.map((idea, index) => `[${index}] ${idea.name}\nAngle: ${idea.angle}\nBrief: ${idea.brief}\nPer platform: ${idea.platformFit}`);
+  return `${context}\n\nCampaign ideas to score:\n${ideas.join('\n\n')}`;
+}
+
+const clampScore = (value: number) => Math.min(10, Math.max(1, Math.round(Number.isFinite(value) ? value : 1)));
+
+/** Attaches the reviewer's scores, sorts the ideas best first and marks the best one; ideas without a score keep their place at the end. */
+export function applySuggestionScores(suggestions: readonly CampaignSuggestion[], output: ScoresOutput): CampaignSuggestion[] {
+  const byIndex = new Map(output.scores.filter((entry) => Number.isInteger(entry.index)).map((entry) => [entry.index, entry]));
+  const scored = suggestions.map((idea, index) => {
+    const entry = byIndex.get(index);
+    if (!entry) return { ...idea };
+    return { ...idea, review: {
+      score: clampScore(entry.score), platformFit: clampScore(entry.platformFit), readerValue: clampScore(entry.readerValue),
+      brandFit: clampScore(entry.brandFit), engagement: clampScore(entry.engagement), weakness: entry.weakness.trim().slice(0, NOTE_MAX),
+    } };
+  });
+  const ranked = scored.map((idea, index) => ({ idea, index }))
+    .sort((a, b) => (b.idea.review?.score ?? -1) - (a.idea.review?.score ?? -1) || a.index - b.index)
+    .map(({ idea }) => idea);
+  if (ranked[0]?.review) ranked[0] = { ...ranked[0], recommended: true };
+  return ranked;
 }

@@ -1,6 +1,16 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.25.0 · 06/11/2026
+### Tính năng
+- AI chấm điểm các gợi ý chiến dịch để chọn gợi ý phù hợp nhất
+  - Sau khi AI đưa 4 gợi ý, một lượt AI riêng (không phải AI vừa viết gợi ý) chấm từng gợi ý từ 1 đến 10 theo: hợp mọi
+    nền tảng đã chọn, giá trị cho người đọc, gắn sản phẩm tự nhiên (không bịa thông tin), khả năng tương tác (dựa trên
+    kết quả các chiến dịch trước); điểm tổng là kết quả dự kiến, các gợi ý được so với nhau để không trùng điểm. Kèm
+    điểm yếu chính của từng gợi ý.
+  - API trả gợi ý xếp điểm cao trước, gợi ý đầu có `recommended: true`, mỗi gợi ý có `review`; `scored: false` khi lượt
+    chấm lỗi (vẫn trả gợi ý, chưa có điểm). Một lần gợi ý giờ gồm 2 lượt AI.
+
 ## 1.24.0 · 06/11/2026
 ### Tính năng
 - Quy trình 3 vai AI: AI viết, AI chấm (bắt seeding và rủi ro cho công ty), AI duyệt cuối chặn đăng

@@ -921,7 +921,10 @@ describe('AiContentService quality-checked generation', () => {
   it('suggests campaigns from the brand, the chosen platforms and past scores, keeping only usable ideas', async () => {
     const idea = (name: string) => ({ name, brief: 'Hướng dẫn tối ưu NGINX trên VPS 2 GB: worker_processes, gzip, cache; gắn VPS NVMe của VPSTTT.', angle: 'Hướng dẫn', whyEffective: 'Giải quyết vấn đề thật.', platformFit: 'Diễn đàn: hỏi kinh nghiệm; Bluesky: một mẹo ngắn.' });
     const create = jest.fn().mockResolvedValueOnce({ output_text: JSON.stringify({ suggestions: [
-      idea('Tối ưu NGINX trên VPS nhỏ'), idea('Tối ưu NGINX trên VPS nhỏ'), idea('x'),
+      idea('Tối ưu NGINX trên VPS nhỏ'), idea('Tối ưu NGINX trên VPS nhỏ'), idea('x'), idea('Checklist IPv6 cho website'),
+    ] }) }).mockResolvedValueOnce({ output_text: JSON.stringify({ scores: [
+      { index: 0, score: 6, platformFit: 7, readerValue: 8, brandFit: 5, engagement: 6, weakness: 'Hơi chung chung với Bluesky.' },
+      { index: 1, score: 9, platformFit: 9, readerValue: 9, brandFit: 8, engagement: 12, weakness: 'Cần lệnh cụ thể.' },
     ] }) });
     const { service } = setup(create);
     const result = await service.suggestCampaigns('owner-1', { platformSlugs: ['bluesky', 'nginx-community', 'unknown-site'], hint: 'proxy dân cư' }, 'openai');
@@ -938,8 +941,26 @@ describe('AiContentService quality-checked generation', () => {
     expect(sent.input).toContain('"Giới thiệu proxy": Giới thiệu proxy, VPS của vpsttt qua chia sẻ kiến thức (drafts: 2, average editor score: 7/10, published: 1)');
     expect(sent.input).toContain('- Bluesky: 6/10 over 1 drafts');
     expect(sent.input).toContain('The operator wants ideas about: proxy dân cư');
-    // Duplicates and empty ideas are dropped.
-    expect(result.suggestions).toEqual([expect.objectContaining({ name: 'Tối ưu NGINX trên VPS nhỏ', platformFit: 'Diễn đàn: hỏi kinh nghiệm; Bluesky: một mẹo ngắn.' })]);
+    // Duplicates and empty ideas are dropped; a second, separate request scores the rest and the best comes first.
+    const scoring = request(create, 1);
+    expect(scoring.text.format.name).toBe('campaign_suggestion_scores');
+    expect(scoring.input).toContain('[0] Tối ưu NGINX trên VPS nhỏ');
+    expect(scoring.input).toContain('[1] Checklist IPv6 cho website');
+    expect(result.scored).toBe(true);
+    expect(result.suggestions.map((item) => [item.name, item.review?.score, item.recommended])).toEqual([
+      ['Checklist IPv6 cho website', 9, true], ['Tối ưu NGINX trên VPS nhỏ', 6, undefined],
+    ]);
+    expect(result.suggestions[0]!.review).toMatchObject({ engagement: 10, weakness: 'Cần lệnh cụ thể.' });
+  });
+
+  it('still returns the ideas, unscored, when the scoring request fails', async () => {
+    const create = jest.fn()
+      .mockResolvedValueOnce({ output_text: JSON.stringify({ suggestions: [{ name: 'Tối ưu NGINX trên VPS nhỏ', brief: 'Hướng dẫn tối ưu NGINX trên VPS 2 GB cho người tự quản trị.', angle: 'Hướng dẫn', whyEffective: 'x', platformFit: 'y' }] }) })
+      .mockRejectedValueOnce({ status: 400, message: 'raw-bad' });
+    const { service } = setup(create);
+    const result = await service.suggestCampaigns('owner-1', { platformSlugs: ['bluesky'] }, 'openai');
+    expect(result).toMatchObject({ scored: false, suggestions: [{ name: 'Tối ưu NGINX trên VPS nhỏ' }] });
+    expect(result.suggestions[0]!.review).toBeUndefined();
   });
 
   it('remembers which platform was being written when a run failed', async () => {
