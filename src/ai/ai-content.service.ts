@@ -28,9 +28,14 @@ import {
   reviewPassed,
   ReviewSchema,
   rewriteFeedback,
+  scoreFromReason,
 } from './content-quality';
 import type { PlatformImagePlan } from '../campaigns/image-plan';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
+import {
+  CampaignSuggestion, cleanSuggestions, PastCampaign, PlatformScores, suggestionInput, suggestionInstructions, suggestionPlatforms,
+  SuggestionsOutput, SuggestionsSchema, suggestionsJsonSchema,
+} from './campaign-suggestions';
 import { ProviderThrottle } from './provider-throttle';
 import {
   AI_PROVIDER_IDS,
@@ -144,6 +149,7 @@ const IMAGE_BRIEF_SPEC: StructuredSpec<ImageBrief> = {
   zod: ImageBriefSchema,
 };
 const REVIEW_SPEC: StructuredSpec<ContentReview> = { name: 'content_review', jsonSchema: reviewJsonSchema, zod: ReviewSchema };
+const SUGGESTIONS_SPEC: StructuredSpec<SuggestionsOutput> = { name: 'campaign_suggestions', jsonSchema: suggestionsJsonSchema, zod: SuggestionsSchema };
 
 type SourceContent = {
   title: string;
@@ -460,6 +466,63 @@ export class AiContentService {
         ...(provider === 'deepseek' ? { baseURL: 'https://api.deepseek.com' } : {}),
       });
     }
+  }
+
+  /**
+   * "Gợi ý chiến dịch": campaign ideas for the chosen platforms, from the brand
+   * profile, the owner's last campaigns with their editor scores and published
+   * posts, and the operator's optional hint. One AI request; nothing is stored.
+   */
+  async suggestCampaigns(
+    ownerId: string,
+    input: { platformSlugs: string[]; hint?: string },
+    requestedProvider?: AiProvider,
+  ): Promise<{ suggestions: CampaignSuggestion[] }> {
+    const provider = this.resolveProvider(requestedProvider);
+    await this.assertConfigured(provider);
+    const platforms = suggestionPlatforms(input.platformSlugs);
+    if (!platforms.length) throw new ApplicationException(ErrorCode.VALIDATION_FAILED, 'Chọn ít nhất một tài khoản để AI gợi ý theo nền tảng.', HttpStatus.BAD_REQUEST);
+    const brand = await this.brandProfiles?.load() ?? null;
+    const campaigns = await this.prisma.campaign.findMany({
+      where: { ownerId },
+      orderBy: { createdAt: 'desc' },
+      take: 12,
+      select: {
+        name: true,
+        content: { select: { body: true, variants: { select: { reason: true, platform: { select: { name: true } } } } } },
+        targets: { select: { publishJobs: { select: { publishedPost: { select: { id: true } } } } } },
+      },
+    });
+    const past: PastCampaign[] = campaigns.map((campaign) => {
+      const scores = campaign.content.variants.map((variant) => scoreFromReason(variant.reason)).filter((score): score is number => score !== null);
+      return {
+        name: campaign.name,
+        brief: campaign.content.body,
+        drafts: campaign.content.variants.length,
+        averageScore: scores.length ? Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 10) / 10 : null,
+        published: campaign.targets.reduce((sum, target) => sum + target.publishJobs.filter((job) => job.publishedPost).length, 0),
+      };
+    });
+    const chosen = new Set(platforms.map((platform) => platform.name));
+    const byPlatform = new Map<string, number[]>();
+    for (const campaign of campaigns) for (const variant of campaign.content.variants) {
+      const score = scoreFromReason(variant.reason);
+      if (score === null || !chosen.has(variant.platform.name)) continue;
+      byPlatform.set(variant.platform.name, [...(byPlatform.get(variant.platform.name) ?? []), score]);
+    }
+    const platformScores: PlatformScores = Object.fromEntries([...byPlatform].map(([name, scores]) => [name, {
+      drafts: scores.length, averageScore: Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 10) / 10,
+    }]));
+    const today = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
+    const output = await this.withGenerationRetry(() => this.requestStructured(
+      provider,
+      suggestionInstructions(today),
+      suggestionInput({ brandBlock: brandProfileBlock(brand), platforms, past, platformScores, hint: input.hint }),
+      SUGGESTIONS_SPEC,
+    ));
+    const suggestions = cleanSuggestions(output, platforms.map((platform) => platform.name));
+    if (!suggestions.length) throw new ApplicationException(ErrorCode.PLATFORM_API_ERROR, 'AI chưa đưa ra gợi ý dùng được. Thử lại hoặc chọn nhà cung cấp AI khác.', HttpStatus.BAD_GATEWAY);
+    return { suggestions };
   }
 
   async providers(): Promise<AiProviderDescriptor[]> {

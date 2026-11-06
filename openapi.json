@@ -2995,6 +2995,89 @@
         ]
       }
     },
+    "/api/v1/ai/campaign-suggestions": {
+      "post": {
+        "operationId": "Ai_suggestCampaigns",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CampaignSuggestionsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Gợi ý chiến dịch và mô tả bài đăng cho các nền tảng đã chọn (một lượt AI, không lưu gì).",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
     "/api/v1/ai/image-status": {
       "get": {
         "operationId": "Ai_imageStatus",
@@ -11916,6 +11999,39 @@
           "model",
           "configured",
           "isDefault"
+        ]
+      },
+      "CampaignSuggestionsDto": {
+        "type": "object",
+        "properties": {
+          "platformSlugs": {
+            "description": "Slugs of the platforms chosen in the campaign form.",
+            "example": [
+              "bluesky",
+              "nginx-community"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hint": {
+            "type": "string",
+            "description": "What the operator wants ideas about (optional).",
+            "example": "proxy dân cư cho người làm affiliate"
+          },
+          "aiProvider": {
+            "type": "string",
+            "enum": [
+              "openai",
+              "deepseek",
+              "gemini",
+              "vpsttt"
+            ]
+          }
+        },
+        "required": [
+          "platformSlugs"
         ]
       },
       "AiImageStatusContractDto": {

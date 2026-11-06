@@ -1,6 +1,17 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.21.0 · 06/11/2026
+### Tính năng
+- Gợi ý chiến dịch và mô tả bài đăng bằng AI (`POST /api/v1/ai/campaign-suggestions`, quyền ADMIN / EDITOR)
+  - Gửi các nền tảng đã chọn, hướng muốn nhắm (tuỳ chọn) và nhà cung cấp AI; nhận 4 gợi ý, mỗi gợi ý gồm tên chiến
+    dịch, mô tả bài đăng (dùng thẳng làm brief cho AI viết), dạng bài, lý do hiệu quả và các nền tảng hợp nhất.
+  - AI dựa vào hồ sơ thương hiệu (chưa có thì dựa vào mô tả các chiến dịch trước), luật viết của từng nền tảng đã chọn
+    (diễn đàn: chia sẻ kiến thức / câu hỏi, không quảng cáo; mạng xã hội ngắn: một ý, mở bài mạnh; giới hạn ký tự), và
+    kết quả 12 chiến dịch gần nhất: điểm AI trung bình, số bài đã đăng, điểm theo từng nền tảng. Gợi ý không lặp chủ đề
+    cũ, nghiêng về kiểu bài điểm cao, nhắc thương hiệu tối đa một lần và không bịa giá, ưu đãi, số liệu.
+  - Một lượt gọi AI, không lưu gì.
+
 ## 1.20.0 · 05/11/2026
 ### Tính năng
 - Thêm luồng đăng bài bằng tiện ích Chrome cho 4 kênh trước đây "chưa có luồng" (tiện ích 1.15.0)
