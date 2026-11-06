@@ -1,6 +1,21 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.27.1 · 06/11/2026
+### Sửa lỗi
+- Bài AI viết không còn câu "Mình làm ở VPSTTT…" lạc chỗ; bài mạng xã hội ngắn có bố cục gọn
+  - **Câu tự giới thiệu chỉ khi cần.** Chỉ bài trên diễn đàn, cộng đồng, trang lập trình viên (và Product Hunt) có câu
+    nói mình làm ở công ty, và chỉ khi bài thật sự nhắc hoặc gợi ý sản phẩm. Câu đó nằm ngay trong câu nhắc sản phẩm,
+    không đứng riêng, không ghép với mẹo khác. Bài trên mạng xã hội, blog, kênh ảnh / video đăng bằng tài khoản của
+    công ty nên không có câu này.
+  - **Bỏ câu mẫu cố định.** AI không còn được đưa sẵn câu "Mình làm ở VPSTTT, bên cung cấp VPS và proxy…" nên bài không
+    lặp nguyên văn câu đó.
+  - **Bố cục bài mạng xã hội ngắn** (Bluesky, Mastodon, Threads, X, LinkedIn…): một câu mở đầu, phần thân là một đoạn
+    ngắn hoặc 2–4 gạch đầu dòng (lưu ý của ý nào nằm trong ý đó), rồi đúng một câu kết hoặc một câu hỏi.
+  - **AI chấm và AI duyệt cuối bắt lỗi này.** Câu tự giới thiệu thừa (tài khoản công ty, bài không nhắc sản phẩm),
+    đứng riêng hoặc ghép với ý khác bị trừ điểm / bị từ chối kèm lý do; bài ngắn có nhiều câu kết rời rạc bị trừ điểm.
+  - Có hiệu lực ngay sau khi triển khai, không cần đồng bộ lời dặn trong cơ sở dữ liệu.
+
 ## 1.27.0 · 06/11/2026
 ### Tính năng
 - Claude Opus vừa chấm vừa duyệt cuối; AI viết không còn chép brief vào bài
