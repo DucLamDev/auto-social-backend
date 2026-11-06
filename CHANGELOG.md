@@ -1,6 +1,16 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.28.2 · 06/11/2026
+### Sửa lỗi
+- MeWe: tiện ích nhận ra đúng tài khoản đang đăng nhập nên đăng được bài (tiện ích 1.15.1)
+  - Trước đây trang MeWe không có dấu hiệu tài khoản mà tiện ích biết, nên lượt đăng đứng ở bước xác nhận tài khoản
+    3 phút rồi báo "Chưa xác nhận được đúng tài khoản sau đăng nhập"; kiểm tra đăng nhập cũng lúc được lúc không.
+  - Nay tiện ích hỏi chính MeWe tài khoản đang đăng nhập là ai (bằng phiên sẵn có trên Chrome) và chỉ chấp nhận khi
+    trùng username / URL hồ sơ đã cấu hình (ví dụ `vpsttt_group`). Dự phòng: link hồ sơ của chính mình ở đầu trang
+    hoặc thẻ hồ sơ trên /myworld; link trong bài đăng, story hay chat của người khác không được tính.
+  - Cần nạp lại tiện ích 1.15.1 trên máy Windows rồi bấm "Giao lại cho tiện ích" ở bài MeWe đang chờ.
+
 ## 1.28.1 · 06/11/2026
 ### Sửa lỗi
 - Bài AI viết không còn câu "Mình làm ở VPSTTT…" lạc chỗ; bài mạng xã hội ngắn có bố cục gọn
