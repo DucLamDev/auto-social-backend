@@ -1,6 +1,16 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.28.2 · 06/11/2026
+### Sửa lỗi
+- Báo rõ khi tiện ích Chrome là bản cũ và bỏ qua bài, thay vì để bài "Chờ tiện ích" mãi
+  - Tiện ích chỉ nhận bài của nền tảng mà nó có luồng đăng. Bản cũ (trước 1.15.0) không có luồng Hugging Face, Linux
+    Foundation Forum, Ubiquiti, Blogger. Bài của các nền tảng này nằm "Chờ tiện ích Chrome" mãi dù Chrome đang mở và
+    rảnh, trong khi các nền tảng khác vẫn đăng bình thường.
+  - Mỗi lần Chrome xin bài, máy chủ ghi chú vào bài đang chờ mà bản tiện ích đó không đăng được: Chrome nào, thiếu luồng
+    nào. Ghi chú làm mới tối đa 5 phút một lần, không đổi trạng thái bài. Trang Publishing (frontend 1.33.1) hiện
+    **"Tiện ích cần cập nhật"** kèm hướng dẫn. Chạy được cả với tiện ích bản cũ đang cài, không cần sửa tiện ích.
+
 ## 1.28.1 · 06/11/2026
 ### Sửa lỗi
 - Bài AI viết không còn câu "Mình làm ở VPSTTT…" lạc chỗ; bài mạng xã hội ngắn có bố cục gọn
