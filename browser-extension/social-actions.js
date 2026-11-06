@@ -159,6 +159,7 @@ export async function fillSocialAndSubmit(job) {
     tinhte: ['Đăng', 'Đăng bài', 'Đăng bài viết', 'Xuất bản'], pixelfed: ['Post', 'Share', 'Publish', 'Đăng'],
     mastodon: ['Publish!', 'Publish', 'Post', 'Đăng', 'Đăng bài'], bluesky: ['Post', 'Đăng'], tumblr: ['Post', 'Post now', 'Đăng'], devto: ['Publish', 'Xuất bản'], dailydev: ['Post'],
     disqus: ['Create Discussion'], mewe: ['Post'], ubiquiti: ['Publish'], huggingface: ['Post'],
+    invision: ['Submit Topic'], flarum: ['Post Discussion'], zendesk: ['Submit', 'Post'],
   }[engine];
   // Discuss Disqus: choosing a category writes "<Category>: " into the title and the
   // whole field is stored, so the title carries the prefix. Community Growth is the
@@ -513,6 +514,18 @@ export async function fillSocialAndSubmit(job) {
     choices[0].click();
     await sleep(300);
   }
+  if (engine === 'zendesk' && !resume) {
+    // The topic select is often hidden behind Zendesk's own dropdown; the form posts the select's value.
+    const select = all('select#community_post_topic_id, select[name="community_post[topic_id]"]')[0];
+    const topic = normalize(options.category);
+    if (select && topic) {
+      const option = [...select.options].find(item => !item.disabled && item.value && normalize(item.textContent).toLowerCase() === topic.toLowerCase());
+      if (!option) return needs(`Không thấy topic “${topic}” trong form cộng đồng; chưa điền bài. Ghi đúng tên topic ở ô Chuyên mục của tài khoản.`);
+      select.value = option.value;
+      select.dispatchEvent(new Event('input', { bubbles: true })); select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if (select && !select.value) return needs('Bài cộng đồng cần chọn topic; chưa điền bài. Ghi tên topic ở ô Chuyên mục của tài khoản hoặc dán URL new post có ?community_post[topic_id]=<id>.');
+  }
   if (engine === 'producthunt' && !resume) {
     const chosen = await chooseProductHuntForum(normalize(options.category) || 'Self-Promotion');
     if (chosen !== true) return chosen;
@@ -609,7 +622,7 @@ export async function fillSocialAndSubmit(job) {
     if (!validContent()) return needs('Nội dung thay đổi khi gắn ảnh; chưa đăng.');
   }
 
-  if (!resume && !['lemmy', 'discuit', 'producthunt', 'disqus', 'ubiquiti'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
+  if (!resume && !['lemmy', 'discuit', 'producthunt', 'disqus', 'ubiquiti', 'zendesk'].includes(engine) && !await choose(options.category, ['select[name="category"]', 'select[name="node_id"]', '[role="combobox"][aria-label*="category" i]', 'input[placeholder*="chuyên mục" i]'], ['Category', 'Chuyên mục', 'Chọn chuyên mục'])) return needs('Không chọn được chuyên mục đã cấu hình. Sửa cấu hình trên web trước khi thử lại.');
   if (engine === 'stackexchange' && !resume) {
     // Tags configured on the account must all be applied; the AI's suggested tags
     // are used only when the site already has them (never created), up to 5 in total.
@@ -886,6 +899,21 @@ export async function fillSocialAndSubmit(job) {
   if (!['medium', 'substack'].includes(engine) && !validContent()) return needs('Nội dung không còn khớp với bài trên web; chưa đăng.');
   if (!mindsChannelMatches()) return needs('Nơi đăng Minds đã thay đổi; chưa gửi bài.');
   submit.click();
+  if (engine === 'flarum') {
+    // Opened from a tag page the discussion already has its tag. Otherwise Flarum asks for
+    // one before posting: pick the account's category (General by default), then confirm.
+    const modal = await wait(() => all('.TagDiscussionModal').find(visible) ?? null, 2500);
+    if (modal) {
+      const tag = normalize(options.category) || 'General';
+      const rows = [...modal.querySelectorAll('.TagSelectionModal-list > li, .SelectTagListItem')].filter(visible)
+        .filter(row => normalize(row.querySelector('.SelectTagListItem-name')?.innerText ?? row.innerText).toLowerCase() === tag.toLowerCase());
+      if (rows.length !== 1) return needs(`Flarum yêu cầu chọn tag nhưng không thấy tag “${tag}”; bài đã điền, chọn tag trong tab rồi bấm đăng. Có thể dán trang tag (…/t/<tag>) vào Trang tạo chủ đề.`);
+      rows[0].click(); await sleep(300);
+      const confirm = [...modal.querySelectorAll('button[type="submit"]')].filter(enabled);
+      if (confirm.length !== 1) return needs(`Đã chọn tag “${tag}” nhưng không thấy nút xác nhận của Flarum; kiểm tra trong tab.`);
+      confirm[0].click();
+    }
+  }
   if (engine === 'aws-builder') {
     const confirmation = await wait(() => all('[role="dialog"]').find(node => visible(node)
       && /publish article|publish your article/i.test(node.innerText) && normalize(node.innerText).includes(normalize(post.title))), 1500);

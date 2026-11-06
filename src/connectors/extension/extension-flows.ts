@@ -106,6 +106,12 @@ export const EXTENSION_FLOWS: readonly ExtensionFlow[] = [...forumFlows,
     setupHint: 'Đăng bài lên blog Blogger của tài khoản Google đang đăng nhập. Mặc định là blog chính (/blog/posts/_); có nhiều blog thì dán https://www.blogger.com/blog/posts/<blogId> của blog cần đăng. Tiện ích bấm Bài đăng mới (Blogger tạo một bản nháp), điền tiêu đề và nội dung, bấm Đăng rồi Xác nhận.' },
   { id: 'mewe', name: 'MeWe', engine: 'mewe', forumUrl: 'https://mewe.com', targetUrl: 'https://mewe.com/myworld', revision: 1,
     setupHint: 'Đăng lên dòng thời gian MeWe của tài khoản đang đăng nhập: tiện ích mở ô "How is your day going?", điền nội dung, gắn ảnh nếu bài có ảnh rồi bấm Post. Ai xem được bài theo mặc định của tài khoản MeWe.' },
+  { id: 'unraid-forums', name: 'Unraid Forums', engine: 'invision', forumUrl: 'https://forums.unraid.net', targetUrl: 'https://forums.unraid.net/forum/55-general-support/?do=add', revision: 1,
+    setupHint: 'Tạo chủ đề trên diễn đàn Unraid (Invision Community), mặc định box General Support. Muốn box khác thì vào box đó, bấm Start new topic rồi dán URL dạng https://forums.unraid.net/forum/<id>-<tên>/?do=add vào Trang tạo chủ đề. Tiện ích điền tiêu đề, nội dung rồi bấm Submit Topic; trang chỉ cho khách điền (kèm ô email) nghĩa là Chrome chưa đăng nhập, tiện ích dừng chứ không đăng dưới danh nghĩa khách.' },
+  { id: 'aapanel-forum', name: 'aaPanel Forum', engine: 'flarum', forumUrl: 'https://www.aapanel.com/forum', targetUrl: 'https://www.aapanel.com/forum/t/general', revision: 1,
+    setupHint: 'Tạo discussion trên diễn đàn aaPanel (Flarum), mặc định tag General (thuộc Discussion). Muốn tag khác thì dán https://www.aapanel.com/forum/t/<tag> (ví dụ support, tutorial) vào Trang tạo chủ đề: mở discussion từ trang tag thì tag được chọn sẵn. Tiện ích bấm Start a Discussion, điền tiêu đề (tối đa 80 ký tự), nội dung Markdown rồi bấm Post Discussion.' },
+  { id: 'cpanel-community', name: 'cPanel Community', engine: 'zendesk', forumUrl: 'https://support.cpanel.net', targetUrl: 'https://support.cpanel.net/hc/en-us/community/posts/new', revision: 1,
+    setupHint: 'Tạo bài trong cộng đồng cPanel (Zendesk). Ghi tên topic cần đăng vào ô Chuyên mục của tài khoản (đúng tên trong ô Topic của form), hoặc dán URL new post có ?community_post[topic_id]=<id> để chọn sẵn. Tiện ích điền tiêu đề, nội dung, chọn topic rồi bấm Submit.' },
 ];
 
 export function extensionFlowForPlatform(slug: string): ExtensionFlow | undefined {
@@ -169,5 +175,11 @@ export function validateExtensionFlow(slug: string, settings: ExtensionDeliveryS
   if (flow.engine === 'blogger' && !/^\/blog\/posts\/(?:_|\d+)\/?$/.test(target.pathname)) throw new BadRequestException(flow.setupHint);
   if (flow.engine === 'huggingface' && target.search && target.search !== '?post=true') throw new BadRequestException(flow.setupHint);
   if (flow.engine === 'disqus' && (!/^\/home\/discuss\/channel-[a-z0-9-]+\/?$/.test(target.pathname) || target.search || target.hash)) throw new BadRequestException(flow.setupHint);
+  // Invision: the new-topic form of one forum. Flarum: the forum home or one tag page (the tag is preset).
+  // Zendesk: the community new-post page, optionally preselecting a topic.
+  if (flow.engine === 'invision' && (!/^\/forum\/\d+-[a-z0-9-]+\/?$/.test(target.pathname) || target.search !== '?do=add' || target.hash)) throw new BadRequestException(flow.setupHint);
+  if (flow.engine === 'flarum' && (!/^\/forum(?:\/t\/[a-z0-9-]+)?\/?$/.test(target.pathname) || target.search || target.hash)) throw new BadRequestException(flow.setupHint);
+  if (flow.engine === 'zendesk' && (!/^\/hc\/[a-z]{2}(?:-[a-z]{2})?\/community\/posts\/new\/?$/.test(target.pathname) || target.hash
+    || [...target.searchParams.keys()].some((key) => key !== 'community_post[topic_id]') || !/^\d*$/.test(target.searchParams.get('community_post[topic_id]') ?? ''))) throw new BadRequestException(flow.setupHint);
   return flow;
 }

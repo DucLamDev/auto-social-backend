@@ -290,10 +290,10 @@ export function readModeration(recipe) {
   // Social editors announce a queued submission in different words (DZone
   // "submitted to moderation", Stack Exchange "Staging Ground"). Help text such
   // as "your article will be reviewed" describes the future and does not count.
-  const subject = /\b(?:post|article|story|question)\b|bài viết|bài đăng|câu hỏi/i;
+  const subject = /\b(?:post|article|story|question|topic|discussion)\b|bài viết|bài đăng|câu hỏi|chủ đề/i;
   const queued = /submitted\s+(?:for|to)\s+(?:review|moderation|approval|(?:the\s+)?staging\s+ground)|sent\s+(?:for|to)\s+(?:review|moderation|approval)|(?:pending|awaiting|under|in)\s+(?:review|moderation|approval)|chờ\s+(?:kiểm\s+)?duyệt|đã\s+gửi\s+(?:đi\s+)?(?:kiểm\s+)?duyệt/i;
   const future = /\bwill\s+be\b|\bonce\b|\bafter\s+you\b|\bsẽ\s+(?:được\s+)?/i;
-  for (const dialog of document.querySelectorAll('.d-modal__container, .modal-inner-container, .dialog-container, dialog[open], [role="alert"], [role="status"], .toast, .alert, .notification, [class*="toast" i], [class*="snackbar" i]')) {
+  for (const dialog of document.querySelectorAll('.d-modal__container, .modal-inner-container, .dialog-container, dialog[open], [role="alert"], [role="status"], .toast, .alert, .notification, [class*="toast" i], [class*="snackbar" i], .Alert, .ipsMessage, .notification-notice')) {
     if (!dialog.getClientRects().length || getComputedStyle(dialog).visibility === 'hidden') continue;
     const text = dialog.textContent.replace(/\s+/g, ' ').trim();
     if ((/post needs approval/i.test(text) && /received your new post/i.test(text)

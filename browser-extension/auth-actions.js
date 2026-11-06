@@ -174,6 +174,24 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
         if (own) identity = [...handles][0];
       }
     }
+    if (job.recipe.engine === 'flarum' && !identity) {
+      // Flarum boots from a JSON payload that names the session user: read only its username.
+      try {
+        const payload = JSON.parse(document.getElementById('flarum-json-payload')?.textContent || 'null');
+        const userId = payload?.session?.userId;
+        const user = userId ? [...(payload.resources ?? []), payload.apiDocument?.data].flat().find(item => item?.type === 'users' && String(item.id) === String(userId)) : null;
+        if (typeof user?.attributes?.username === 'string' && user.attributes.username) identity = user.attributes.username;
+      } catch { /* Session menu below */ }
+      if (!identity) { const name = all('.SessionDropdown .username').find(visible); if (name && name.innerText.trim()) identity = name.innerText; }
+    }
+    if (job.recipe.engine === 'zendesk' && !identity) {
+      // Zendesk Help Center names the signed-in user (id null for anonymous visitors).
+      try {
+        const r = await fetch('/api/v2/users/me.json', { credentials: 'same-origin', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(5000) });
+        const me = r.ok ? (await r.json())?.user : null;
+        if (me?.id && typeof me.name === 'string' && me.name.trim()) identity = me.name;
+      } catch { /* Profile page fallback */ }
+    }
     if (location.hostname === 'differ.blog') {
       try {
         const r = await fetch('/me', { credentials: 'same-origin', signal: AbortSignal.timeout(5000) });
@@ -214,6 +232,7 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
       bluesky: ['a[data-testid="bottomBarProfileBtn"]', 'nav a[href^="/profile/"]', '[data-testid="homeScreen"] a[aria-label="Profile"]'],
       devto: ['#crayons-header__menu__profile__link', '#crayons-header__menu a[href][data-testid="profile-link"]'],
       tumblr: ['[role="navigation"] a[href^="/blog/"]'],
+      invision: ['#elUserLink'],
     }[job.recipe.engine] ?? []), ...genericSelectors];
     let marker;
     let markerHref = '';

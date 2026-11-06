@@ -1,6 +1,6 @@
 import type { ExtensionRecipe } from './extension-delivery';
 
-export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'producthunt', 'disqus', 'mewe', 'ubiquiti', 'huggingface', 'blogger'] as const;
+export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'producthunt', 'disqus', 'mewe', 'ubiquiti', 'huggingface', 'blogger', 'invision', 'flarum', 'zendesk'] as const;
 export type SocialExtensionEngine = (typeof SOCIAL_EXTENSION_ENGINES)[number];
 
 function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>): ExtensionRecipe {
@@ -82,6 +82,51 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
     successUrlPattern: '/post/show/[A-Za-z0-9_-]+(?:[?#].*)?$',
     errorSelectors: ['.c-mw-toast-box'],
     publishedBodySelectors: ['.c-mw-post .post_text[data-testid="post-text"]'],
+  }),
+  // Invision Community (forums.unraid.net): /forum/<id>-<slug>/?do=add is the new-topic
+  // form of one forum. Field names come from Invision's form helpers (topic_title,
+  // topic_content) and hold in versions 4 and 5; the editor is CKEditor (4) or a
+  // ProseMirror editor (5), both take a pasted HTML body. Guests get the same form
+  // with an email field: that means signed out, never post as a guest.
+  invision: recipe('invision', {
+    readySelectors: ['form input[name="topic_title"]'],
+    titleSelectors: ['form input[name="topic_title"]'],
+    bodySelectors: ['form:has(input[name="topic_title"]) [contenteditable="true"]'], inputMode: 'pasteHtml',
+    submitSelectors: ['form:has(input[name="topic_title"]) button[type="submit"]'],
+    successUrlPattern: '/topic/\\d+-[^/?#]+/?(?:[?#].*)?$',
+    loginSelectors: ['input[type="password"]', 'form input[name="guest_email"]', 'form:has(input[name="topic_title"]) input[type="email"]'],
+    errorSelectors: ['form .ipsFieldRow_error', 'form [data-role="error"]', '.ipsMessage_error', '[role="alert"]'],
+    publishedBodySelectors: ['[data-role="commentContent"]', '.ipsRichText', '.ipsType_richText'],
+  }),
+  // Flarum (www.aapanel.com/forum): a tag page (/forum/t/general) opens the composer
+  // with that tag set; "Start a Discussion" opens it at the bottom of the page. The
+  // body is a Markdown textarea. A discussion lives at /d/<id>-<slug>.
+  flarum: recipe('flarum', {
+    readySelectors: ['.IndexPage-newDiscussion', '.Composer textarea.TextEditor-editor'],
+    openerSelectors: ['.IndexPage-newDiscussion'],
+    titleSelectors: ['.Composer li.item-discussionTitle input', '.Composer .ComposerBody-header input.FormControl'],
+    bodySelectors: ['.Composer textarea.TextEditor-editor', '.Composer .TextEditor textarea'], inputMode: 'value',
+    submitSelectors: ['.Composer li.item-submit button', '.Composer .TextEditor-controls .item-submit button'],
+    successUrlPattern: '/d/\\d+(?:-[^/?#]*)?(?:/\\d+)?/?(?:[?#].*)?$',
+    loginSelectors: ['input[type="password"]', '.LogInModal', '.Header-secondary .item-logIn'],
+    errorSelectors: ['.AlertManager .Alert--error', '.Modal .Alert--error'],
+    publishedTitleSelectors: ['.DiscussionHero-title'],
+    publishedBodySelectors: ['.PostStream-item .Post-body', '.Post-body'],
+  }),
+  // Zendesk Help Center community (support.cpanel.net): /hc/<locale>/community/posts/new.
+  // Field ids come from Zendesk's form helpers (community_post_title, _details,
+  // _topic_id); the details editor is CKEditor 5 over a hidden textarea. The topic is
+  // chosen by name (account category) unless the URL preselects it (?community_post[topic_id]=).
+  zendesk: recipe('zendesk', {
+    readySelectors: ['form#new_community_post', 'form.new_community_post', 'input#community_post_title'],
+    titleSelectors: ['input#community_post_title', 'input[name="community_post[title]"]'],
+    bodySelectors: ['form:has(#community_post_title) .ck-editor__editable[contenteditable="true"]', 'form:has(#community_post_title) [contenteditable="true"]'], inputMode: 'pasteHtml',
+    submitSelectors: ['form:has(#community_post_title) input[type="submit"]', 'form:has(#community_post_title) button[type="submit"]'],
+    successUrlPattern: '/hc/[A-Za-z-]+/community/posts/\\d+(?:-[^/?#]*)?/?(?:[?#].*)?$',
+    loginSelectors: ['input[type="password"]', 'a.sign-in', 'iframe[src*="/access/"]'],
+    errorSelectors: ['form .notification-error', 'form .error', '.notification-error'],
+    publishedTitleSelectors: ['h1.post-title', '.post-title h1', '.post-header h1'],
+    publishedBodySelectors: ['.post-body', '.post-content', 'article.post'],
   }),
   // daily.dev /squads/create opens its composer dialog (form#smart_composer) with the
   // signed-in user's own profile as audience; a new post opens /posts/<slug>.
