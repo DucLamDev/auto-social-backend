@@ -156,6 +156,12 @@ const IMAGE_BRIEF_SPEC: StructuredSpec<ImageBrief> = {
   zod: ImageBriefSchema,
 };
 const REVIEW_SPEC: StructuredSpec<ContentReview> = { name: 'content_review', jsonSchema: reviewJsonSchema, zod: ReviewSchema };
+/** The platform being written when a multi-platform run failed (shown to the operator). */
+const failedPlatforms = new WeakMap<object, string>();
+export function failedPlatformOf(error: unknown): string | undefined {
+  return error && typeof error === 'object' ? failedPlatforms.get(error) : undefined;
+}
+
 const SUGGESTIONS_SPEC: StructuredSpec<SuggestionsOutput> = { name: 'campaign_suggestions', jsonSchema: suggestionsJsonSchema, zod: SuggestionsSchema };
 
 type SourceContent = {
@@ -622,7 +628,7 @@ export class AiContentService {
       const brand = await this.brandProfiles?.load() ?? null;
       const generated: Array<GeneratedVariant | undefined> = [];
       const saved: Array<ContentVariant | undefined> = [];
-      let failure: { error: unknown } | undefined;
+      let failure: { error: unknown; platform: string } | undefined;
       let next = 0;
       // Bound provider concurrency for large multi-platform campaigns: four at a
       // time, and a finished platform frees its slot for the next one at once.
@@ -640,11 +646,14 @@ export class AiContentService {
             const variant = await this.saveVariant(this.prisma, contentId, platform.id, result);
             saved[index] = variant;
             await onVariant(variant);
-          } catch (error) { failure ??= { error }; }
+          } catch (error) { failure ??= { error, platform: platform.slug }; }
         }
       };
       await Promise.all(Array.from({ length: Math.min(4, platforms.length) }, worker));
-      if (failure) throw failure.error;
+      if (failure) {
+        if (failure.error && typeof failure.error === 'object') failedPlatforms.set(failure.error, failure.platform);
+        throw failure.error;
+      }
       await assertOwnership?.();
       if (onVariant) {
         const completed = await this.prisma.content.updateMany({

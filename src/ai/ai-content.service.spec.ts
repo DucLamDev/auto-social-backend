@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
 import { AiProvider } from './ai-provider';
-import { AiContentService, contractInstructions, extractJsonObject } from './ai-content.service';
+import { failedPlatformOf, AiContentService, contractInstructions, extractJsonObject } from './ai-content.service';
 import { platformContract } from '../platforms/platform-contract';
 import { checkPostLength } from '../platforms/post-length';
 import { BrandProfileService } from './brand-profile.service';
@@ -925,6 +925,14 @@ describe('AiContentService quality-checked generation', () => {
     expect(sent.input).toContain('The operator wants ideas about: proxy dân cư');
     // Duplicates and empty ideas are dropped.
     expect(result.suggestions).toEqual([expect.objectContaining({ name: 'Tối ưu NGINX trên VPS nhỏ', platformFit: 'Diễn đàn: hỏi kinh nghiệm; Bluesky: một mẹo ngắn.' })]);
+  });
+
+  it('remembers which platform was being written when a run failed', async () => {
+    const create = jest.fn().mockRejectedValue({ status: 401, message: 'raw-auth' });
+    const { service } = setup(create);
+    const error: unknown = await service.generate('owner-1', 'content-1', ['bluesky'], 'openai').catch((caught: unknown) => caught);
+    expect(failedPlatformOf(error)).toBe('bluesky');
+    expect(failedPlatformOf(new Error('other'))).toBeUndefined();
   });
 
   it('stops rewriting as soon as a rewrite passes', async () => {

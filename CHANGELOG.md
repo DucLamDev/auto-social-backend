@@ -10,6 +10,11 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   - Nay viết bài và tạo ảnh dùng chung một bộ điều tốc theo hạn mức của key, chừa 1 lượt mỗi phút cho độ trễ mạng.
   - Gặp giới hạn lượt (429) hoặc AI bận (503) thì chờ 15, 30 rồi 60 giây và thử lại, thay vì một lần sau 2 giây.
   - Bấm **Thử lại** ở chiến dịch lỗi: chỉ các kênh chưa tạo được mới được viết lại.
+- Chiến dịch AI lỗi ghi rõ nguyên nhân để dễ xử lý (migration `20261106090000_campaign_automation_error_detail`)
+  - Trước đây mọi lỗi đều ghi chung `AI_GENERATION_FAILED`. Nay chiến dịch lưu mã lỗi thật (ví dụ
+    `PLATFORM_RATE_LIMITED`), thông điệp, kênh đang viết khi lỗi và nhà cung cấp AI vào cột mới `automationErrorDetail`;
+    API trả trường này cùng chiến dịch. Lỗi lạ của máy chủ chỉ ghi tên lỗi, nội dung đầy đủ nằm trong log API kèm mã
+    chiến dịch. Log API ghi kênh, mã và thông điệp thay vì chỉ tên lỗi.
 - Gợi ý chiến dịch phù hợp với **tất cả** các social đã chọn
   - Mỗi gợi ý phải dùng được cho mọi nền tảng đã chọn cùng lúc (một mô tả bài chung, AI viết lại theo từng nền tảng),
     theo luật chặt nhất trong số đó; không còn gợi ý chỉ hợp một vài nền tảng.
