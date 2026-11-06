@@ -117,8 +117,10 @@ describe('validateEnvironment', () => {
 
   it('defaults both the reviewer and the final approver to Claude Opus on VPSTTT AI, with approval on', () => {
     expect(validateEnvironment({ NODE_ENV: 'test' })).toMatchObject({
-      AI_REVIEWER: 'vpsttt:claude:opus', AI_APPROVER: 'vpsttt:claude:opus', AI_APPROVAL_ENABLED: true,
+      AI_REVIEWER: 'vpsttt:claude:opus', AI_APPROVER: 'vpsttt:claude:opus', AI_REVISER: 'vpsttt:claude:opus', AI_APPROVAL_ENABLED: true,
     });
+    expect(validateEnvironment({ ...productionEnvironment(), AI_REVISER: ' OpenAI:gpt-5 ' })).toMatchObject({ AI_REVISER: 'openai:gpt-5' });
+    expect(() => validateEnvironment({ ...productionEnvironment(), AI_REVISER: 'claude:opus' })).toThrow('AI_REVISER must look like provider:model');
     expect(validateEnvironment({ ...productionEnvironment(), AI_REVIEWER: ' ', AI_APPROVER: '' }))
       .toMatchObject({ AI_REVIEWER: 'vpsttt:claude:opus', AI_APPROVER: 'vpsttt:claude:opus' });
   });

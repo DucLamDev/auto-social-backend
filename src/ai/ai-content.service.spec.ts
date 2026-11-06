@@ -637,9 +637,9 @@ describe('AiContentService quality-checked generation', () => {
       },
       $transaction: jest.fn((callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
     };
-    // The reviewer is pinned to the writer's provider here so each test lists
-    // write and review answers in order; the role tests below use the defaults.
-    const settings = isolatedConfig({ AI_REVIEWER: 'openai', VPSTTT_AI_RPM: 60_000, ...config });
+    // The reviewer and the reviser are pinned to the writer's provider here so each
+    // test lists write and review answers in order; the role tests below use the defaults.
+    const settings = isolatedConfig({ AI_REVIEWER: 'openai', AI_REVISER: 'openai', VPSTTT_AI_RPM: 60_000, ...config });
     const brand = { load: () => Promise.resolve({ brandName: 'VPSTTT', facts: ['VPS NVMe triển khai trong 60 giây'] }) };
     const service = new AiContentService(
       prisma as unknown as PrismaService,
@@ -996,11 +996,19 @@ describe('AiContentService quality-checked generation', () => {
     }, 'openai');
 
     const writer = request(create, 0);
-    expect(writer.input).toContain('Revise your previous draft');
+    expect(writer.input).toContain('Edit your previous draft for this destination so it passes the editor\'s review.');
+    expect(writer.input).toContain('Edit, do not rewrite: change only the sentences the notes and the operator\'s instructions point to');
+    expect(writer.input).toContain('The operator\'s instructions may ask for a bigger change');
     expect(writer.input).toContain('"body":"Bản cũ nhạt"');
     expect(writer.input).toContain("Operator's instructions (highest priority, within the destination contract):\nMở bài bằng số liệu cụ thể");
     expect(writer.input).toContain("Editor's notes from the last review:\nCần xem lại (AI chấm 5/10): Mở bài chung chung");
-    expect(request(create, 2).input).toContain("The operator's instructions still apply: Mở bài bằng số liệu cụ thể");
+    // The follow-up edits the best version so far with the new notes; it never starts again from the brief.
+    const followUp = request(create, 2).input;
+    expect(followUp).toContain('Your edited draft still fails the editor\'s review. Edit it once more.');
+    expect(followUp).toContain(`"body":"${shortBody}"`);
+    expect(followUp).toContain('- Thiếu số liệu');
+    expect(followUp).toContain("The operator's instructions still apply: Mở bài bằng số liệu cụ thể");
+    expect(followUp).not.toContain('Rewrite it from scratch');
     // No art director call: the post keeps its image; nothing is stored here.
     expect(create).toHaveBeenCalledTimes(4);
     expect(created).toHaveLength(0);
@@ -1240,6 +1248,20 @@ describe('AiContentService quality-checked generation', () => {
       expect(row.aiApproval).toMatchObject({ status: 'rejected', score: 5, risk: 'low', textHash: approvalHash(row) });
     });
 
+    it('keeps only whole refusal reasons in the stored reason, so none is cut mid-sentence', async () => {
+      const create = jest.fn().mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed());
+      const long = (word: string) => `${word} ${'chi tiết '.repeat(25).trim()}`;
+      const approve = jest.fn().mockResolvedValue(verdict({ approved: false, score: 3, risk: 'medium', reasons: [long('Một'), long('Hai'), long('Ba')] }));
+      const { service, created } = setup(create, { approve });
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+      const row = stored(created[0]!);
+      expect(row.reason).toBe(`AI duyệt cuối (Claude Opus) từ chối: ${long('Một')} (AI chấm 8/10)`);
+      // The full list stays with the verdict.
+      expect((row.aiApproval!.reasons as string[])).toHaveLength(3);
+    });
+
     it('puts the refusal before the review problems when both fail', async () => {
       const create = jest.fn()
         .mockResolvedValueOnce(variant(shortBody, { recommended: false, reason: 'Không hợp cộng đồng' }))
@@ -1380,17 +1402,48 @@ describe('AiContentService quality-checked generation', () => {
       });
     });
 
+    it('lets Claude Opus edit a stored draft by default, whichever writer the campaign used', async () => {
+      const create = jest.fn();
+      const edited = chat({ platform: 'bluesky', title: null, body: shortBody, summary: null, hashtags: ['vps'], cta: null, recommended: true, reason: 'Đã sửa mở bài', media: { type: 'none', altText: '' } });
+      const vpsttt = jest.fn((sent: ChatRequest) => Promise.resolve(sent.messages[0]!.content.includes('senior editor') ? opusReview() : edited));
+      const { service } = setup(create, { approve: vpsttt, config: { AI_REVIEWER: '', AI_REVISER: '' } });
+
+      const result = await service.reviseDraft('owner-1', {
+        contentId: 'content-1', platformSlug: 'bluesky',
+        revision: { previous: { title: null, body: 'Bản cũ nhạt', hashtags: ['vps'] }, instruction: '', chosenNotes: ['Mở bài chung chung'], previousScore: 6 },
+      }, 'openai');
+
+      // The campaign's writer (OpenAI) is not called: Opus edits, Opus scores, its review is the verdict.
+      expect(create).not.toHaveBeenCalled();
+      expect(vpsttt.mock.calls.map(([sent]) => sent.model)).toEqual(['claude:opus', 'claude:opus']);
+      expect(chatRequest(vpsttt, 0).messages[1]!.content).toContain('Edit, do not rewrite');
+      expect(result).toMatchObject({ body: shortBody, recommended: true, approval: { status: 'approved', approverLabel: 'Claude Opus' } });
+      expect(await service.reviserFor('openai')).toEqual({ provider: 'vpsttt', model: 'claude:opus' });
+    });
+
+    it('edits with the requested writer when the reviser has no key', async () => {
+      const create = jest.fn().mockResolvedValueOnce(variant(shortBody)).mockResolvedValueOnce(reviewed());
+      const { service } = setup(create, { approve: null, config: { AI_REVISER: '' } });
+      await service.reviseDraft('owner-1', {
+        contentId: 'content-1', platformSlug: 'bluesky', revision: { previous: { title: null, body: 'Bản cũ', hashtags: [] }, instruction: 'Ngắn hơn' },
+      }, 'openai');
+      expect(request(create, 0).input).toContain('Edit your previous draft');
+      expect(await service.reviserFor('deepseek')).toEqual({ provider: 'deepseek', model: '' });
+    });
+
     it('describes the reviewer and the approver without keys', async () => {
-      const { service } = setup(jest.fn(), { config: { AI_REVIEWER: '' } });
+      const { service } = setup(jest.fn(), { config: { AI_REVIEWER: '', AI_REVISER: '' } });
       expect(await service.roles()).toEqual({
         reviewer: { provider: 'vpsttt', model: 'claude:opus', label: 'Claude Opus', configured: true },
         approver: { provider: 'vpsttt', model: 'claude:opus', label: 'Claude Opus', configured: true },
+        reviser: { provider: 'vpsttt', model: 'claude:opus', label: 'Claude Opus', configured: true },
         approvalEnabled: true,
       });
       const { service: withoutKey } = setup(jest.fn(), { approve: null, config: { AI_APPROVER: 'gemini' } });
       expect(await withoutKey.roles()).toEqual({
         reviewer: { provider: 'openai', model: 'openai-test-model', label: 'OpenAI · openai-test-model', configured: true },
         approver: { provider: 'gemini', model: 'gemini-test-model', label: 'Google Gemini · gemini-test-model', configured: false },
+        reviser: { provider: 'openai', model: 'openai-test-model', label: 'OpenAI · openai-test-model', configured: true },
         approvalEnabled: true,
       });
     });

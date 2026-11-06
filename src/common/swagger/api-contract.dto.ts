@@ -184,7 +184,7 @@ export class ContentVariantContractDto {
   @ApiProperty() recommended!: boolean;
   @ApiPropertyOptional({ type: String, nullable: true }) reason?: string | null;
   @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true }) mediaRecommendation?: Record<string, unknown> | null;
-  @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true, description: 'Last "rewrite with AI" request: status generating | done | failed, instruction, notes (review points chosen by the operator, when sent), startedAt, finishedAt, error.' })
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true, description: 'Last "rewrite with AI" request: status generating | done | failed, instruction, notes (review points chosen by the operator, when sent), provider and writerLabel of the AI that edits (AI_REVISER, e.g. "Claude Opus"), startedAt, finishedAt, error (also why a lower-scoring edit was not saved).' })
   aiRevision?: Record<string, unknown> | null;
   @ApiPropertyOptional({ type: 'object', additionalProperties: true, nullable: true, description: 'Final AI approver verdict: status running | approved | rejected | failed, approver (provider:model), approverLabel, textHash (the text it read), score, risk, seeding, reasons, startedAt, finishedAt, error. Null when the variant was never sent to the approver.' })
   aiApproval?: Record<string, unknown> | null;

@@ -121,6 +121,7 @@ khi AI viết, khi duyệt, khi sửa, khi giao bài cho tiện ích và trong c
 | **AI viết** | AI chọn ở hộp tạo bài (`AI_DEFAULT_PROVIDER`; với VPSTTT AI là `VPSTTT_AI_MODEL`, đặt `gpt:` để GPT viết) | Viết bài, mô tả ảnh, viết lại theo nhận xét |
 | **AI chấm** | `AI_REVIEWER=vpsttt:claude:opus` | Chấm điểm và nhận xét; bắt **seeding vụng** và **rủi ro cho công ty** |
 | **AI duyệt cuối** | `AI_APPROVER=vpsttt:claude:opus` | Đọc bản sẽ đăng, quyết định cho đăng hay không |
+| **AI sửa bài** | `AI_REVISER=vpsttt:claude:opus` | Viết lại bằng AI / Sửa theo khuyến nghị (từ 1.28.0); provider chưa có key thì dùng AI viết của chiến dịch |
 
 - **Chấm và duyệt cuối gộp vào Claude Opus (từ backend 1.27.0).** Hai vai cùng một model:
   - Lần chấm cuối của Opus trên đúng bản lưu là kết quả duyệt, không gọi thêm lượt duyệt riêng.
@@ -171,8 +172,13 @@ Bài đạt từ 7/10. Ở Content đợi duyệt:
 - **sửa theo khuyến nghị**: gửi thêm `notes` (mảng, tối đa 20 mục, mỗi mục tối đa 1.000 ký tự) là các khuyến nghị
   bạn chọn trong ghi chú chấm điểm. Khi có `notes`, AI chỉ sửa theo các mục đó thay vì toàn bộ ghi chú lần chấm trước;
   `notes` rỗng thì phải có `instruction`;
-- việc này chạy nền 1–3 phút. Trạng thái nằm ở trường `aiRevision` của biến thể (`generating`, `done`, `failed`);
+- việc này chạy nền 1–3 phút. Trạng thái nằm ở trường `aiRevision` của biến thể (`generating`, `done`, `failed`;
+  `writerLabel` là AI sửa bài, ví dụ "Claude Opus");
+- **AI sửa bài là `AI_REVISER`** (mặc định Claude Opus), không phải AI viết của chiến dịch. AI này **chỉ sửa đúng câu bị
+  nhắc** và giữ nguyên phần còn lại (tiêu đề, bố cục, hashtag). Chấm lại vẫn chưa đạt thì AI sửa tiếp **trên bản tốt nhất**,
+  không viết lại từ brief;
 - bài mới thay bài cũ tại chỗ, được chấm lại; bài đã duyệt nhưng chưa vào chiến dịch quay về chờ duyệt;
+- bản sửa vẫn chưa đạt mà **điểm thấp hơn bản cũ** thì không lưu: giữ bản cũ, `aiRevision` báo `failed` kèm lý do;
 - lần chấm lại biết điểm cũ ("AI chấm X/10") và các mục bạn yêu cầu sửa: AI chấm kiểm các mục đó trước, sửa xong mà không
   hỏng chỗ khác thì điểm phải cao hơn điểm cũ, và không đòi làm ngược lại mục đã sửa;
 - bạn sửa tay trong lúc AI đang viết thì giữ bản bạn sửa.
