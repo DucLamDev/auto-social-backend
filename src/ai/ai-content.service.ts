@@ -50,6 +50,7 @@ import {
   approvalVerdict,
   DEFAULT_AI_APPROVER,
   DEFAULT_AI_REVIEWER,
+  DEFAULT_AI_REVISER,
   parseAiRole,
   sameAiRole,
 } from './content-approval';
@@ -117,6 +118,7 @@ export interface AiRoleDescriptor extends AiRole {
 export interface AiRolesDescriptor {
   reviewer: AiRoleDescriptor;
   approver: AiRoleDescriptor;
+  reviser: AiRoleDescriptor;
   approvalEnabled: boolean;
 }
 
@@ -243,6 +245,8 @@ interface ModelOptions {
   engine?: string;
   /** Set when this destination's post carries one AI image; absent means text only. */
   image?: PlatformImagePlan | null;
+  /** Model of the writing provider for this call (the reviser's); empty means the provider's configured one. */
+  model?: string;
 }
 
 /** An operator's "rewrite this post" request for one stored draft. */
@@ -268,9 +272,20 @@ export function previousReviewOf(revision: DraftRevision | undefined): PreviousR
   return { score: revision.previousScore ?? null, fixes };
 }
 
+/**
+ * How a stored draft is edited: only what the notes and the operator point to
+ * changes, the rest stays word for word. Rewriting the whole post threw away
+ * the parts the editor had already accepted and often scored lower.
+ */
+const EDIT_RULES = [
+  'Edit, do not rewrite: change only the sentences the notes and the operator\'s instructions point to (rewrite, remove or add just those). Keep every other sentence, the title, the structure, the order and the hashtags exactly as they are, word for word, unless a note is about them. Do not start a new post from the brief.',
+  'When a note cannot be fixed by an edit (the post does not suit this destination at all), keep the text, set recommended to false and say why in reason.',
+  'Return the complete post with your edits applied.',
+];
+
 function revisionBrief(revision: DraftRevision): string {
   return [
-    'Revise your previous draft for this destination: keep what works, follow the operator\'s instructions and fix the editor\'s notes. Return the complete new post.',
+    `Edit your previous draft for this destination so it passes the editor's review.\n${EDIT_RULES.map((rule) => `- ${rule}`).join('\n')}${revision.instruction ? '\n- The operator\'s instructions may ask for a bigger change; then do what they ask.' : ''}`,
     `Previous draft:\n${JSON.stringify({ title: revision.previous.title, body: revision.previous.body.slice(0, 20_000), hashtags: revision.previous.hashtags })}`,
     revision.instruction ? `Operator's instructions (highest priority, within the destination contract):\n${revision.instruction}` : '',
     revision.notes ? `Editor's notes from the last review:\n${revision.notes}` : '',
@@ -278,6 +293,19 @@ function revisionBrief(revision: DraftRevision): string {
       ? `Fix each of these points from the editor's last review, chosen by the operator (other earlier notes do not apply):\n${revision.chosenNotes.map((note) => `- ${note}`).join('\n')}`
       : '',
   ].filter(Boolean).join('\n\n');
+}
+
+/**
+ * A revision that still fails the review is edited again from its best
+ * version, never rewritten from the brief: the reviewer's new notes, plus the
+ * operator's standing instructions, are the only things to change.
+ */
+export function followUpBrief(draft: DraftForCheck, feedback: string): string {
+  return [
+    `Your edited draft still fails the editor's review. Edit it once more.\n${EDIT_RULES.map((rule) => `- ${rule}`).join('\n')}`,
+    `Draft:\n${JSON.stringify({ title: draft.title, body: draft.body.slice(0, 20_000), hashtags: draft.hashtags })}`,
+    `Fix these points from the editor's review:\n${feedback}`,
+  ].join('\n\n');
 }
 
 /**
@@ -491,6 +519,9 @@ export class AiContentService {
   private readonly reviewer: AiRole;
   /** Final gate on the finished draft (AI_APPROVER). */
   private readonly approver: AiRole;
+  /** Writes "Viết lại bằng AI" / "Sửa theo khuyến nghị" (AI_REVISER); the campaign writer when its provider has no key. */
+  private readonly reviser: AiRole;
+  private reviserFallbackWarned = false;
   private readonly approvalOn: boolean;
   private reviewerFallbackWarned = false;
 
@@ -518,6 +549,7 @@ export class AiContentService {
     // validateEnvironment already rejected invalid values; an empty one means the default.
     this.reviewer = parseAiRole(String(config.get<string>('AI_REVIEWER') ?? '').trim() || DEFAULT_AI_REVIEWER, 'AI_REVIEWER');
     this.approver = parseAiRole(String(config.get<string>('AI_APPROVER') ?? '').trim() || DEFAULT_AI_APPROVER, 'AI_APPROVER');
+    this.reviser = parseAiRole(String(config.get<string>('AI_REVISER') ?? '').trim() || DEFAULT_AI_REVISER, 'AI_REVISER');
     const approvalSetting = config.get<boolean | string>('AI_APPROVAL_ENABLED', true);
     this.approvalOn = !(approvalSetting === false || String(approvalSetting).trim().toLowerCase() === 'false');
 
@@ -635,7 +667,7 @@ export class AiContentService {
       label: aiRoleLabel(role, this.models[role.provider]),
       configured: await this.providerReady(role.provider),
     });
-    return { reviewer: await describe(this.reviewer), approver: await describe(this.approver), approvalEnabled: this.approvalOn };
+    return { reviewer: await describe(this.reviewer), approver: await describe(this.approver), reviser: await describe(this.reviser), approvalEnabled: this.approvalOn };
   }
 
   /** Whether drafts go through the final approver (AI_APPROVAL_ENABLED, on by default). */
@@ -660,6 +692,26 @@ export class AiContentService {
       this.logger.warn(`AI_REVIEWER ${aiRoleSetting(this.reviewer)} is not configured; drafts are reviewed by their writer's provider instead`);
     }
     return { provider: writer, model: '' };
+  }
+
+  /**
+   * Who writes a revision: the configured reviser (Claude Opus by default), or
+   * the requested writer when the reviser's provider has no key.
+   */
+  async reviserFor(requested: AiProvider): Promise<AiRole> {
+    let ready = false;
+    try { ready = await this.providerReady(this.reviser.provider); } catch { ready = false; }
+    if (ready) return this.reviser;
+    if (!this.reviserFallbackWarned) {
+      this.reviserFallbackWarned = true;
+      this.logger.warn(`AI_REVISER ${aiRoleSetting(this.reviser)} is not configured; revisions are written by the requested provider instead`);
+    }
+    return { provider: requested, model: '' };
+  }
+
+  /** Human label of a role for the UI and stored records ("Claude Opus"). */
+  roleLabel(role: AiRole): string {
+    return aiRoleLabel(role, this.models[role.provider]);
   }
 
   resolveProvider(requested?: string): AiProvider {
@@ -869,6 +921,7 @@ export class AiContentService {
     brand: BrandProfile | null,
     image: PlatformImagePlan | null = null,
     revision?: DraftRevision,
+    writerModel?: string,
   ): Promise<CheckedVariant> {
     const reviewer = await this.reviewerFor(provider);
     const contract = platformContract(platform, {
@@ -881,7 +934,7 @@ export class AiContentService {
     // extension), so stray Markdown never reaches readers.
     const write = async (feedback?: string, revisionText?: string) => {
       const generated = await this.withGenerationRetry(() => (
-        this.callModel(provider, platform, systemPrompt, userTemplate, content, { contract, brand, feedback, image, engine, revision: revisionText })
+        this.callModel(provider, platform, systemPrompt, userTemplate, content, { contract, brand, feedback, image, engine, revision: revisionText, model: writerModel })
       ));
       const media = mediaForPlan(generated, image);
       return contract.format === 'plain' ? { ...generated, media, body: markdownToPlain(generated.body) } : { ...generated, media };
@@ -901,7 +954,9 @@ export class AiContentService {
     ].filter(Boolean).map((line) => `\n- ${line}`).join('');
     const rank = (candidate: Assessment) => draftRank(candidate.passed, candidate.review, candidate.issues, candidate.overLimit);
     for (let rewrite = 0; rewrite < QUALITY_MAX_REWRITES && !assessment.passed; rewrite += 1) {
-      draft = await write(`${rewriteFeedback(assessment.issues, assessment.review)}${standing}`);
+      const feedback = `${rewriteFeedback(assessment.issues, assessment.review)}${standing}`;
+      // A revision is edited further from its best version; only new drafts are rewritten from the brief.
+      draft = revision ? await write(undefined, followUpBrief(best.draft, feedback)) : await write(feedback);
       assessment = await this.assess(reviewer, draft, contract, content, brand, previous);
       if (rank(assessment) >= rank(best.assessment)) best = { draft, assessment };
     }
@@ -949,9 +1004,9 @@ export class AiContentService {
       : `Cần xem lại (${scoreText}): ${[...new Set(problems)].join('; ') || `điểm dưới ${QUALITY_PASS_SCORE}/10`}`;
     // The approver's refusal leads; the editor's "(AI chấm N/10)" follows so the score stays readable.
     // A verdict taken from the review would only repeat the review's own problems.
-    const verdict = reviewIsVerdict ? '' : approvalReason(approval);
+    const verdict = reviewIsVerdict ? '' : approvalReason(approval, MAX_APPROVAL_REASON_PREFIX);
     const reason = verdict
-      ? `${verdict.slice(0, MAX_APPROVAL_REASON_PREFIX)}${reviewOk ? ` (${scoreText})` : `. ${reviewReason}`}`
+      ? `${verdict}${reviewOk ? ` (${scoreText})` : `. ${reviewReason}`}`
       : reviewReason;
     const note = shortened ? ` · đã rút gọn tự động để vừa ${contract.maxChars} ký tự` : '';
     return {
@@ -1177,8 +1232,9 @@ export class AiContentService {
     input: { contentId: string; platformSlug: string; revision: DraftRevision; image?: PlatformImagePlan | null },
     requestedProvider?: AiProvider,
   ): Promise<CheckedVariant> {
-    const provider = this.resolveProvider(requestedProvider);
-    await this.assertConfigured(provider);
+    // The reviser (Claude Opus by default) edits the post, not the campaign's writer.
+    const writer = await this.reviserFor(this.resolveProvider(requestedProvider));
+    await this.assertConfigured(writer.provider);
     const content = await this.prisma.content.findFirstOrThrow({ where: { id: input.contentId, ownerId } });
     const platform = await this.prisma.platform.findFirst({
       where: { slug: input.platformSlug },
@@ -1187,7 +1243,7 @@ export class AiContentService {
     const prompt = platform?.prompts[0];
     if (!prompt) throw new ApplicationException(ErrorCode.RESOURCE_NOT_FOUND, `No active AI prompt for ${input.platformSlug}`, HttpStatus.NOT_FOUND);
     const brand = await this.brandProfiles?.load() ?? null;
-    return this.generateChecked(provider, input.platformSlug, prompt.systemPrompt, prompt.userTemplate, content, brand, input.image ?? null, input.revision);
+    return this.generateChecked(writer.provider, input.platformSlug, prompt.systemPrompt, prompt.userTemplate, content, brand, input.image ?? null, input.revision, writer.model || undefined);
   }
 
   /** Machine checks plus the reviewer's score, seeding and brand-risk check of one draft. */
@@ -1268,7 +1324,7 @@ export class AiContentService {
       options.contract ? qualityInstructions(options.contract, options.engine) : '',
       options.contract ? imageInstructions(options.contract.name, options.image) : '',
     ].filter(Boolean).join('\n\n');
-    return this.requestStructured(provider, instructions, input, VARIANT_SPEC);
+    return this.requestStructured(provider, instructions, input, VARIANT_SPEC, options.model || undefined);
   }
 
   /**
@@ -1542,12 +1598,22 @@ function reviewPassedOrMissing(review: ContentReview | null): boolean {
 }
 
 /** The start of the stored reason when the final approver did not say yes; empty otherwise. */
-function approvalReason(approval: AiApproval | undefined): string {
+function approvalReason(approval: AiApproval | undefined, maxLength: number): string {
   if (approval?.status === 'rejected') {
+    const lead = `AI duyệt cuối (${approval.approverLabel}) từ chối: `;
     const reasons = (approval.reasons ?? []).map((reason) => reason.replace(/[\s.;]+$/, '')).filter(Boolean);
-    return `AI duyệt cuối (${approval.approverLabel}) từ chối: ${reasons.join('; ') || 'không nêu lý do'}`;
+    // Whole reasons only: a reason cut mid-word became a garbled "khuyến nghị" the
+    // operator could tick and send to the reviser. The full list stays in aiApproval.reasons.
+    const kept: string[] = [];
+    for (const reason of reasons) {
+      if (`${lead}${[...kept, reason].join('; ')}`.length > maxLength) break;
+      kept.push(reason);
+    }
+    const first = reasons[0];
+    if (!kept.length && first) kept.push(`${first.slice(0, maxLength - lead.length - 1).replace(/\s+\S*$/, '')}…`);
+    return `${lead}${kept.join('; ') || 'không nêu lý do'}`;
   }
-  if (approval?.status === 'failed') return `AI duyệt cuối chưa chạy được: ${(approval.error ?? 'lỗi không rõ').replace(/[\s.;]+$/, '')}`;
+  if (approval?.status === 'failed') return `AI duyệt cuối chưa chạy được: ${(approval.error ?? 'lỗi không rõ').replace(/[\s.;]+$/, '')}`.slice(0, maxLength);
   return '';
 }
 

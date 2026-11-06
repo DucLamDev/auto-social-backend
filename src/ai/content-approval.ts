@@ -18,7 +18,7 @@ export interface AiRole {
   model: string;
 }
 
-export type AiRoleName = 'writer' | 'reviewer' | 'approver';
+export type AiRoleName = 'writer' | 'reviewer' | 'approver' | 'reviser';
 
 /** `provider:model` (the model may itself contain ":", e.g. `vpsttt:claude:opus`). Throws on an unknown provider. */
 export function parseAiRole(value: string, setting: string): AiRole {
@@ -104,6 +104,12 @@ export function aiApprovedFor(value: unknown, text: { title?: string | null; bod
  */
 export const DEFAULT_AI_REVIEWER = 'vpsttt:claude:opus';
 export const DEFAULT_AI_APPROVER = 'vpsttt:claude:opus';
+/**
+ * Server default (`AI_REVISER`): who writes "Viết lại bằng AI" / "Sửa theo
+ * khuyến nghị". The judge itself edits the post it refused, so the fixes are
+ * the ones it asked for; the campaign writer is used only when its provider has no key.
+ */
+export const DEFAULT_AI_REVISER = 'vpsttt:claude:opus';
 
 /** `provider:model` as stored in settings and in `AiApproval.approver`; no model means the provider's default. */
 export function aiRoleSetting(role: AiRole): string {

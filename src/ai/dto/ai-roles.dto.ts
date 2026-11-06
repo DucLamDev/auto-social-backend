@@ -15,6 +15,9 @@ export class AiRolesContractDto {
   @ApiProperty({ type: AiRoleContractDto, description: 'Final gate on the finished draft (AI_APPROVER).' })
   approver!: AiRoleContractDto;
 
+  @ApiProperty({ type: AiRoleContractDto, description: 'Writes "Viết lại bằng AI" / "Sửa theo khuyến nghị" (AI_REVISER); the campaign writer when its provider has no key.' })
+  reviser!: AiRoleContractDto;
+
   @ApiProperty({ description: 'AI_APPROVAL_ENABLED: whether drafts go through the final approver.' })
   approvalEnabled!: boolean;
 }
