@@ -20,7 +20,7 @@ function setup() {
   };
   const prisma = {
     extensionDevice: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}), create: jest.fn(), updateMany: jest.fn(), count: jest.fn().mockResolvedValue(1) },
-    publishJob: { findFirst: jest.fn(), findUniqueOrThrow: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }), count: jest.fn().mockResolvedValue(0) },
+    publishJob: { findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]), findUniqueOrThrow: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }), count: jest.fn().mockResolvedValue(0) },
     publishAttempt: { findFirst: jest.fn().mockResolvedValue({ id: 'att-1', responseMetadata: { extensionQueued: true } }), update: jest.fn().mockResolvedValue({}) },
     platformAccount: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn(), update: jest.fn() },
     mediaAsset: { findFirst: jest.fn() },
@@ -85,6 +85,34 @@ describe('ExtensionAgentService', () => {
     await service.claim(device, [], ['substack']);
     const newQuery = (prisma.publishJob.findFirst.mock.calls[1] as [{ where: Record<string, unknown> }])[0];
     expect(newQuery.where.platformAccountId).toBeUndefined();
+  });
+
+  it('notes on each waiting post which Chrome cannot take it because its extension lacks the flow, without rewriting it every poll', async () => {
+    const { service, prisma } = setup();
+    const huggingface = { ...settings, extensionEngine: 'huggingface', extensionTargetUrl: 'https://huggingface.co/posts?post=true' };
+    prisma.platformAccount.findMany.mockResolvedValue([{ id: 'hf-account', settings: huggingface }, { id: 'forum', settings }]);
+    prisma.publishJob.findFirst.mockResolvedValue(null);
+    prisma.publishJob.findMany.mockResolvedValue([{ platformAccountId: 'hf-account', attempts: [{ id: 'att-hf', responseMetadata: { extensionQueued: true } }] }]);
+
+    await service.claim(device, [], ['xenforo'], 1);
+
+    const query = (prisma.publishJob.findMany.mock.calls[0] as [{ where: Record<string, unknown> }])[0];
+    expect(query.where).toMatchObject({ status: PublishJobStatus.NEEDS_ACTION, lockedAt: null, lastErrorCode: null, platformAccountId: { in: ['hf-account'] } });
+    const noted = (prisma.publishAttempt.update.mock.calls[0] as [{ where: { id: string }; data: { responseMetadata: Record<string, unknown> } }])[0];
+    expect(noted.where).toEqual({ id: 'att-hf' });
+    // The job stays claimable: only the attempt's details change.
+    expect(noted.data.responseMetadata).toMatchObject({ extensionQueued: true, extensionUnsupported: { deviceId: 'dev-1', deviceName: 'Chrome', engine: 'huggingface' } });
+    expect(prisma.publishJob.updateMany).toHaveBeenCalledTimes(1); // the stale-claim sweep only
+
+    // A recent note by this Chrome is kept as is.
+    prisma.publishJob.findMany.mockResolvedValue([{ platformAccountId: 'hf-account', attempts: [{ id: 'att-hf', responseMetadata: noted.data.responseMetadata }] }]);
+    await service.claim(device, [], ['xenforo'], 1);
+    expect(prisma.publishAttempt.update).toHaveBeenCalledTimes(1);
+
+    // An up-to-date extension looks for nothing to note.
+    prisma.publishJob.findMany.mockClear();
+    await service.claim(device, [], ['xenforo', 'huggingface'], 1);
+    expect(prisma.publishJob.findMany).not.toHaveBeenCalled();
   });
 
   it('serves only a managed attachment belonging to the owner and content of a claimed job', async () => {

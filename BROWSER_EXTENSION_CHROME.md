@@ -619,6 +619,11 @@ và trả hàng đợi ngay, không chờ hết thời gian rồi báo lỗi chu
   Popup hiện bài đang làm và 6 kết quả gần nhất.
 - Web quản trị: trang **Publishing** ghi "Chờ tiện ích Chrome" / "Tiện ích cần bạn"; Dashboard → **Cần xử lý** báo
   "Chrome chưa chạy" khi có bài chờ mà không Chrome nào kết nối trong 3 phút.
+- **"Tiện ích cần cập nhật"** (từ backend 1.28.2): Chrome đang chạy nhưng tiện ích là bản cũ, chưa có luồng đăng của
+  nền tảng đó (ví dụ Hugging Face, Linux Foundation Forum cần tiện ích 1.15.0) nên bỏ qua bài. Mỗi lần nhận bài, tiện
+  ích gửi danh sách luồng nó có; máy chủ ghi chú vào bài đang chờ (`extensionUnsupported` trong chi tiết lần thử, làm
+  mới tối đa 5 phút một lần) và web hiện cảnh báo khi ghi chú còn mới (15 phút). Cập nhật thư mục tiện ích rồi bấm
+  **Tải lại** ở `chrome://extensions`; bài tự được nhận ở lần hỏi tiếp theo.
 
 ## API (cho người phát triển)
 
