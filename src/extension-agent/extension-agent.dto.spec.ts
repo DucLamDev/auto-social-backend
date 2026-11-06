@@ -1,5 +1,6 @@
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
-import { ExtensionTaskResultDto } from './extension-agent.dto';
+import { EXTENSION_ENGINES } from '../connectors/extension/extension-delivery';
+import { ClaimExtensionTaskDto, ExtensionTaskResultDto } from './extension-agent.dto';
 
 // The same pipe main.ts installs: unknown fields are rejected, not stripped.
 const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
@@ -21,5 +22,14 @@ describe('ExtensionTaskResultDto', () => {
     await expect(validate({ outcome: 'NEEDS_ACTION', googleBlocked: 'yes' })).rejects.toBeInstanceOf(BadRequestException);
     await expect(validate({ outcome: 'NEEDS_ACTION', password: 'leak' })).rejects.toBeInstanceOf(BadRequestException);
     await expect(validate({ outcome: 'FAILED', reason: 'SOMETHING_ELSE' })).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('ClaimExtensionTaskDto', () => {
+  const claim = (body: unknown) => pipe.transform(body, { type: 'body', metatype: ClaimExtensionTaskDto });
+
+  it('accepts every flow the backend knows, however many there are, and rejects unknown ones', async () => {
+    await expect(claim({ supportedEngines: [...EXTENSION_ENGINES] })).resolves.toMatchObject({ supportedEngines: [...EXTENSION_ENGINES] });
+    await expect(claim({ supportedEngines: ['discourse', 'not-a-flow'] })).rejects.toBeInstanceOf(BadRequestException);
   });
 });

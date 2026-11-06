@@ -1,6 +1,14 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.29.1 · 06/11/2026
+### Sửa lỗi
+- Tiện ích 1.16.0 báo "Lỗi kết nối: supportedEngines must contain no more than 30 elements" và không nhận bài nào
+  - Mỗi lần xin bài, tiện ích gửi danh sách luồng nó đăng được. Bản 1.16.0 có 33 luồng (thêm Invision, Flarum, Zendesk)
+    nhưng máy chủ chỉ nhận tối đa 30, nên từ chối mọi lần xin bài. Bấm Test đăng nhập vẫn chạy vì đi đường khác.
+  - Nay giới hạn bằng đúng số luồng máy chủ biết, nên thêm luồng mới không gây lại lỗi này. Không cần sửa tiện ích:
+    triển khai backend xong, bấm "Kiểm tra ngay" trên tiện ích.
+
 ## 1.29.0 · 06/11/2026
 ### Tính năng
 - Thêm luồng đăng bằng tiện ích Chrome cho Unraid Forums, aaPanel Forum, cPanel Community (tiện ích 1.16.0)
