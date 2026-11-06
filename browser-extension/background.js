@@ -66,6 +66,8 @@ const CLOUDFLARE_WAIT_MS = 20_000;
 const VISIBLE_AUTH_STEPS = ['accountMenu', 'google', 'openLogin', 'sso'];
 // An unrecognized signed-in page is given this long before the profile page is opened.
 const PROFILE_CHECK_AFTER_MS = 2_000;
+// One page probe during sign-in. A page still loading (slow site, proxy) gets more probes within the sign-in deadline.
+const AUTH_PROBE_TIMEOUT_MS = 8_000;
 const LOG_LIMIT = 20;
 const SUPPORTED_ENGINES = ['producthunt', 'discourse', 'xenforo', 'phpbb', 'vanilla', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'disqus', 'mewe', 'ubiquiti', 'huggingface', 'blogger', 'invision', 'flarum', 'zendesk'];
 
@@ -288,13 +290,11 @@ async function tryFill(task) {
     let current = (await getTasks())[task.tabId];
     if (current?.phase !== 'loading' || current.job.jobId !== task.job.jobId) return;
     if (current.job.auth && !current.authVerified) {
-      // Two flows can run at once; sign-ins through the one Google session of
-      // this Chrome still go one at a time. Wait (on a later tab event or sweep)
-      // while another flow is signing in with Google.
-      const others = Object.values(await getTasks()).filter(other => other.tabId !== current.tabId);
-      // Checked after the last await, right before authenticateTask() marks this job: no race.
-      if (current.job.auth.provider === 'google' && ([...googleSignIns].some(jobId => jobId !== current.job.jobId)
-        || others.some(other => other.phase === 'authenticating' && other.job.auth?.provider === 'google'))) {
+      // Several flows run at once; steps through the one Google session of this
+      // Chrome still go one at a time. Wait (on a later tab event or sweep) while
+      // another flow is on a Google sign-in step. Checking an existing session on
+      // the destination does not need Google, so signed-in flows do not wait.
+      if (current.job.auth.provider === 'google' && [...googleSignIns].some(jobId => jobId !== current.job.jobId)) {
         await setTask(task.tabId, { ...current, deadline: Date.now() + LOAD_TIMEOUT_MS });
         return;
       }
@@ -328,7 +328,6 @@ async function closeLoginCheckTabs(...tabIds) {
 async function authenticateTask(task) {
   if (authenticating.has(task.job.jobId)) return false;
   authenticating.add(task.job.jobId);
-  if (task.job.auth.provider === 'google') googleSignIns.add(task.job.jobId);
   let current = { ...task, phase: 'authenticating', authDeadline: task.authDeadline ?? Date.now() + (task.job.kind === 'LOGIN_CHECK' ? task.job.auth.provider === 'google' ? 75_000 : 40_000 : 180_000) };
   await setTask(task.tabId, current);
   // The third argument (close tabs) is kept for call sites; login checks always close now.
@@ -356,9 +355,21 @@ async function authenticateTask(task) {
       const tabId = current.authTabId ?? task.tabId;
       let result;
       let documentId;
-      try { [{ result, documentId }] = await withDeadline(chrome.scripting.executeScript({ target: { tabId }, func: accountAuthStep, args: [{ job: { ...task.job, authIdentityVerified: current.googleIdentityVerified === true } }], injectImmediately: true }), 8_000); }
+      try { [{ result, documentId }] = await withDeadline(chrome.scripting.executeScript({ target: { tabId }, func: accountAuthStep, args: [{ job: { ...task.job, authIdentityVerified: current.googleIdentityVerified === true } }], injectImmediately: true }), AUTH_PROBE_TIMEOUT_MS); }
       catch (error) {
-        if (error.message === 'AUTH_STEP_TIMEOUT') return stop('Trang không phản hồi kiểm tra trong 8 giây. Đã dừng lượt này để tiếp tục các nền tảng khác.');
+        if (error.message === 'AUTH_STEP_TIMEOUT') {
+          // A page that is still loading cannot answer yet (a slow site behind a proxy took
+          // longer than one probe after opening the profile page): wait for it within the
+          // sign-in deadline. Only a loaded page that stays silent twice is stuck.
+          let loading;
+          try { loading = (await chrome.tabs.get(tabId)).status === 'loading'; }
+          catch { return stop('Tab xác thực đã đóng hoặc không còn truy cập được. Chưa xác nhận đúng hồ sơ.'); }
+          const silent = loading ? 0 : (current.authSilentProbes ?? 0) + 1;
+          if (silent >= 2) return stop(`Trang đã tải nhưng không phản hồi kiểm tra sau 2 lần ${AUTH_PROBE_TIMEOUT_MS / 1000} giây. Đã dừng lượt này để tiếp tục các nền tảng khác.`);
+          current = { ...current, authSilentProbes: silent, authSlowLoad: current.authSlowLoad || loading };
+          await setTask(task.tabId, current);
+          continue;
+        }
         try {
           const tab = await chrome.tabs.get(tabId);
           if (tab.url?.startsWith('https://')) {
@@ -369,6 +380,8 @@ async function authenticateTask(task) {
         } catch { return stop('Tab xác thực đã đóng hoặc không còn truy cập được. Chưa xác nhận đúng hồ sơ.'); }
         await new Promise(resolve => setTimeout(resolve, 750)); continue;
       }
+      // Only consecutive silent probes of a loaded page count as stuck.
+      if (current.authSilentProbes) { current = { ...current, authSilentProbes: 0 }; await setTask(task.tabId, current); }
       // tabs.update resolves before its previous document is replaced. Never
       // authenticate/fill that old document while the composer is navigating.
       if (current.authSourceDocumentId && documentId === current.authSourceDocumentId) {
@@ -456,6 +469,11 @@ async function authenticateTask(task) {
         return stop(result.message, 'AUTH_REQUIRED', false, result.googleBlocked === true);
       } else if (['identifier', 'password', 'totp', 'google', 'chooser', 'alternate', 'totpChoice', 'openLogin', 'sso', 'accountMenu', 'usePassword'].includes(result?.state)) {
         if (!task.job.auth.autoLogin && result.state !== 'accountMenu') return stop('Chưa nhận diện được phiên sẵn có và tài khoản này chưa bật tự đăng nhập hoặc còn thiếu thông tin xác thực.');
+        // A Google sign-in step: one flow at a time per Chrome (check and claim without an await between).
+        if (task.job.auth.provider === 'google' && result.state !== 'accountMenu') {
+          if ([...googleSignIns].some(jobId => jobId !== task.job.jobId)) { await new Promise(resolve => setTimeout(resolve, 750)); continue; }
+          googleSignIns.add(task.job.jobId);
+        }
         const attempted = current.authSteps?.[result.state];
         if (attempted && Date.now() - attempted > 15_000) return stop(result.state === 'accountMenu'
           ? 'Trang đã đăng nhập nhưng tiện ích chưa mở được menu để xác nhận đúng hồ sơ. Chưa thử lại mật khẩu.'
@@ -495,6 +513,8 @@ async function authenticateTask(task) {
       }
       await new Promise(resolve => setTimeout(resolve, 750));
     }
+    const latest = (await getTasks())[task.tabId] ?? current;
+    if (latest?.authSlowLoad) return stop('Trang tải quá chậm nên hết giờ mà chưa xác nhận được tài khoản. Kiểm tra mạng / proxy của Chrome này rồi bấm Giao lại cho tiện ích.');
     return stop('Chưa xác nhận được đúng tài khoản sau đăng nhập. Kiểm tra username/URL hồ sơ hoặc CSS nhận diện trong cấu hình trên web.');
   } finally {
     authenticating.delete(task.job.jobId);

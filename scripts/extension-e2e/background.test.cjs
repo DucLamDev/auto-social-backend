@@ -30,7 +30,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     tabs: {
       create: async ({ url }) => { state.openedUrls.push(url); return { id: ++state.nextTabId, windowId: 2, status: 'loading' }; },
       update: async (id, options) => { if (options?.active) state.activated = id; if (options?.url) state.openedUrls.push(options.url); return { id, windowId: 2 }; }, remove: async id => { (state.closedTabs ??= []).push(id); },
-      get: async id => ({ id, url: state.tabUrls?.[id] ?? state.currentUrl ?? job.openUrl }),
+      get: async id => ({ id, url: state.tabUrls?.[id] ?? state.currentUrl ?? job.openUrl, status: state.tabStatus ?? 'complete' }),
       onUpdated: event(), onRemoved: event(), onCreated: event(),
     },
     windows: { update: async () => {} },
@@ -65,6 +65,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
       if (injection.func.name === 'readErrors') return [{ result: state.errorText ?? null }];
       if (injection.func.name === 'accountAuthStep') {
         if (state.authError) throw new Error(state.authError);
+        if (state.authHang?.()) return new Promise(() => {});
         const result = typeof state.authResult === 'function' ? state.authResult(injection.args[0]) : state.authResult;
         return [{ result, documentId: state.authDocumentId }];
       }
@@ -75,6 +76,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery|form-fill|proxy)\.js';\r?\n/gm, '')
     .replace(/const NEXT_JOB_DELAY_MS = [\d_]+;/, `const NEXT_JOB_DELAY_MS = ${nextJobDelay};`)
     .replace(/const NO_GOOGLE_GRACE_MS = [\d_]+;/, 'const NO_GOOGLE_GRACE_MS = 0;')
+    .replace(/const AUTH_PROBE_TIMEOUT_MS = [\d_]+;/, 'const AUTH_PROBE_TIMEOUT_MS = 20;')
     .replace(/const CLOUDFLARE_WAIT_MS = [\d_]+;/, `const CLOUDFLARE_WAIT_MS = ${cloudflareWait};`)
     .replace(/const FORM_FILL_POLL_MS = [\d_]+;/, 'const FORM_FILL_POLL_MS = 5;');
   const context = vm.createContext({
@@ -145,6 +147,23 @@ test('a page probe that never resolves cannot hold the authentication queue fore
   const { worker } = setup();
   await assert.rejects(worker.withDeadline(new Promise(() => {}), 5), /AUTH_STEP_TIMEOUT/);
   assert.equal(await worker.withDeadline(Promise.resolve('ready'), 100), 'ready');
+});
+
+test('a page still loading when a probe times out gets more time; a loaded page silent twice stops', async () => {
+  const signedIn = { ...job, auth: { provider: 'password', autoLogin: false } };
+  // A slow site behind a proxy: the first probes time out while the tab is still loading.
+  const slow = setup();
+  let probes = 0;
+  slow.state.tabStatus = 'loading';
+  slow.state.authHang = () => ++probes <= 2;
+  slow.state.authResult = { state: 'authenticated', url: job.openUrl };
+  assert.equal(await slow.worker.authenticateTask({ tabId: 8, job: signedIn }), true);
+  assert.equal(slow.state.reports.length, 0);
+  // A page that finished loading and still does not answer is stuck.
+  const stuck = setup();
+  stuck.state.authHang = () => true;
+  await stuck.worker.authenticateTask({ tabId: 8, job: signedIn });
+  assert.match(stuck.state.reports[0].message, /đã tải nhưng không phản hồi kiểm tra sau 2 lần/);
 });
 
 test('account menu can reopen after composer navigation without repeating credentials', async () => {
@@ -916,6 +935,28 @@ test('a Google sign-in button is pressed with the test tab in front', async () =
   await worker.authenticateTask({ tabId: 8, job: loginCheck({ provider: 'google' }) });
   assert.equal(state.activeWhenPressed, 8, 'the tab was brought to the front before the click');
   assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
+});
+
+test('posts on accounts signed in with Google check their sessions in parallel; only Google sign-in steps take turns', async () => {
+  const googleJob = (id, host) => ({ ...job, jobId: id, targetOrigin: `http://${host}.test`, openUrl: `http://${host}.test/new-topic`,
+    auth: { provider: 'google', autoLogin: true, loginUrl: `http://${host}.test/` } });
+  // Both sessions are already signed in: neither waits for the other.
+  const signedIn = setup();
+  signedIn.state.authResult = ({ job: current }) => ({ state: 'authenticated', url: current.openUrl });
+  await Promise.all([signedIn.worker.start(googleJob('a', 'a')), signedIn.worker.start(googleJob('b', 'b'))]);
+  assert.equal(signedIn.state.fills, 2, 'the second post did not wait for the first one\'s session check');
+  // Both need the Google sign-in button: the second presses it only after the first finished.
+  const signIn = setup();
+  const pressed = new Set(), done = new Set();
+  let overlapped = false;
+  signIn.state.authResult = ({ job: current, action }) => {
+    if (action === 'google') { if (pressed.size && ![...pressed].every(id => done.has(id))) overlapped = true; pressed.add(current.jobId); return { state: 'submitted', url: current.targetOrigin }; }
+    return pressed.has(current.jobId) ? { state: 'authenticated', url: current.openUrl } : { state: 'google', url: `${current.targetOrigin}/login` };
+  };
+  const run = id => signIn.worker.authenticateTask({ tabId: id === 'a' ? 8 : 9, job: googleJob(id, id) }).then(() => done.add(id));
+  await Promise.all([run('a'), run('b')]);
+  assert.deepEqual([...pressed].sort(), ['a', 'b']);
+  assert.equal(overlapped, false, 'one Google sign-in at a time');
 });
 
 test('a Cloudflare browser check that passes by itself lets the login check continue', async () => {

@@ -173,6 +173,19 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
         });
         if (own) identity = [...handles][0];
       }
+      // The own profile card of /myworld names the account in its visible text ("VPSTTT Group"
+      // for vpsttt_group): start at the smallest block showing both Followers and Following
+      // and climb to the card. Only a line equal to the handle (letters and digits) counts.
+      if (!identity && location.pathname.startsWith('/myworld')) {
+        // Raw text first (cheap), layout-dependent checks only on the few blocks left.
+        const blocks = all('div, section, aside').filter(node => node.textContent.length < 2000 && /followers/i.test(node.textContent) && /following/i.test(node.textContent))
+          .filter(node => visible(node) && !node.closest('.c-mw-post, .c-mw-posts-feed') && node.innerText.length < 800
+            && /followers/i.test(node.innerText) && /following/i.test(node.innerText));
+        let card = blocks.find(node => !blocks.some(other => other !== node && node.contains(other)));
+        for (let level = 0; card && !identity && level < 5 && card.innerText.length < 800; level++, card = card.parentElement) {
+          identity = card.innerText.split('\n').map(line => line.trim()).find(line => loose(line).length >= 3 && [...handles].some(handle => loose(handle) === loose(line)));
+        }
+      }
     }
     if (job.recipe.engine === 'flarum' && !identity) {
       // Flarum boots from a JSON payload that names the session user: read only its username.
