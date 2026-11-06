@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
-import { AccountStatus, PlatformMode, Prisma } from '@prisma/client';
+import { AccountStatus, PlatformMode, Prisma, PublishedPostStatus } from '@prisma/client';
 import { CredentialsService } from '../credentials/credentials.service';
 import { PrismaService } from '../database/prisma.service';
 import { CreatePlatformAccountDto } from './dto/create-platform-account.dto';
@@ -169,10 +169,12 @@ export class PlatformAccountsService {
   async list(ownerId: string) {
     const accounts = await this.prisma.platformAccount.findMany({
       where: { ownerId },
-      select: safeAccountSelect,
+      // Posts still live on the site (deleted / unknown ones excluded), shown next to each
+      // account when choosing where a new batch goes.
+      select: { ...safeAccountSelect, _count: { select: { publishedPosts: { where: { status: PublishedPostStatus.PUBLISHED } } } } },
       orderBy: { name: 'asc' },
     });
-    return Promise.all(accounts.map((account) => this.withBrowserSessionConfigured(account)));
+    return Promise.all(accounts.map(({ _count, ...account }) => this.withBrowserSessionConfigured({ ...account, publishedCount: _count.publishedPosts })));
   }
 
   async get(ownerId: string, id: string) {

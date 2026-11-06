@@ -1,6 +1,13 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.21.0 · 06/11/2026
+### Tính năng
+- Danh sách tài khoản trả số bài đã đăng của từng tài khoản
+  `GET /platform-accounts` có thêm `publishedCount` cho mỗi tài khoản: số bài đã đăng bằng tài khoản đó mà vẫn còn trên
+  nền tảng (bài đã xoá hoặc không rõ trạng thái không tính). Giao diện hiện số này ở góc phải mỗi thẻ khi chọn tài khoản
+  để đăng hàng loạt, giúp chia bài cho các kênh còn ít bài.
+
 ## 1.20.0 · 05/11/2026
 ### Tính năng
 - Thêm luồng đăng bài bằng tiện ích Chrome cho 4 kênh trước đây "chưa có luồng" (tiện ích 1.15.0)
