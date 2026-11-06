@@ -496,4 +496,20 @@ describe('apiPublishingSettings', () => {
     expect(() => apiPublishingSettings({ publishImmediately: 'yes' })).toThrow('true or false');
     expect(() => apiPublishingSettings({ rateLimit: 0 })).toThrow('positive integer');
   });
+
+  it('lists each account with how many of its posts are live on the site', async () => {
+    const findMany = jest.fn().mockResolvedValue([
+      { id: 'a1', name: 'Differ · team', platform: { mode: PlatformMode.MANUAL }, credential: null, _count: { publishedPosts: 7 } },
+      { id: 'a2', name: 'Lemmy · vpsttt', platform: { mode: PlatformMode.MANUAL }, credential: null, _count: { publishedPosts: 0 } },
+    ]);
+    const service = new PlatformAccountsService({ platformAccount: { findMany } } as unknown as PrismaService, {} as CredentialsService, browserRecipes());
+    const accounts = await service.list('owner-1');
+    expect(accounts.map((account) => [account.id, (account as { publishedCount?: number }).publishedCount])).toEqual([['a1', 7], ['a2', 0]]);
+    expect(accounts[0]).not.toHaveProperty('_count');
+    // Only posts still live are counted.
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({ _count: { select: { publishedPosts: { where: { status: 'PUBLISHED' } } } } }) as unknown,
+    }));
+  });
 });
+

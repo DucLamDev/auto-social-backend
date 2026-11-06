@@ -11373,6 +11373,11 @@
             "type": "boolean",
             "description": "True only when an encrypted Playwright storage state is configured; the state itself is never returned."
           },
+          "publishedCount": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Account list only: posts this account has published that are still live (status PUBLISHED)."
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
