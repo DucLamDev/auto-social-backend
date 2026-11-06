@@ -3,6 +3,15 @@ Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cu�
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
 ## 1.25.0 · 06/11/2026
 ### Tính năng
+<<<<<<< HEAD
+- AI chấm điểm các gợi ý chiến dịch để chọn gợi ý phù hợp nhất
+  - Sau khi AI đưa 4 gợi ý, một lượt AI riêng (không phải AI vừa viết gợi ý) chấm từng gợi ý từ 1 đến 10 theo: hợp mọi
+    nền tảng đã chọn, giá trị cho người đọc, gắn sản phẩm tự nhiên (không bịa thông tin), khả năng tương tác (dựa trên
+    kết quả các chiến dịch trước); điểm tổng là kết quả dự kiến, các gợi ý được so với nhau để không trùng điểm. Kèm
+    điểm yếu chính của từng gợi ý.
+  - API trả gợi ý xếp điểm cao trước, gợi ý đầu có `recommended: true`, mỗi gợi ý có `review`; `scored: false` khi lượt
+    chấm lỗi (vẫn trả gợi ý, chưa có điểm). Một lần gợi ý giờ gồm 2 lượt AI.
+=======
 - Xoá một lượt nội dung AI khỏi Content đợi duyệt
   `DELETE /campaigns/:id` (ADMIN, EDITOR) xoá lượt AI cùng các bài chưa đăng, job đăng và nội dung brief tạo riêng cho
   lượt đó. Nội dung lấy từ thư viện thì giữ lại.
@@ -12,6 +21,7 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
     - khi lượt đã có bài lên social (giữ lịch sử đăng).
   - Dòng của lượt được khoá trong lúc xoá để worker không nhận chạy giữa chừng. Mỗi lần xoá được ghi nhật ký
     (`CAMPAIGN_AUTOMATION_DELETED`).
+>>>>>>> origin/main
 
 ## 1.24.0 · 06/11/2026
 ### Tính năng

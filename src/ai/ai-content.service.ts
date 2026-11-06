@@ -54,8 +54,8 @@ import {
 import type { PlatformImagePlan } from '../campaigns/image-plan';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
 import {
-  CampaignSuggestion, cleanSuggestions, PastCampaign, PlatformScores, suggestionInput, suggestionInstructions, suggestionPlatforms,
-  SuggestionsOutput, SuggestionsSchema, suggestionsJsonSchema,
+  applySuggestionScores, CampaignSuggestion, cleanSuggestions, PastCampaign, PlatformScores, ScoresOutput, ScoresSchema, scoresJsonSchema,
+  scoringInput, scoringInstructions, suggestionInput, suggestionInstructions, suggestionPlatforms, SuggestionsOutput, SuggestionsSchema, suggestionsJsonSchema,
 } from './campaign-suggestions';
 import { ProviderThrottle } from './provider-throttle';
 import { VpstttQuota } from './vpsttt-quota';
@@ -221,6 +221,7 @@ export function failedPlatformOf(error: unknown): string | undefined {
 }
 
 const SUGGESTIONS_SPEC: StructuredSpec<SuggestionsOutput> = { name: 'campaign_suggestions', jsonSchema: suggestionsJsonSchema, zod: SuggestionsSchema };
+const SUGGESTION_SCORES_SPEC: StructuredSpec<ScoresOutput> = { name: 'campaign_suggestion_scores', jsonSchema: scoresJsonSchema, zod: ScoresSchema };
 
 type SourceContent = {
   title: string;
@@ -555,13 +556,14 @@ export class AiContentService {
   /**
    * "Gợi ý chiến dịch": campaign ideas for the chosen platforms, from the brand
    * profile, the owner's last campaigns with their editor scores and published
-   * posts, and the operator's optional hint. One AI request; nothing is stored.
+   * posts, and the operator's optional hint. A second, independent request
+   * scores the ideas so the best one comes first. Nothing is stored.
    */
   async suggestCampaigns(
     ownerId: string,
     input: { platformSlugs: string[]; hint?: string },
     requestedProvider?: AiProvider,
-  ): Promise<{ suggestions: CampaignSuggestion[] }> {
+  ): Promise<{ suggestions: CampaignSuggestion[]; scored: boolean }> {
     const provider = this.resolveProvider(requestedProvider);
     await this.assertConfigured(provider);
     const platforms = suggestionPlatforms(input.platformSlugs);
@@ -598,15 +600,18 @@ export class AiContentService {
       drafts: scores.length, averageScore: Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 10) / 10,
     }]));
     const today = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
-    const output = await this.withGenerationRetry(() => this.requestStructured(
-      provider,
-      suggestionInstructions(today),
-      suggestionInput({ brandBlock: brandProfileBlock(brand), platforms, past, platformScores, hint: input.hint }),
-      SUGGESTIONS_SPEC,
-    ));
+    const context = suggestionInput({ brandBlock: brandProfileBlock(brand), platforms, past, platformScores, hint: input.hint });
+    const output = await this.withGenerationRetry(() => this.requestStructured(provider, suggestionInstructions(today), context, SUGGESTIONS_SPEC));
     const suggestions = cleanSuggestions(output);
     if (!suggestions.length) throw new ApplicationException(ErrorCode.PLATFORM_API_ERROR, 'AI chưa đưa ra gợi ý dùng được. Thử lại hoặc chọn nhà cung cấp AI khác.', HttpStatus.BAD_GATEWAY);
-    return { suggestions };
+    try {
+      const scores = await this.withGenerationRetry(() => this.requestStructured(provider, scoringInstructions(), scoringInput(context, suggestions), SUGGESTION_SCORES_SPEC));
+      return { suggestions: applySuggestionScores(suggestions, scores), scored: true };
+    } catch (error) {
+      // The ideas are still useful without scores: show them in the order they came.
+      this.logger.warn(`Campaign suggestion scoring unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      return { suggestions, scored: false };
+    }
   }
 
   async providers(): Promise<AiProviderDescriptor[]> {
