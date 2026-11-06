@@ -68,5 +68,18 @@ describe('per-platform Chrome flows', () => {
       expect(() => validateExtensionFlow('product-hunt', { engine: 'producthunt', targetUrl, autoSubmit: true })).toThrow();
     }
   });
-});
 
+  it('accepts an Invision forum form, a Flarum tag page and a Zendesk new post page, nothing else', () => {
+    const ok = (id: string, engine: 'invision' | 'flarum' | 'zendesk', targetUrl: string) => validateExtensionFlow(id, { engine, targetUrl, autoSubmit: true })?.id;
+    expect(ok('unraid-forums', 'invision', 'https://forums.unraid.net/forum/53-docker-containers/?do=add')).toBe('unraid-forums');
+    expect(ok('aapanel-forum', 'flarum', 'https://www.aapanel.com/forum/t/tutorial')).toBe('aapanel-forum');
+    expect(ok('cpanel-community', 'zendesk', 'https://support.cpanel.net/hc/en-us/community/posts/new?community_post[topic_id]=360000123')).toBe('cpanel-community');
+    for (const [id, engine, targetUrl] of [
+      ['unraid-forums', 'invision', 'https://forums.unraid.net/forum/55-general-support/'], ['unraid-forums', 'invision', 'https://forums.unraid.net/topic/1-a/?do=add'],
+      ['aapanel-forum', 'flarum', 'https://www.aapanel.com/forum/d/26249-update'], ['aapanel-forum', 'flarum', 'https://www.aapanel.com/t/general'],
+      ['cpanel-community', 'zendesk', 'https://support.cpanel.net/hc/en-us/community/topics'], ['cpanel-community', 'zendesk', 'https://support.cpanel.net/hc/en-us/community/posts/new?return_to=/x'],
+    ] as const) {
+      expect(() => validateExtensionFlow(id, { engine, targetUrl, autoSubmit: true })).toThrow();
+    }
+  });
+});

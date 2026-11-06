@@ -504,6 +504,25 @@ test('Hugging Face reads the signed-in user from its session endpoint', async ()
   } finally { await page.close(); }
 });
 
+test('Flarum reads the session user from its boot payload, Zendesk from its users/me endpoint', async () => {
+  const payload = JSON.stringify({ resources: [{ type: 'users', id: '7', attributes: { username: 'vpsttt', displayName: 'VPSTTT Team' } }], session: { userId: 7, csrfToken: 'x' } });
+  let page = await pageAt('https://www.aapanel.com/forum/t/general', `<script id="flarum-json-payload" type="application/json">${payload}</script><main>Start a Discussion</main>`);
+  const flarum = auth => ({ ...job, targetOrigin: 'https://www.aapanel.com', recipe: { engine: 'flarum' }, auth: { ...job.auth, ...auth } });
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job: flarum({ expectedUsername: 'vpsttt' }) })).state, 'authenticated');
+    assert.equal((await page.evaluate(accountAuthStep, { job: flarum({ expectedUsername: 'someone-else' }) })).state, 'mismatch');
+  } finally { await page.close(); }
+  page = await pageAt('https://support.cpanel.net/hc/en-us/community/posts/new', '<main>New post</main>');
+  const zendesk = { ...job, targetOrigin: 'https://support.cpanel.net', recipe: { engine: 'zendesk' }, auth: { ...job.auth, expectedUsername: 'VPSTTT' } };
+  try {
+    await page.route('**/api/v2/users/me.json', route => route.fulfill({ json: { user: { id: 42, name: 'VPSTTT' } } }));
+    assert.equal((await page.evaluate(accountAuthStep, { job: zendesk })).state, 'authenticated');
+    // An anonymous visitor (id null) proves nothing.
+    await page.route('**/api/v2/users/me.json', route => route.fulfill({ json: { user: { id: null, name: 'Anonymous user' } } }));
+    assert.notEqual((await page.evaluate(accountAuthStep, { job: zendesk })).state, 'authenticated');
+  } finally { await page.close(); }
+});
+
 test('a site without a known marker is identified by its own profile link in the navigation', async () => {
   const page = await pageAt('https://daily.dev/', '<aside><a href="/vpsttt"><img alt="" style="width:20px;height:20px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"></a></aside><main><a href="/someone">someone</a></main>');
   const scoped = { ...job, targetOrigin: 'https://daily.dev', recipe: { engine: 'generic' }, auth: { ...job.auth, provider: 'google', expectedUsername: 'vpsttt', profileUrl: 'https://daily.dev/vpsttt' } };

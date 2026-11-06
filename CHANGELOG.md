@@ -1,6 +1,29 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.29.0 · 06/11/2026
+### Tính năng
+- Thêm luồng đăng bằng tiện ích Chrome cho Unraid Forums, aaPanel Forum, cPanel Community (tiện ích 1.16.0)
+  - Rà lại cả danh mục: 14 nền tảng chưa có luồng đăng. Làm được 3 nền tảng, mỗi nền tảng một kiểu diễn đàn mới dùng
+    lại được cho diễn đàn cùng phần mềm:
+    - **Unraid Forums** (Invision Community): mặc định box General Support; tiện ích điền tiêu đề, nội dung có định dạng,
+      bấm Submit Topic. Invision cho khách đăng bằng email, nên form có ô email nghĩa là Chrome chưa đăng nhập: tiện ích
+      dừng, không bao giờ đăng dưới danh nghĩa khách.
+    - **aaPanel Forum** (Flarum): mặc định tag General; đổi tag bằng trang `…/forum/t/<tag>` (support, tutorial). Tiêu đề
+      tối đa 80 ký tự, nội dung Markdown. Nếu Flarum hỏi tag thì tiện ích chọn theo ô Chuyên mục rồi xác nhận.
+    - **cPanel Community** (cộng đồng Zendesk): ghi tên topic ở ô Chuyên mục (hoặc URL chọn sẵn topic); chưa có topic thì
+      dừng trước khi điền.
+  - Tiện ích nhận ra tài khoản đang đăng nhập trên 3 trang này: Flarum đọc username trong dữ liệu khởi động của trang,
+    Zendesk hỏi `users/me`, Invision đọc menu người dùng hoặc trang hồ sơ.
+  - Nhận ra bài đang chờ quản trị viên duyệt trên 3 trang này (trước đây chỉ khớp chữ "post / article / question").
+  - Không làm luồng, vì không đăng bài viết được hoặc không nên: KubeBy (tên miền không còn), In Plain English
+    (publication trên Medium, phải được nhận làm writer), Hub (chưa rõ nền tảng, đang tắt), Flipboard và Scoop.it (chỉ
+    lưu lại link bài có sẵn), Eventbrite (tạo sự kiện thật), Gumroad (tạo sản phẩm bán), Dailymotion và TikTok (chỉ
+    video), Redis Community Forum (đã đóng), Warrior Forum (điều khoản cấm tự động).
+  - Cấu trúc form dựng từ mã công khai của Invision, Flarum, Zendesk và dữ liệu công khai của aaPanel (danh sách tag);
+    chưa thử đăng thật vì chưa có tài khoản. Sau khi cập nhật backend chạy `scripts/sync-extension-flows.cjs --apply`,
+    nạp lại tiện ích 1.16.0, thêm tài khoản rồi bấm Test.
+
 ## 1.28.2 · 06/11/2026
 ### Sửa lỗi
 - Báo rõ khi tiện ích Chrome là bản cũ và bỏ qua bài, thay vì để bài "Chờ tiện ích" mãi

@@ -1,5 +1,33 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.29.0 / tiện ích 1.16.0: Unraid Forums (Invision), aaPanel Forum (Flarum), cPanel Community (Zendesk)
+
+Cần backend 1.29.0 và tiện ích 1.16.0. Sau khi cập nhật backend chạy `scripts/sync-extension-flows.cjs --apply`, nạp
+lại tiện ích, rồi thêm tài khoản (Thêm social) và bấm **Test** để kết nối.
+
+- **Invision Community** (luồng `invision`): trang tạo chủ đề của một box, `/forum/<id>-<tên>/?do=add` (Unraid mặc định
+  General Support `https://forums.unraid.net/forum/55-general-support/?do=add`). Ô `topic_title`, trình soạn
+  (CKEditor ở bản 4, ProseMirror ở bản 5) nhận HTML dán vào, nút Submit Topic. Invision cho khách đăng bằng email: form
+  có ô `guest_email` / ô email nghĩa là Chrome chưa đăng nhập, tiện ích dừng chứ không đăng dưới danh nghĩa khách. Bài
+  mới ở `/topic/<id>-<slug>/`. Tài khoản: `#elUserLink` hoặc trang hồ sơ (nút Edit profile).
+- **Flarum** (luồng `flarum`): trang chủ diễn đàn hoặc một trang tag (`/forum/t/<tag>`; aaPanel mặc định
+  `https://www.aapanel.com/forum/t/general`). Tiện ích bấm Start a Discussion; mở từ trang tag thì tag được chọn sẵn.
+  Tiêu đề tối đa 80 ký tự, nội dung Markdown (textarea), nút Post Discussion. Nếu Flarum hỏi tag thì chọn theo ô Chuyên
+  mục (mặc định General) rồi xác nhận. Bài mới ở `/d/<id>-<slug>`. Tài khoản: tên người dùng trong dữ liệu khởi động
+  của trang (`#flarum-json-payload`, chỉ đọc username), hoặc tên ở menu phiên.
+- **Zendesk Help Center community** (luồng `zendesk`): `/hc/<ngôn ngữ>/community/posts/new` (cPanel
+  `https://support.cpanel.net/hc/en-us/community/posts/new`), có thể kèm `?community_post[topic_id]=<id>`. Ô
+  `#community_post_title`, trình soạn CKEditor 5 (dán HTML), topic chọn theo tên ở ô Chuyên mục (select
+  `#community_post_topic_id`, kể cả khi bị ẩn sau dropdown của Zendesk), nút Submit. Chưa có topic thì dừng trước khi
+  điền. Bài mới ở `/hc/<ngôn ngữ>/community/posts/<id>`. Tài khoản: `/api/v2/users/me.json` (tên hiển thị).
+- Bài chờ duyệt: thông báo "pending / awaiting approval" của Flarum (`.Alert`), Invision (`.ipsMessage`), Zendesk
+  (`.notification-notice`) được ghi là chờ duyệt.
+- Không làm luồng (lý do): KubeBy (tên miền không còn), In Plain English (publication trên Medium, cần được nhận làm
+  writer), Hub (chưa rõ nền tảng, đang tắt), Flipboard / Scoop.it (chỉ lưu link bài có sẵn), Eventbrite (sự kiện thật),
+  Gumroad (sản phẩm bán), Dailymotion / TikTok (chỉ video), Redis Community Forum (đã đóng), Warrior Forum (điều khoản
+  cấm tự động).
+- Kiểm thử bằng trang giả lập: `scripts/extension-e2e/forum-engines.test.cjs`. Chưa thay được lần đăng thật.
+
 ## Backend 1.20.0 / tiện ích 1.15.0: Linux Foundation Forum (Vanilla), Ubiquiti, Blogger, Hugging Face Posts
 
 Cần backend 1.20.0 và tiện ích 1.15.0. Sau khi cập nhật backend chạy `scripts/sync-extension-flows.cjs --apply` và
