@@ -1,6 +1,26 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.27.0 · 06/11/2026
+### Tính năng
+- Claude Opus vừa chấm vừa duyệt cuối; AI viết không còn chép brief vào bài
+  - **Gộp chấm và duyệt cuối.** `AI_REVIEWER` mặc định là `vpsttt:claude:opus` như `AI_APPROVER`:
+    - Lần chấm cuối của Opus trên đúng bản lưu là kết quả duyệt (`aiApproval`), không gọi thêm lượt duyệt riêng.
+    - Nhận xét của Opus được gửi lại cho AI viết sửa ngay trong lượt viết lại. Trước đây Sonnet chấm đạt rồi Opus từ
+      chối, AI viết không bao giờ thấy lý do.
+    - Opus chỉ đọc lại thêm một lần khi bản lưu khác bản đã chấm (bài được rút gọn, có ảnh mới thiết kế, lượt chấm lỗi).
+    - Sửa tay rồi duyệt lại vẫn là một lượt Opus như cũ.
+  - **Viết đúng ngay từ đầu.** Lý do chính bài bị từ chối là AI viết chép chỉ dẫn của brief vào bài ("nội dung gắn với
+    thương hiệu…", "chưa xác nhận hỗ trợ IPv6", ghi chú "trước khi đăng hãy thêm…"). Giờ AI viết được dặn:
+    - brief là chỉ dẫn, không chép vào bài;
+    - điều chưa xác nhận thì bỏ hẳn;
+    - công khai bằng một câu tự nhiên ngôi thứ nhất ("Mình làm ở VPSTTT, bên cung cấp VPS và proxy.");
+    - nơi đăng không hợp thì báo không nên đăng, không ghi chú vào bài.
+  - AI chấm và AI duyệt cùng bắt lỗi lộ chữ nội bộ hoặc câu công khai cứng (chấm tối đa 6/10), và coi câu công khai tự
+    nhiên là đúng.
+  - Máy chủ đã đặt `AI_REVIEWER=vpsttt:claude:sonnet` trong `.env` thì xoá dòng đó (hoặc đổi sang `vpsttt:claude:opus`)
+    để dùng cách mới.
+
 ## 1.26.0 · 06/11/2026
 ### Tính năng
 - AI chấm điểm các gợi ý chiến dịch để chọn gợi ý phù hợp nhất

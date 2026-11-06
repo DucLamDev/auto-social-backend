@@ -8,7 +8,9 @@ import { AI_PROVIDER_LABELS, isAiProvider, type AiProvider } from './ai-provider
  * rewrites, the reviewer scores and critiques (brand safety, clumsy seeding),
  * and the approver gives the final yes before a post may be approved or
  * published. Reviewer and approver are configured on the server as
- * `provider:model`, e.g. `vpsttt:claude:sonnet` and `vpsttt:claude:opus`.
+ * `provider:model`; by default both are `vpsttt:claude:opus`, and then the
+ * reviewer's last review of a draft is also its final verdict (one model, one
+ * judgement, whose notes reach the writer's rewrites).
  */
 export interface AiRole {
   provider: AiProvider;
@@ -94,8 +96,13 @@ export function aiApprovedFor(value: unknown, text: { title?: string | null; bod
   return approval?.status === 'approved' && approval.textHash === approvalHash(text);
 }
 
-/** Server defaults (`AI_REVIEWER`, `AI_APPROVER`): two Claude models of the company VPSTTT AI key. */
-export const DEFAULT_AI_REVIEWER = 'vpsttt:claude:sonnet';
+/**
+ * Server defaults (`AI_REVIEWER`, `AI_APPROVER`): Claude Opus of the company
+ * VPSTTT AI key scores and gives the final yes. With a separate reviewer
+ * (e.g. Sonnet) its notes and the approver's refusals disagreed, and the
+ * writer never saw why the approver refused.
+ */
+export const DEFAULT_AI_REVIEWER = 'vpsttt:claude:opus';
 export const DEFAULT_AI_APPROVER = 'vpsttt:claude:opus';
 
 /** `provider:model` as stored in settings and in `AiApproval.approver`; no model means the provider's default. */
@@ -150,7 +157,7 @@ export const approvalJsonSchema = {
   },
 } as const;
 
-const MAX_APPROVAL_REASONS = 5;
+export const MAX_APPROVAL_REASONS = 5;
 const MAX_APPROVAL_REASON_LENGTH = 300;
 
 /**
@@ -165,7 +172,8 @@ export function approvalInstructions(contract: PlatformContract): string {
     `You receive the post exactly as readers will see it on ${contract.name}, its image description if it has one, the brief, the brand facts, the destination rules and the last review by the editor. The review is context, not a verdict: judge the text yourself.`,
     'Approve only when every point holds:',
     `- Quality: ready to publish as is on ${contract.name}: clear, specific, written in ${language}, within the destination rules; a reader would not find it generic, confusing or unfinished.`,
-    '- Natural, no seeding: it does not pretend to be an unaffiliated customer or a neutral user while promoting the brand; no fake or invented testimonials; no forced or repeated brand mentions; no over-praise; no stacked links or calls to action; no advertising tone in a technical community or forum; no disparaging competitors; when it promotes the brand in a forum or community it says the author is affiliated.',
+    '- Natural, no seeding: it does not pretend to be an unaffiliated customer or a neutral user while promoting the brand; no fake or invented testimonials; no forced or repeated brand mentions; no over-praise; no stacked links or calls to action; no advertising tone in a technical community or forum; no disparaging competitors; when it promotes the brand in a forum or community it says the author is affiliated. One short, natural first-person disclosure (for example "Mình làm ở VPSTTT, bên cung cấp VPS và proxy.") is what you want, not a problem.',
+    '- Clean: no leaked internal text. Refuse a post that mentions a brief, a campaign, instructions, "this post/content", what is not confirmed, or carries a note to the operator ("before posting add…"), and a disclosure written as a stiff label ("brand-related content", "this post is associated with the brand").',
     '- Factual: every statement about the brand, its products, prices, performance, customers or offers comes from the brief or the brand facts. No guarantee they do not back, such as cheapest, 100% uptime, unlimited, never blocked or undetectable.',
     '- Safe for the company: nothing explains how to use proxies or VPS to break laws or website terms (evading bans or blocks, scraping against terms of service, spam, mass account creation, fraud); no sensitive political, legal, religious or offensive content; nothing that would embarrass the company if a reader took a screenshot. An image description must fit the post and show no real people, logos or text.',
     `- Fits the community: tone, format and purpose suit ${contract.name} and its members.`,

@@ -31,6 +31,7 @@ import {
   reviewPassed,
   ReviewSchema,
   reviewSummary,
+  reviewVerdict,
   rewriteFeedback,
   safetyProblems,
   scoreFromReason,
@@ -50,6 +51,7 @@ import {
   DEFAULT_AI_APPROVER,
   DEFAULT_AI_REVIEWER,
   parseAiRole,
+  sameAiRole,
 } from './content-approval';
 import type { PlatformImagePlan } from '../campaigns/image-plan';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
@@ -850,7 +852,11 @@ export class AiContentService {
 
   /**
    * The writer writes, the reviewer checks and, when needed, the writer
-   * rewrites. The final approver then reads the finished draft once. A draft
+   * rewrites. The final approver then reads the finished draft once. When the
+   * reviewer is the approver (Claude Opus by default), its last review of the
+   * stored text is the final verdict and no second call is made; the approver
+   * still reads the post once more when that review never saw what is stored
+   * (shortened text, a newly designed image, or no review at all). A draft
    * that falls short anywhere is returned with recommended=false so it is
    * never auto-approved.
    */
@@ -916,13 +922,18 @@ export class AiContentService {
     // A machine cut may have dropped the post's ending, and an unscored draft
     // (reviewer outage) was never judged: a person reads both first.
     const reviewOk = assessment.passed && review !== null && draft.recommended && shortened !== 'cut';
-    const approval = this.approvalOn
-      ? await this.runApproval(contract, content, brand, post, draft.media.type === 'image' ? draft.media : null, [
-          reviewSummary(review, assessment.issues),
-          !draft.recommended ? `The writer judged the post unsuitable for this destination: ${draft.reason}` : '',
-          shortened === 'cut' ? 'The machine cut the end of the post to fit the character limit.' : '',
-        ].filter(Boolean).join('\n'))
-      : undefined;
+    // One judge: the approver already read exactly this text as the reviewer.
+    const reviewIsVerdict = this.approvalOn && review !== null && !shortened && !(image && !revision)
+      && sameAiRole(reviewer, this.approver, (name) => this.models[name]);
+    const approval = !this.approvalOn
+      ? undefined
+      : reviewIsVerdict
+        ? { ...this.approvalBase(post), ...reviewVerdict(review, assessment.issues), finishedAt: new Date().toISOString(), error: null }
+        : await this.runApproval(contract, content, brand, post, draft.media.type === 'image' ? draft.media : null, [
+            reviewSummary(review, assessment.issues),
+            !draft.recommended ? `The writer judged the post unsuitable for this destination: ${draft.reason}` : '',
+            shortened === 'cut' ? 'The machine cut the end of the post to fit the character limit.' : '',
+          ].filter(Boolean).join('\n'));
     const recommended = reviewOk && (!approval || approval.status === 'approved');
     const problems = [
       ...(!draft.recommended ? [`AI đánh giá không hợp nơi đăng: ${draft.reason}`] : []),
@@ -937,7 +948,8 @@ export class AiContentService {
       ? `${draft.reason} (${scoreText})`
       : `Cần xem lại (${scoreText}): ${[...new Set(problems)].join('; ') || `điểm dưới ${QUALITY_PASS_SCORE}/10`}`;
     // The approver's refusal leads; the editor's "(AI chấm N/10)" follows so the score stays readable.
-    const verdict = approvalReason(approval);
+    // A verdict taken from the review would only repeat the review's own problems.
+    const verdict = reviewIsVerdict ? '' : approvalReason(approval);
     const reason = verdict
       ? `${verdict.slice(0, MAX_APPROVAL_REASON_PREFIX)}${reviewOk ? ` (${scoreText})` : `. ${reviewReason}`}`
       : reviewReason;
@@ -971,12 +983,7 @@ export class AiContentService {
   ): Promise<AiApproval> {
     const role = this.approver;
     const model = role.model || this.models[role.provider];
-    const base = {
-      approver: aiRoleSetting({ provider: role.provider, model }),
-      approverLabel: aiRoleLabel(role, this.models[role.provider]),
-      textHash: approvalHash(post),
-      startedAt: new Date().toISOString(),
-    };
+    const base = this.approvalBase(post);
     try {
       if (!await this.providerReady(role.provider)) {
         return { ...base, status: 'failed', finishedAt: new Date().toISOString(), error: approverMissingMessage(role.provider, model) };
@@ -1007,6 +1014,17 @@ export class AiContentService {
       this.logger.warn(`AI approval unavailable for ${contract.slug} (${base.approver}): ${error instanceof Error ? error.message : String(error)}`);
       return { ...base, status: 'failed', finishedAt: new Date().toISOString(), error: approvalErrorMessage(error, role.provider, model) };
     }
+  }
+
+  /** Who approves and which text: the part of an `AiApproval` that does not depend on the verdict. */
+  private approvalBase(post: DraftForCheck): Pick<AiApproval, 'approver' | 'approverLabel' | 'textHash' | 'startedAt'> {
+    const role = this.approver;
+    return {
+      approver: aiRoleSetting({ provider: role.provider, model: role.model || this.models[role.provider] }),
+      approverLabel: aiRoleLabel(role, this.models[role.provider]),
+      textHash: approvalHash(post),
+      startedAt: new Date().toISOString(),
+    };
   }
 
   /**

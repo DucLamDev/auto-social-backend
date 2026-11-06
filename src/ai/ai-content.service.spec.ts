@@ -1084,12 +1084,85 @@ describe('AiContentService quality-checked generation', () => {
     const chatRequest = (mock: jest.Mock, index: number) => (mock.mock.calls[index] as [ChatRequest])[0];
     const stored = (row: Record<string, unknown>) => row as { title: string | null; body: string; hashtags: string[]; recommended: boolean; reason: string; aiApproval?: Record<string, unknown> };
 
-    it('sends the writer to the campaign provider, the reviewer to Claude Sonnet and the approver to Claude Opus', async () => {
+    const opusReview = (extra: Record<string, unknown> = {}) => chat({ ...passingReview, seeding: { detected: false, notes: [] }, brandRisk: 'none', riskNotes: [], ...extra });
+
+    it('by default lets Claude Opus score and give the final verdict in one review, with no second call', async () => {
+      const create = jest.fn().mockResolvedValueOnce(variant(shortBody));
+      const vpsttt = jest.fn().mockResolvedValue(opusReview({ issues: ['Có thể thêm một ví dụ'] }));
+      const { service, created } = setup(create, { approve: vpsttt, config: { AI_REVIEWER: '' } });
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(vpsttt.mock.calls.map(([request]) => (request as ChatRequest).model)).toEqual(['claude:opus']);
+      const review = chatRequest(vpsttt, 0).messages[0]!.content;
+      expect(review).toContain('demanding but fair senior editor for Bluesky');
+      expect(review).toContain('Leaked internal text');
+      const row = stored(created[0]!);
+      expect(row).toMatchObject({ recommended: true, reason: 'Hợp người đọc (AI chấm 8/10)' });
+      expect(row.aiApproval).toMatchObject({
+        status: 'approved', approver: 'vpsttt:claude:opus', approverLabel: 'Claude Opus', score: 8, risk: 'none', seeding: false,
+        reasons: ['Có thể thêm một ví dụ'], error: null,
+        textHash: approvalHash({ title: row.title, body: row.body, hashtags: row.hashtags }),
+      });
+    });
+
+    it('sends Opus\'s notes on leaked brief text back to the writer, and approves the fixed draft', async () => {
+      const leaked = 'Nội dung gắn với thương hiệu VPS vpsttt: chưa xác nhận hỗ trợ IPv6. Triển khai VPS NVMe trong 60 giây. #vps';
+      const create = jest.fn().mockResolvedValueOnce(variant(leaked)).mockResolvedValueOnce(variant(shortBody));
+      const vpsttt = jest.fn()
+        .mockResolvedValueOnce(opusReview({ score: 5, issues: ['Câu "Nội dung gắn với thương hiệu…" lộ chỉ dẫn nội bộ: đổi thành "Mình làm ở VPSTTT."'] }))
+        .mockResolvedValueOnce(opusReview());
+      const { service, created } = setup(create, { approve: vpsttt, config: { AI_REVIEWER: '' } });
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+      // The writer's rules forbid copying the brief and ask for a natural disclosure.
+      expect(request(create, 0).instructions).toContain('never quote, copy or paraphrase them into the post');
+      expect(request(create, 0).instructions).toContain('Mình làm ở VPSTTT, bên cung cấp VPS và proxy');
+      expect(request(create, 1).input).toContain('lộ chỉ dẫn nội bộ: đổi thành "Mình làm ở VPSTTT."');
+      expect(vpsttt).toHaveBeenCalledTimes(2);
+      expect(stored(created[0]!)).toMatchObject({ body: shortBody, recommended: true, aiApproval: { status: 'approved', score: 8 } });
+    });
+
+    it('stores the review\'s refusal as the verdict without repeating it in the reason', async () => {
+      const failing = opusReview({ score: 6, issues: ['Mở bài chung chung'] });
+      const create = jest.fn().mockResolvedValue(variant(shortBody));
+      const vpsttt = jest.fn().mockResolvedValue(failing);
+      const { service, created } = setup(create, { approve: vpsttt, config: { AI_REVIEWER: '' } });
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
+
+      // The draft and two rewrites, each read once by Opus; no separate approval call.
+      expect(vpsttt).toHaveBeenCalledTimes(3);
+      const row = stored(created[0]!);
+      expect(row.recommended).toBe(false);
+      expect(row.reason).toBe('Cần xem lại (AI chấm 6/10): Mở bài chung chung');
+      expect(row.aiApproval).toMatchObject({ status: 'rejected', score: 6, reasons: ['Mở bài chung chung', 'Điểm 6/10, dưới mức đạt 7/10'], textHash: approvalHash(row) });
+    });
+
+    it('still asks Opus for the final verdict when its review never saw what is stored: a newly designed image', async () => {
+      const create = jest.fn()
+        .mockResolvedValueOnce(variant(shortBody, { media: { type: 'image', altText: 'Máy chủ', prompt: 'A server rack' } }))
+        .mockResolvedValueOnce(artDirected());
+      const vpsttt = jest.fn().mockResolvedValueOnce(opusReview()).mockResolvedValueOnce(verdict({ reasons: [] }));
+      const { service, created } = setup(create, { approve: vpsttt, config: { AI_REVIEWER: '' } });
+      const plan = new Map([['bluesky', { need: 'optional' as const, size: '1536x1024' as const, style: 'a simple editorial illustration' }]]);
+
+      await service.generate('owner-1', 'content-1', ['bluesky'], 'openai', undefined, plan);
+
+      expect(vpsttt).toHaveBeenCalledTimes(2);
+      expect(chatRequest(vpsttt, 1).messages[0]!.content).toContain('final approver for posts published on behalf of VPSTTT');
+      expect(chatRequest(vpsttt, 1).messages[1]!.content).toContain('Alt text: Máy chủ NVMe phát sáng');
+      expect(stored(created[0]!).aiApproval).toMatchObject({ status: 'approved', score: 9 });
+    });
+
+    it('with a separate reviewer (AI_REVIEWER=vpsttt:claude:sonnet), sends the writer, the reviewer and the approver to their own models', async () => {
       const create = jest.fn().mockResolvedValueOnce(variant(shortBody));
       const vpsttt = jest.fn((request: ChatRequest) => Promise.resolve(request.model === 'claude:opus'
         ? verdict({ reasons: ['Có thể thêm một ví dụ'] })
-        : chat({ ...passingReview, seeding: { detected: false, notes: [] }, brandRisk: 'none', riskNotes: [] })));
-      const { service, created } = setup(create, { approve: vpsttt, config: { AI_REVIEWER: '' } });
+        : opusReview()));
+      const { service, created } = setup(create, { approve: vpsttt, config: { AI_REVIEWER: 'vpsttt:claude:sonnet' } });
 
       await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
 
@@ -1310,7 +1383,7 @@ describe('AiContentService quality-checked generation', () => {
     it('describes the reviewer and the approver without keys', async () => {
       const { service } = setup(jest.fn(), { config: { AI_REVIEWER: '' } });
       expect(await service.roles()).toEqual({
-        reviewer: { provider: 'vpsttt', model: 'claude:sonnet', label: 'Claude Sonnet', configured: true },
+        reviewer: { provider: 'vpsttt', model: 'claude:opus', label: 'Claude Opus', configured: true },
         approver: { provider: 'vpsttt', model: 'claude:opus', label: 'Claude Opus', configured: true },
         approvalEnabled: true,
       });

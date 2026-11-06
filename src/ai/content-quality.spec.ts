@@ -1,7 +1,7 @@
 import { platformContract } from '../platforms/platform-contract';
 import {
   clampReview, ContentReview, deterministicIssues, draftRank, missingSafetyFields, qualityInstructions, reviewInstructions, reviewJsonSchema,
-  reviewPassed, ReviewSchema, reviewSummary, rewriteFeedback, safetyProblems, scoreFromReason,
+  reviewPassed, ReviewSchema, reviewSummary, reviewVerdict, rewriteFeedback, safetyProblems, scoreFromReason,
 } from './content-quality';
 
 const VI = 'Mình vừa chuyển website sang máy chủ mới và thời gian tải trang giảm hẳn, chia sẻ lại các bước đã làm.';
@@ -174,5 +174,24 @@ describe('content quality checks', () => {
     expect(scoreFromReason('Hợp người đọc (AI chấm 10/10) · đã rút gọn tự động để vừa 500 ký tự')).toBe(10);
     expect(scoreFromReason('Cần xem lại (AI chưa chấm được): Dài 520/500 ký tự')).toBeNull();
     expect(scoreFromReason(null)).toBeNull();
+  });
+
+  it('turns Opus\'s last review into the final verdict, refusing on seeding, risk, a low score or open machine issues', () => {
+    expect(reviewVerdict({ ...review, issues: ['a', 'b', 'c'] })).toEqual({ status: 'approved', score: 8, risk: 'none', seeding: false, reasons: ['a', 'b'] });
+    expect(reviewVerdict(review, ['Dài 320/300 ký tự'])).toMatchObject({ status: 'rejected', reasons: ['Dài 320/300 ký tự'] });
+    expect(reviewVerdict({ ...review, seeding: { detected: true, notes: ['Giả làm khách hàng'] }, brandRisk: 'medium', riskNotes: ['Hứa không bị chặn'] }))
+      .toEqual({ status: 'rejected', score: 8, risk: 'medium', seeding: true, reasons: ['Seeding: Giả làm khách hàng', 'Rủi ro cho công ty: Hứa không bị chặn'] });
+    expect(reviewVerdict({ ...review, score: 5, languageOk: false, unsupportedClaims: ['Hỗ trợ IPv6'] }).reasons)
+      .toEqual(['Thông tin chưa có căn cứ: Hỗ trợ IPv6', 'Bài viết sai ngôn ngữ của nơi đăng', 'Điểm 5/10, dưới mức đạt 7/10']);
+  });
+
+  it('tells the writer the brief is not text for the reader, and the editor to catch leaked internal text', () => {
+    const writer = qualityInstructions(platformContract('server-fault'));
+    expect(writer).toContain('never quote, copy or paraphrase them into the post');
+    expect(writer).toContain('do not mention it at all, not even to say it is unconfirmed');
+    expect(writer).toContain('Never put notes to the operator in the post');
+    expect(writer).toContain('"Disclosure: I work at VPSTTT, a VPS and proxy provider');
+    expect(qualityInstructions(platformContract('bluesky', { sourceText: VI }))).toContain('"Mình làm ở VPSTTT, bên cung cấp VPS và proxy');
+    expect(reviewInstructions(platformContract('bluesky'))).toContain('Leaked internal text');
   });
 });

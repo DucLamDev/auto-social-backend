@@ -113,14 +113,27 @@ khi AI viết, khi duyệt, khi sửa, khi giao bài cho tiện ích và trong c
 - Tiện ích không bao giờ nhận bài quá dài: job chuyển "Tiện ích cần bạn" (`EXTENSION_CONTENT_TOO_LONG`), các bài sau vẫn
   chạy. Rút gọn rồi bấm **Giao lại cho tiện ích**.
 
-**Quy trình 3 vai AI (từ backend 1.24.0).** Mỗi bài qua ba AI độc lập, đều có thể là model của key VPSTTT AI
+**Quy trình 3 vai AI (từ backend 1.24.0).** Mỗi bài qua ba vai AI, đều có thể là model của key VPSTTT AI
 (`gpt:`, `claude:haiku`, `claude:sonnet`, `claude:opus`):
 
 | Vai | Mặc định | Làm gì |
 |---|---|---|
 | **AI viết** | AI chọn ở hộp tạo bài (`AI_DEFAULT_PROVIDER`; với VPSTTT AI là `VPSTTT_AI_MODEL`, đặt `gpt:` để GPT viết) | Viết bài, mô tả ảnh, viết lại theo nhận xét |
-| **AI chấm** | `AI_REVIEWER=vpsttt:claude:sonnet` | Chấm điểm và nhận xét; bắt **seeding vụng** và **rủi ro cho công ty** |
+| **AI chấm** | `AI_REVIEWER=vpsttt:claude:opus` | Chấm điểm và nhận xét; bắt **seeding vụng** và **rủi ro cho công ty** |
 | **AI duyệt cuối** | `AI_APPROVER=vpsttt:claude:opus` | Đọc bản sẽ đăng, quyết định cho đăng hay không |
+
+- **Chấm và duyệt cuối gộp vào Claude Opus (từ backend 1.27.0).** Hai vai cùng một model:
+  - Lần chấm cuối của Opus trên đúng bản lưu là kết quả duyệt, không gọi thêm lượt duyệt riêng.
+  - Nhận xét của Opus đi thẳng vào các lượt AI viết sửa bài.
+  - Opus vẫn đọc lại một lần nữa khi bản lưu khác bản đã chấm: bài được rút gọn, có ảnh mới thiết kế, hoặc lượt chấm
+    bị lỗi.
+  - Muốn tách lại như cũ: đặt `AI_REVIEWER` khác `AI_APPROVER` (ví dụ `vpsttt:claude:sonnet`).
+- **AI viết không chép brief vào bài:**
+  - brief và thông tin thương hiệu là chỉ dẫn cho người viết;
+  - không nhắc tới brief, chiến dịch, điều "chưa xác nhận", không để lại ghi chú cho người vận hành;
+  - công khai quan hệ với thương hiệu bằng một câu tự nhiên ngôi thứ nhất (ví dụ "Mình làm ở VPSTTT, bên cung cấp VPS
+    và proxy.");
+  - AI chấm / duyệt đánh trượt bài lộ chữ nội bộ hoặc câu công khai cứng kiểu "nội dung gắn với thương hiệu".
 
 - **AI chấm đánh trượt bài có seeding** dù điểm cao:
   - giả làm khách hàng hay người ngoài, khen quá;
@@ -142,6 +155,7 @@ khi AI viết, khi duyệt, khi sửa, khi giao bài cho tiện ích và trong c
 - **Giới hạn:**
   - AI chat VPSTTT chỉ nhận chữ, nên AI chấm / duyệt đọc **mô tả ảnh và alt text**, không xem được ảnh.
   - Key VPSTTT AI phải được cho dùng các model trên. Thiếu quyền thì bài báo "AI duyệt cuối chưa chạy được" và không đăng.
+  - Opus chậm hơn Sonnet (mỗi lượt chấm khoảng 30–90 giây qua VPSTTT AI).
   - `GET /ai/roles` trả 3 vai để giao diện hiện và cảnh báo khi AI viết trùng AI chấm / duyệt.
 
 **Chấm điểm và viết lại từng bài.** Người viết được dặn đúng thang chấm của biên tập AI:

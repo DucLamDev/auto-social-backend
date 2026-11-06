@@ -32,7 +32,7 @@ export interface Environment {
   VPSTTT_AI_TIMEOUT_MS: number;
   VPSTTT_AI_MAX_CONCURRENCY: number;
   VPSTTT_AI_RPM: number;
-  /** `provider:model` of the reviewer, e.g. `vpsttt:claude:sonnet`. */
+  /** `provider:model` of the reviewer, `vpsttt:claude:opus` by default (the approver's model: one judge). */
   AI_REVIEWER: string;
   /** `provider:model` of the final approver, e.g. `vpsttt:claude:opus`. */
   AI_APPROVER: string;

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { countChars, detectLanguage, PlatformContract } from '../platforms/platform-contract';
 import { publishedLength } from '../platforms/post-text';
-import { BRAND_RISKS, BRAND_RISK_LABELS_VI, brandRiskAcceptable, normalizeBrandRisk, type BrandRisk } from './content-approval';
+import { BRAND_RISKS, BRAND_RISK_LABELS_VI, brandRiskAcceptable, MAX_APPROVAL_REASONS, normalizeBrandRisk, type AiApproval, type BrandRisk } from './content-approval';
 
 export const QUALITY_PASS_SCORE = 7;
 /** Rewrites after a failing first draft; the best-scoring attempt is kept. */
@@ -176,6 +176,7 @@ const SAFETY_REVIEW_RULES = [
   'seeding: clumsy seeding (astroturfing) is promotion a community would call out as a disguised advertisement. Set seeding.detected to true when the draft: pretends to be an unaffiliated customer or a neutral user while promoting the brand; contains fake or invented testimonials, reviews or "a friend tried it" stories; repeats the brand or product name, or forces it in where it does not help the reader; over-praises (superlatives, no downside or trade-off); stacks links or calls to action; uses an advertising tone in a technical community or forum; disparages competitors, by name or by implication; promotes the brand in a forum or community without saying the author is affiliated (the brand facts may give the disclosure line). One relevant, neutral mention of the brand, disclosed where needed, is not seeding. seeding.notes lists at most three short notes in Vietnamese that point to the sentence and say how to fix it; empty when nothing is detected.',
   'brandRisk: the risk for the company publishing the post (the brand in the brand facts: VPSTTT, a VPS and proxy provider) if it went out as is. Risks: false or exaggerated claims about its products; guarantees the brief and the brand facts do not back (cheapest, 100% uptime, unlimited, never blocked, undetectable, guaranteed results); explaining how to use proxies or VPS to break laws or website terms (evading bans or blocks, scraping against terms of service, spam, mass account creation, fraud); sensitive political, legal, religious or offensive content; anything that would embarrass the company if a reader took a screenshot. Rate it none (nothing), low (a small wording issue a reader would hardly notice), medium (must change before publishing) or high (must never be published). riskNotes lists at most three short notes in Vietnamese saying what to change; empty for none.',
   'A draft with seeding detected or a medium or high brandRisk fails whatever its score: keep score for the writing quality and report these problems in their own fields.',
+  'Leaked internal text: a sentence that mentions a brief, a campaign, instructions, "this post/content", what is not confirmed, or a note to the operator ("before posting add…") would embarrass the company if published. Score such a draft 6 at most and name the sentence in issues with a natural replacement. A brand disclosure must be one natural first-person sentence (for example "Mình làm ở VPSTTT, bên cung cấp VPS và proxy."); a stiff label such as "brand-related content" or "this post is associated with the brand" is an issue, a natural one is not.',
 ];
 
 /**
@@ -227,8 +228,27 @@ export function qualityInstructions(contract: PlatformContract, engine?: string)
       ? '- Stack Exchange: one precise, answerable technical question: what you are trying to do, the exact commands or configuration tried, the expected and the actual result, versions. No promotion, no product links, no greeting or thanks.'
       : '',
     `- Naturalness: an experienced practitioner talking to peers, varied sentence length, no filler. Never use: ${CLICHES.map((phrase) => `"${phrase}"`).join(', ')}.`,
+    ...WRITER_HYGIENE_RULES,
+    `- Disclosure: when the post mentions the brand in a forum, community or developer site, add exactly one short, natural first-person sentence next to that mention saying who you are, for example ${DISCLOSURE_EXAMPLES[contract.language]} (use the brand facts' disclosure line instead when one is given). Never write a label or legal-sounding line such as "brand-related content", "this post is associated with", "this post is for …", "disclosure of brand relationship".`,
   ].filter(Boolean).join('\n');
 }
+
+/** A natural first-person disclosure, per post language (the brand facts' own line wins when set). */
+const DISCLOSURE_EXAMPLES: Record<PlatformContract['language'], string> = {
+  vi: '"Mình làm ở VPSTTT, bên cung cấp VPS và proxy, nên hay gặp đúng lỗi này."',
+  en: '"Disclosure: I work at VPSTTT, a VPS and proxy provider, so we run into this a lot."',
+};
+
+/**
+ * The brief and the brand facts carry instructions for the writer ("disclose the brand",
+ * "do not claim IPv6 support", "set recommended=false for Server Fault"). Drafts that copied
+ * them into the post read as leaked internal notes and were refused by the final approver.
+ */
+const WRITER_HYGIENE_RULES = [
+  '- The brief and the brand facts are instructions and facts for you, not text for the reader. Follow them; never quote, copy or paraphrase them into the post. Never mention a brief, a campaign, a brand profile, instructions, a writer, an editor, "this post" or "this content".',
+  '- Leave out anything the brief says is not confirmed or must not be claimed: do not mention it at all, not even to say it is unconfirmed.',
+  '- Never put notes to the operator in the post (what to add, what is missing, "before posting…", "replace X with…"). When the brief does not fit this destination, set recommended to false, explain why in reason, and still write the cleanest post you can.',
+];
 
 /**
  * Higher is better: any draft that fits the character limit beats every draft
@@ -266,6 +286,34 @@ export function safetyProblems(review: ContentReview | null): string[] {
     ...seedingNotes(review).map((note) => `Seeding: ${note}`),
     ...riskNotes(review).map((note) => `Rủi ro cho công ty: ${note}`),
   ];
+}
+
+/**
+ * The final verdict when the reviewer is also the final approver (both Claude
+ * Opus by default): its last review of exactly the stored text, read with the
+ * approver's bar. Machine issues still open (length, hashtags, clichés) refuse
+ * it too. Reasons are Vietnamese, most important first; an approved post
+ * keeps at most two points to watch.
+ */
+export function reviewVerdict(review: ContentReview, issues: readonly string[] = []): Pick<AiApproval, 'status' | 'score' | 'risk' | 'seeding' | 'reasons'> {
+  const approved = issues.length === 0 && reviewPassed(review);
+  const reasons = approved
+    ? review.issues.slice(0, 2)
+    : [
+        ...safetyProblems(review),
+        ...review.unsupportedClaims.map((claim) => `Thông tin chưa có căn cứ: ${claim}`),
+        ...(review.languageOk ? [] : ['Bài viết sai ngôn ngữ của nơi đăng']),
+        ...issues,
+        ...review.issues,
+        ...(review.score < QUALITY_PASS_SCORE ? [`Điểm ${review.score}/10, dưới mức đạt ${QUALITY_PASS_SCORE}/10`] : []),
+      ];
+  return {
+    status: approved ? 'approved' : 'rejected',
+    score: review.score,
+    risk: review.brandRisk,
+    seeding: review.seeding.detected,
+    reasons: [...new Set(reasons)].slice(0, MAX_APPROVAL_REASONS),
+  };
 }
 
 /** Feedback for the single rewrite, in the language the writer prompt uses. */
