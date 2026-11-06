@@ -36,6 +36,13 @@ const SEEN_WRITE_INTERVAL_MS = 30_000;
 const MAX_CLAIM_RACES = 3;
 /** Over-long posts set aside in one poll; each is parked for the operator, so the next poll moves on. */
 const MAX_SET_ASIDE_PER_CLAIM = 20;
+/**
+ * How often a waiting post's "this Chrome's extension cannot post here" note is
+ * refreshed while that Chrome keeps polling; the web shows it while recent.
+ */
+const UNSUPPORTED_NOTE_REFRESH_MS = 5 * 60_000;
+/** Waiting posts noted per poll: the rest are noted on the next ones. */
+const MAX_UNSUPPORTED_NOTES_PER_CLAIM = 50;
 
 export interface AuthenticatedDevice {
   id: string;
@@ -241,11 +248,17 @@ export class ExtensionAgentService {
       select: { id: true, settings: true },
     });
     const deviceCount = await this.prisma.extensionDevice.count({ where: { ownerId: device.ownerId, revokedAt: null } });
+    // Accounts this Chrome should post for but whose flow its extension version does not have.
+    const unsupported = new Map<string, string>();
     const excludedAccountIds = accounts.filter((account) => {
       if (!deviceCanRunAccount(account, device.id, accounts, deviceCount, authProtocol)) return true;
-      try { const settings = parseExtensionDeliverySettings(account.settings); return !supportedEngines.includes(settings.engine) || excluded.has(new URL(settings.targetUrl).origin); }
-      catch { return true; }
+      try {
+        const settings = parseExtensionDeliverySettings(account.settings);
+        if (!supportedEngines.includes(settings.engine)) { unsupported.set(account.id, settings.engine); return true; }
+        return excluded.has(new URL(settings.targetUrl).origin);
+      } catch { return true; }
     }).map((account) => account.id);
+    if (unsupported.size) await this.noteUnsupported(device, unsupported);
     let races = 0;
     let setAside = 0;
     while (races < MAX_CLAIM_RACES && setAside < MAX_SET_ASIDE_PER_CLAIM) {
@@ -390,6 +403,35 @@ export class ExtensionAgentService {
       // Only jobs the ExtensionConnector parked; never a manual handoff or a reconciliation.
       attempts: { some: { responseMetadata: { path: ['extensionQueued'], equals: true } } },
     };
+  }
+
+  /**
+   * An older extension skips posts for flows it does not know, so they stayed
+   * "Chờ tiện ích" with no reason given. Note on each such waiting post which
+   * Chrome cannot take it and why (the web then asks to update the extension).
+   * Written at most every few minutes per post; never changes the job itself.
+   */
+  private async noteUnsupported(device: AuthenticatedDevice, engines: Map<string, string>) {
+    const jobs = await this.prisma.publishJob.findMany({
+      where: { ...this.claimableWhere(device.ownerId), platformAccountId: { in: [...engines.keys()] } },
+      orderBy: [{ scheduledAt: 'asc' }, { createdAt: 'asc' }],
+      take: MAX_UNSUPPORTED_NOTES_PER_CLAIM,
+      select: { platformAccountId: true, attempts: { orderBy: { attemptNumber: 'desc' }, take: 1, select: { id: true, responseMetadata: true } } },
+    });
+    const now = Date.now();
+    for (const job of jobs) {
+      const attempt = job.attempts[0];
+      const engine = engines.get(job.platformAccountId);
+      if (!attempt || !engine) continue;
+      const metadata = asRecord(attempt.responseMetadata);
+      const previous = asRecord(metadata.extensionUnsupported);
+      const notedAt = typeof previous.at === 'string' ? Date.parse(previous.at) : Number.NaN;
+      if (previous.deviceId === device.id && previous.engine === engine && now - notedAt < UNSUPPORTED_NOTE_REFRESH_MS) continue;
+      await this.prisma.publishAttempt.update({
+        where: { id: attempt.id },
+        data: { responseMetadata: { ...metadata, extensionUnsupported: { deviceId: device.id, deviceName: device.name, engine, at: new Date(now).toISOString() } } },
+      });
+    }
   }
 
   /** Also runs every minute from the scheduler, for a Chrome that stopped polling. */
