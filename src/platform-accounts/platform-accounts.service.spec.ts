@@ -513,3 +513,52 @@ describe('apiPublishingSettings', () => {
   });
 });
 
+
+describe('PlatformAccountsService.removeMany', () => {
+  function setup(inFlightByAccount: Record<string, number>) {
+    const calls: string[] = [];
+    const record = (name: string) => jest.fn().mockImplementation((args: { where?: { id?: string; platformAccountId?: string } }) => {
+      calls.push(`${name}:${args.where?.id ?? args.where?.platformAccountId ?? ''}`);
+      return Promise.resolve({ count: 1 });
+    });
+    let current = '';
+    const transaction = {
+      $queryRaw: jest.fn().mockImplementation((_sql: TemplateStringsArray, id: string) => { current = id; return Promise.resolve([]); }),
+      publishJob: { count: jest.fn().mockImplementation(() => Promise.resolve(inFlightByAccount[current] ?? 0)), deleteMany: record('jobs') },
+      publishedPost: { deleteMany: record('posts') },
+      campaignTarget: { deleteMany: record('targets') },
+      platformAccount: { delete: record('account') },
+    };
+    const findMany = jest.fn().mockResolvedValue([{ id: 'dup', name: 'Voz · dup' }, { id: 'busy', name: 'Voz · busy' }]);
+    const prisma = {
+      platformAccount: { findMany },
+      $transaction: jest.fn().mockImplementation((work: (tx: typeof transaction) => Promise<unknown>) => work(transaction)),
+    } as unknown as PrismaService;
+    return { service: new PlatformAccountsService(prisma, {} as CredentialsService), findMany, calls, transaction };
+  }
+
+  it('deletes an account with its history, keeps one with a post in flight and reports ids it does not own', async () => {
+    const { service, findMany, calls, transaction } = setup({ busy: 1 });
+    const result = await service.removeMany('owner-1', ['dup', 'busy', 'someone-else', 'dup']);
+
+    expect(result).toEqual({
+      deleted: ['dup'],
+      blocked: [{ id: 'busy', name: 'Voz · busy', reason: expect.stringContaining('chờ đăng hoặc đang đăng') as unknown }],
+      notFound: ['someone-else'],
+    });
+    // Only the caller's own accounts are looked up.
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ['dup', 'busy', 'someone-else'] }, ownerId: 'owner-1' } }));
+    // Posts go before their jobs, jobs before targets, the account last; nothing of "busy" is touched.
+    expect(calls).toEqual(['posts:', 'jobs:dup', 'targets:dup', 'account:dup']);
+    // A post Chrome has claimed counts as in flight.
+    expect(transaction.publishJob.count).toHaveBeenCalledWith({ where: { platformAccountId: 'busy', OR: expect.arrayContaining([{ status: 'NEEDS_ACTION', lockedAt: { not: null } }]) as unknown } });
+  });
+
+  it('keeps going when one account fails and reports it as not deleted', async () => {
+    const { service, transaction } = setup({});
+    transaction.platformAccount.delete.mockRejectedValueOnce(new Error('foreign key'));
+    const result = await service.removeMany('owner-1', ['dup', 'busy']);
+    expect(result.deleted).toEqual(['busy']);
+    expect(result.blocked).toEqual([{ id: 'dup', name: 'Voz · dup', reason: expect.stringContaining('Thử lại') as unknown }]);
+  });
+});

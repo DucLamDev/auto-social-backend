@@ -1,6 +1,14 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.22.0 · 06/11/2026
+### Tính năng
+- Xoá nhiều tài khoản social một lượt
+  Lệnh mới `POST /platform-accounts/bulk-delete` (chỉ quản trị) xoá các tài khoản đã chọn, tối đa 200 tài khoản mỗi lần,
+  để dọn tài khoản bị trùng hoặc không dùng nữa. Mỗi tài khoản bị xoá cùng thông tin đăng nhập, phiên Chrome / 2FA, lịch
+  sử kiểm tra đăng nhập và lịch sử đăng (bài đã lên mạng xã hội vẫn giữ nguyên). Tài khoản đang có bài chờ đăng, đang
+  đăng hoặc đang được tiện ích Chrome đăng sẽ được giữ lại và trả về kèm lý do, để không xoá mất bài đang chạy.
+
 ## 1.21.0 · 06/11/2026
 ### Tính năng
 - Danh sách tài khoản trả số bài đã đăng của từng tài khoản

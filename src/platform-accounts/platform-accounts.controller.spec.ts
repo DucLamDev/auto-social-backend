@@ -23,6 +23,8 @@ describe('PlatformAccountsController API import', () => {
   it('is restricted to administrators', () => {
     const handler = Object.getOwnPropertyDescriptor(PlatformAccountsController.prototype, 'importApi')!.value as object;
     expect(Reflect.getMetadata(ROLES_KEY, handler)).toEqual([RoleName.ADMIN]);
+    const remove = Object.getOwnPropertyDescriptor(PlatformAccountsController.prototype, 'removeMany')!.value as object;
+    expect(Reflect.getMetadata(ROLES_KEY, remove)).toEqual([RoleName.ADMIN]);
   });
 
   it('parses the uploaded file and imports its rows for the signed-in owner', async () => {

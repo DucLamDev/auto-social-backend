@@ -1,10 +1,11 @@
-import { BadRequestException, Body, Controller, Delete, Get, Header, Param, ParseUUIDPipe, Patch, Post, Put, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Header, HttpCode, Param, ParseUUIDPipe, Patch, Post, Put, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { extname } from 'node:path';
 import { RoleName } from '@prisma/client';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CreatePlatformAccountDto } from './dto/create-platform-account.dto';
+import { DeletePlatformAccountsDto } from './dto/delete-platform-accounts.dto';
 import { UpdateCredentialDto } from './dto/update-credential.dto';
 import { UpdatePlatformAccountDto } from './dto/update-platform-account.dto';
 import { UpdatePlatformAccountSettingsDto } from './dto/update-platform-account-settings.dto';
@@ -14,7 +15,7 @@ import { ApiAccountImportService } from './api-account-import.service';
 import { ConnectorAccountsService } from '../connectors/connector-accounts.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
-import { ApiCreatedEnvelope, ApiImportResultContractDto, ApiOkEnvelope, ConnectionTestContractDto, PlatformAccountContractDto } from '../common/swagger/api-contract.dto';
+import { AccountDeleteResultContractDto, ApiCreatedEnvelope, ApiImportResultContractDto, ApiOkEnvelope, ConnectionTestContractDto, PlatformAccountContractDto } from '../common/swagger/api-contract.dto';
 
 @ApiTags('platform-accounts')
 @ApiBearerAuth()
@@ -82,6 +83,18 @@ export class PlatformAccountsController {
   @Roles(RoleName.ADMIN)
   setEnabled(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePlatformAccountDto) {
     return this.accounts.setEnabled(user.id, id, dto.enabled);
+  }
+
+  /**
+   * Deletes the chosen accounts with their credentials and posting history; accounts with a
+   * post waiting or being posted are kept and listed in `blocked`.
+   */
+  @Post('bulk-delete')
+  @HttpCode(200)
+  @ApiOkEnvelope(AccountDeleteResultContractDto)
+  @Roles(RoleName.ADMIN)
+  removeMany(@CurrentUser() user: AuthenticatedUser, @Body() dto: DeletePlatformAccountsDto) {
+    return this.accounts.removeMany(user.id, dto.ids);
   }
 
   @Delete(':id/browser-session')

@@ -361,6 +361,18 @@ export class ApiImportResultContractDto {
   @ApiProperty({ type: [ApiImportRowContractDto] }) rows!: ApiImportRowContractDto[];
 }
 
+export class AccountDeleteBlockedContractDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ description: 'Why the account was kept (Vietnamese, shown to the operator)' }) reason!: string;
+}
+
+export class AccountDeleteResultContractDto {
+  @ApiProperty({ type: [String] }) deleted!: string[];
+  @ApiProperty({ type: [AccountDeleteBlockedContractDto] }) blocked!: AccountDeleteBlockedContractDto[];
+  @ApiProperty({ type: [String], description: 'Ids that do not exist or belong to someone else' }) notFound!: string[];
+}
+
 export class FetchResultContractDto {
   @ApiProperty() discovered!: number;
   @ApiProperty() inserted!: number;
