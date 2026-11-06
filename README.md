@@ -166,7 +166,7 @@ Bài đạt từ 7/10. Ở Content đợi duyệt:
 **Gợi ý chiến dịch** (từ backend 1.23.0): `POST /api/v1/ai/campaign-suggestions` với `platformSlugs` (1–50), tuỳ chọn
 `hint` (tối đa 300 ký tự) và `aiProvider`. Trả về 4 gợi ý `{ name, brief, angle, whyEffective, platformFit }`, mỗi gợi ý dùng được cho tất cả nền tảng đã chọn, dựa trên hồ sơ
 thương hiệu, luật viết của các nền tảng đã chọn và kết quả 12 chiến dịch gần nhất (điểm AI, số bài đã đăng). Một lượt AI,
-không lưu gì; hộp **Tạo nội dung hàng loạt** dùng gợi ý để điền tên chiến dịch và mô tả bài đăng. Từ 1.25.0, lượt AI thứ hai chấm
+không lưu gì; hộp **Tạo nội dung hàng loạt** dùng gợi ý để điền tên chiến dịch và mô tả bài đăng. Từ 1.26.0, lượt AI thứ hai chấm
 từng gợi ý (`review`: điểm tổng, hợp nền tảng, giá trị cho người đọc, gắn sản phẩm, khả năng tương tác, điểm yếu), xếp điểm cao trước
 và đánh dấu `recommended`; chấm lỗi thì `scored: false`.
 
