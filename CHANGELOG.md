@@ -1,7 +1,7 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
-## 1.21.0 · 06/11/2026
+## 1.23.0 · 06/11/2026
 ### Tính năng
 - Gợi ý chiến dịch và mô tả bài đăng bằng AI (`POST /api/v1/ai/campaign-suggestions`, quyền ADMIN / EDITOR)
   - Gửi các nền tảng đã chọn, hướng muốn nhắm (tuỳ chọn) và nhà cung cấp AI; nhận 4 gợi ý, mỗi gợi ý gồm tên chiến
@@ -11,6 +11,21 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
     kết quả 12 chiến dịch gần nhất: điểm AI trung bình, số bài đã đăng, điểm theo từng nền tảng. Gợi ý không lặp chủ đề
     cũ, nghiêng về kiểu bài điểm cao, nhắc thương hiệu tối đa một lần và không bịa giá, ưu đãi, số liệu.
   - Một lượt gọi AI, không lưu gì.
+
+## 1.22.0 · 06/11/2026
+### Tính năng
+- Xoá nhiều tài khoản social một lượt
+  Lệnh mới `POST /platform-accounts/bulk-delete` (chỉ quản trị) xoá các tài khoản đã chọn, tối đa 200 tài khoản mỗi lần,
+  để dọn tài khoản bị trùng hoặc không dùng nữa. Mỗi tài khoản bị xoá cùng thông tin đăng nhập, phiên Chrome / 2FA, lịch
+  sử kiểm tra đăng nhập và lịch sử đăng (bài đã lên mạng xã hội vẫn giữ nguyên). Tài khoản đang có bài chờ đăng, đang
+  đăng hoặc đang được tiện ích Chrome đăng sẽ được giữ lại và trả về kèm lý do, để không xoá mất bài đang chạy.
+
+## 1.21.0 · 06/11/2026
+### Tính năng
+- Danh sách tài khoản trả số bài đã đăng của từng tài khoản
+  `GET /platform-accounts` có thêm `publishedCount` cho mỗi tài khoản: số bài đã đăng bằng tài khoản đó mà vẫn còn trên
+  nền tảng (bài đã xoá hoặc không rõ trạng thái không tính). Giao diện hiện số này ở góc phải mỗi thẻ khi chọn tài khoản
+  để đăng hàng loạt, giúp chia bài cho các kênh còn ít bài.
 
 ## 1.20.0 · 05/11/2026
 ### Tính năng

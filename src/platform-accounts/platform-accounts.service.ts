@@ -1,5 +1,5 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
-import { AccountStatus, PlatformMode, Prisma } from '@prisma/client';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import { AccountStatus, PlatformMode, Prisma, PublishedPostStatus, PublishJobStatus } from '@prisma/client';
 import { CredentialsService } from '../credentials/credentials.service';
 import { PrismaService } from '../database/prisma.service';
 import { CreatePlatformAccountDto } from './dto/create-platform-account.dto';
@@ -69,6 +69,15 @@ const BROWSER_NAVIGATION_SETTINGS = new Set([
   'browserTimezone',
   'browserViewport',
 ]);
+
+/** Jobs a scheduler or worker may still pick up; deleting their account would race the post. */
+const IN_FLIGHT_JOB_STATUSES = [
+  PublishJobStatus.SCHEDULED,
+  PublishJobStatus.QUEUED,
+  PublishJobStatus.PUBLISHING,
+  PublishJobStatus.PROCESSING,
+  PublishJobStatus.RETRY,
+];
 
 /**
  * API/OAuth accounts keep their connection data server-side; operators may
@@ -159,6 +168,8 @@ function assertBrowserEditableSettings(settings: Record<string, unknown>): void 
 
 @Injectable()
 export class PlatformAccountsService {
+  private readonly logger = new Logger(PlatformAccountsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly credentials: CredentialsService,
@@ -169,10 +180,12 @@ export class PlatformAccountsService {
   async list(ownerId: string) {
     const accounts = await this.prisma.platformAccount.findMany({
       where: { ownerId },
-      select: safeAccountSelect,
+      // Posts still live on the site (deleted / unknown ones excluded), shown next to each
+      // account when choosing where a new batch goes.
+      select: { ...safeAccountSelect, _count: { select: { publishedPosts: { where: { status: PublishedPostStatus.PUBLISHED } } } } },
       orderBy: { name: 'asc' },
     });
-    return Promise.all(accounts.map((account) => this.withBrowserSessionConfigured(account)));
+    return Promise.all(accounts.map(({ _count, ...account }) => this.withBrowserSessionConfigured({ ...account, publishedCount: _count.publishedPosts })));
   }
 
   async get(ownerId: string, id: string) {
@@ -437,4 +450,67 @@ export class PlatformAccountsService {
     }
     return this.get(ownerId, id);
   }
+
+  /**
+   * Deletes accounts for good, with their credential, Chrome session, login checks and
+   * posting history (campaign targets, jobs, attempts, published-post records). Posts on the
+   * social site itself are untouched. An account a scheduler or worker may still pick up is
+   * skipped, so nothing is deleted from under a running post.
+   */
+  async removeMany(ownerId: string, ids: string[]): Promise<AccountDeleteResult> {
+    const wanted = [...new Set(ids)];
+    const accounts = await this.prisma.platformAccount.findMany({
+      where: { id: { in: wanted }, ownerId },
+      select: { id: true, name: true },
+    });
+    const found = new Set(accounts.map((account) => account.id));
+    const result: AccountDeleteResult = {
+      deleted: [],
+      blocked: [],
+      notFound: wanted.filter((id) => !found.has(id)),
+    };
+    for (const account of accounts) {
+      try {
+        const deleted = await this.prisma.$transaction(async (transaction) => {
+          // Locking the account row holds off new jobs, targets and posts for it (their foreign
+          // key needs a share lock on it); locking its jobs holds off a worker or Chrome claiming
+          // one, so the check below cannot go stale before the delete commits.
+          await transaction.$queryRaw`SELECT "id" FROM "platform_accounts" WHERE "id" = ${account.id}::uuid FOR UPDATE`;
+          await transaction.$queryRaw`SELECT "id" FROM "publish_jobs" WHERE "platformAccountId" = ${account.id}::uuid FOR UPDATE`;
+          const inFlight = await transaction.publishJob.count({
+            where: {
+              platformAccountId: account.id,
+              OR: [
+                { status: { in: IN_FLIGHT_JOB_STATUSES } },
+                // Chrome has claimed this post and may be submitting it right now.
+                { status: PublishJobStatus.NEEDS_ACTION, lockedAt: { not: null } },
+              ],
+            },
+          });
+          if (inFlight) return false;
+          await transaction.publishedPost.deleteMany({
+            where: { OR: [{ platformAccountId: account.id }, { job: { platformAccountId: account.id } }] },
+          });
+          // Attempts and extension UI hints go with their job.
+          await transaction.publishJob.deleteMany({ where: { platformAccountId: account.id } });
+          await transaction.campaignTarget.deleteMany({ where: { platformAccountId: account.id } });
+          // Credential, OAuth token and login checks cascade with the account.
+          await transaction.platformAccount.delete({ where: { id: account.id } });
+          return true;
+        }, { timeout: 15_000 });
+        if (deleted) result.deleted.push(account.id);
+        else result.blocked.push({ id: account.id, name: account.name, reason: 'Đang có bài chờ đăng hoặc đang đăng. Đợi đăng xong hoặc huỷ bài đó rồi xoá lại.' });
+      } catch (error) {
+        this.logger.warn(`Deleting platform account ${account.id} failed: ${error instanceof Error ? error.message : String(error)}`);
+        result.blocked.push({ id: account.id, name: account.name, reason: 'Chưa xoá được do lỗi máy chủ. Thử lại sau.' });
+      }
+    }
+    return result;
+  }
+}
+
+export interface AccountDeleteResult {
+  deleted: string[];
+  blocked: Array<{ id: string; name: string; reason: string }>;
+  notFound: string[];
 }

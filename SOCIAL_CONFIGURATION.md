@@ -145,6 +145,7 @@ Quy trình cho mọi credential thủ công:
 3. Account API connector mới tạo hoặc vừa rotate credential giữ trạng thái `RECONNECT_REQUIRED`. Gọi `POST /api/v1/platform-accounts/{id}/test`; chỉ test thành công mới chuyển account sang `CONNECTED` và ghi `lastTestedAt`.
 4. Khi test pass, gọi `PATCH /api/v1/platform-accounts/{id}` với `{ "enabled": true }`.
 5. Khi rotate secret hoặc sửa connector settings, gọi `PUT /api/v1/platform-accounts/{id}/credential` với `{ "credential": { ...đầy đủ secret... }, "settings": { ...field cần merge... } }`, test lại rồi mới tiếp tục campaign. Frontend hỗ trợ luồng này nhưng bắt buộc nhập lại credential vì secret cũ không được đọc về trình duyệt.
+6. Xoá account trùng hoặc không dùng nữa (chỉ ADMIN): `POST /api/v1/platform-accounts/bulk-delete` với `{ "ids": ["<uuid>", …] }` (tối đa 200). Mỗi account bị xoá cùng credential, OAuth token, phiên Chrome, lịch sử kiểm tra đăng nhập và lịch sử đăng (campaign target, job, attempt, bản ghi bài đã đăng); bài trên nền tảng giữ nguyên. Account còn job `SCHEDULED`/`QUEUED`/`PUBLISHING`/`PROCESSING`/`RETRY` hoặc job Chrome đang nhận đăng được giữ lại và trả về trong `blocked` kèm lý do; id không thuộc bạn nằm trong `notFound`.
 
 Không nhập placeholder `<...>` thật vào API. Không chụp màn hình Swagger có token/webhook/API key và không lưu JSON credential trong shell history hoặc ticket.
 

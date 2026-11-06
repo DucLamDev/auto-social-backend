@@ -110,6 +110,8 @@ export class PlatformAccountContractDto {
     description: 'True only when an encrypted Playwright storage state is configured; the state itself is never returned.',
   })
   browserSessionConfigured?: boolean;
+  @ApiPropertyOptional({ minimum: 0, description: 'Account list only: posts this account has published that are still live (status PUBLISHED).' })
+  publishedCount?: number;
   @ApiPropertyOptional({ format: 'date-time' }) createdAt?: string;
   @ApiPropertyOptional({ format: 'date-time' }) updatedAt?: string;
 }
@@ -357,6 +359,18 @@ export class ApiImportResultContractDto {
   @ApiProperty() connected!: number;
   @ApiProperty() needsAttention!: number;
   @ApiProperty({ type: [ApiImportRowContractDto] }) rows!: ApiImportRowContractDto[];
+}
+
+export class AccountDeleteBlockedContractDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ description: 'Why the account was kept (Vietnamese, shown to the operator)' }) reason!: string;
+}
+
+export class AccountDeleteResultContractDto {
+  @ApiProperty({ type: [String] }) deleted!: string[];
+  @ApiProperty({ type: [AccountDeleteBlockedContractDto] }) blocked!: AccountDeleteBlockedContractDto[];
+  @ApiProperty({ type: [String], description: 'Ids that do not exist or belong to someone else' }) notFound!: string[];
 }
 
 export class FetchResultContractDto {

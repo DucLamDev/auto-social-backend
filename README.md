@@ -129,7 +129,7 @@ Bài đạt từ 7/10. Ở Content đợi duyệt:
   hỏng chỗ khác thì điểm phải cao hơn điểm cũ, và không đòi làm ngược lại mục đã sửa;
 - bạn sửa tay trong lúc AI đang viết thì giữ bản bạn sửa.
 
-**Gợi ý chiến dịch** (từ backend 1.21.0): `POST /api/v1/ai/campaign-suggestions` với `platformSlugs` (1–50), tuỳ chọn
+**Gợi ý chiến dịch** (từ backend 1.23.0): `POST /api/v1/ai/campaign-suggestions` với `platformSlugs` (1–50), tuỳ chọn
 `hint` (tối đa 300 ký tự) và `aiProvider`. Trả về 4 gợi ý `{ name, brief, angle, whyEffective, bestFor }` dựa trên hồ sơ
 thương hiệu, luật viết của các nền tảng đã chọn và kết quả 12 chiến dịch gần nhất (điểm AI, số bài đã đăng). Một lượt AI,
 không lưu gì; hộp **Tạo nội dung hàng loạt** dùng gợi ý để điền tên chiến dịch và mô tả bài đăng.
