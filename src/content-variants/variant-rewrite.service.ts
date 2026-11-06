@@ -23,8 +23,11 @@ function record(value: unknown): Record<string, unknown> {
 /**
  * "Viết lại bằng AI" on one draft. Writing, scoring and up to two rewrites take
  * a minute or more, longer than a proxied request may stay open, so it runs
- * after the response; the review screen follows `aiRevision.status`. The new
- * text replaces the draft in place, so it stays in its review and campaign.
+ * after the response; the review screen follows `aiRevision.status`. The
+ * reviser (Claude Opus by default) edits only what the notes point to; the new
+ * text replaces the draft in place, so it stays in its review and campaign. A
+ * new version that still fails and scores lower than the stored one is not
+ * saved: the stored draft is kept and the request reports why.
  */
 @Injectable()
 export class VariantRewriteService {
@@ -45,7 +48,7 @@ export class VariantRewriteService {
       throw new BadRequestException(`Chọn tối đa ${MAX_REWRITE_NOTES} khuyến nghị, mỗi khuyến nghị tối đa 1.000 ký tự.`);
     }
     if (notes && !notes.length && !instruction) throw new BadRequestException('Chọn ít nhất một khuyến nghị để AI sửa.');
-    const provider = this.ai.resolveProvider(input.aiProvider);
+    const requested = this.ai.resolveProvider(input.aiProvider);
     const variant = await this.prisma.contentVariant.findFirst({
       where: { id: variantId, content: { ownerId } },
       select: {
@@ -59,9 +62,15 @@ export class VariantRewriteService {
     if (variant._count.targets) throw new ConflictException('Bài đã vào chiến dịch đang đăng, không viết lại được nữa.');
     if (variant.status === VariantStatus.REJECTED) throw new ConflictException('Bài đã bị từ chối. Khôi phục bài trước khi viết lại.');
     if (rewriteRunning(variant.aiRevision)) throw new ConflictException('AI đang viết lại bài này.');
+    // Who edits: the reviser (Claude Opus by default), or the requested writer without its key.
+    const writer = await this.ai.reviserFor(requested);
+    const provider = writer.provider;
     // Provider configured and the platform still has an active prompt: fail now, not in the background.
     await this.ai.assertReady([variant.platform.slug], provider);
-    const revision = { status: 'generating', instruction, ...(notes ? { notes } : {}), provider, startedAt: new Date().toISOString(), finishedAt: null, error: null };
+    const revision = {
+      status: 'generating', instruction, ...(notes ? { notes } : {}), provider, writerLabel: this.ai.roleLabel(writer),
+      startedAt: new Date().toISOString(), finishedAt: null, error: null,
+    };
     // Compare-and-set on updatedAt: an edit, approval or second click in between wins.
     const claimed = await this.prisma.contentVariant.updateMany({
       where: { id: variantId, updatedAt: variant.updatedAt, targets: { none: {} } },
@@ -70,7 +79,7 @@ export class VariantRewriteService {
     if (!claimed.count) throw new ConflictException('Bài vừa thay đổi. Tải lại rồi thử viết lại.');
     const media = record(variant.mediaRecommendation);
     const hasImage = variant._count.media > 0 || (media.type === 'image' && media.status !== 'removed');
-    void this.run(ownerId, variant, revision, provider, hasImage);
+    void this.run(ownerId, variant, revision, requested, hasImage);
     return { status: 'generating' };
   }
 
@@ -82,6 +91,7 @@ export class VariantRewriteService {
     hasImage: boolean,
   ) {
     try {
+      const previousScore = scoreFromReason(variant.reason);
       const result = await this.ai.reviseDraft(ownerId, {
         contentId: variant.contentId,
         platformSlug: variant.platform.slug,
@@ -90,13 +100,19 @@ export class VariantRewriteService {
           previous: { title: variant.title, body: variant.body, hashtags: variant.hashtags },
           instruction: typeof revision.instruction === 'string' ? revision.instruction : '',
           // The new version is judged against this score, so fixing the chosen points raises it.
-          previousScore: scoreFromReason(variant.reason),
+          previousScore,
           // Points the operator chose replace the whole last review; a passing draft's reason is praise, not a note to fix.
           ...(Array.isArray(revision.notes)
             ? { notes: null, chosenNotes: revision.notes.filter((note): note is string => typeof note === 'string') }
             : { notes: variant.recommended ? null : variant.reason }),
         },
       }, provider);
+      // A failing edit that scores lower than the stored draft would only make it worse.
+      const newScore = scoreFromReason(result.reason);
+      if (!result.recommended && result.approval?.status !== 'approved' && newScore !== null && previousScore !== null && newScore < previousScore) {
+        await this.finish(variant.id, revision, `Bản AI sửa chỉ được ${newScore}/10, thấp hơn bản hiện tại (${previousScore}/10), nên giữ nguyên bản hiện tại. Sửa tay hoặc chọn khuyến nghị khác rồi thử lại.`);
+        return;
+      }
       const post = { title: result.title, body: repairEscapedNewlines(result.body), hashtags: result.hashtags };
       // The final approver's verdict comes with the new text. Without one for exactly
       // the stored text (approver off, or the body repaired after it read it) the

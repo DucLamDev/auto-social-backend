@@ -14,7 +14,14 @@ const revised = { platform: 'bluesky', title: null, body: 'Bản mới có số 
 
 function setup(variant: unknown = draft(), reviseDraft = jest.fn().mockResolvedValue(revised), approverOn = false) {
   const prisma = { contentVariant: { findFirst: jest.fn().mockResolvedValue(variant), updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
-  const ai = { resolveProvider: jest.fn((provider?: string) => provider ?? 'openai'), assertReady: jest.fn().mockResolvedValue(undefined), reviseDraft };
+  // Claude Opus edits by default (AI_REVISER), whichever writer the campaign used.
+  const ai = {
+    resolveProvider: jest.fn((provider?: string) => provider ?? 'openai'),
+    reviserFor: jest.fn().mockResolvedValue({ provider: 'vpsttt', model: 'claude:opus' }),
+    roleLabel: jest.fn(() => 'Claude Opus'),
+    assertReady: jest.fn().mockResolvedValue(undefined),
+    reviseDraft,
+  };
   const rerun = { status: 'running', approver: 'vpsttt:claude:opus', approverLabel: 'Claude Opus', textHash: 'h', startedAt: '2026-11-06T10:00:00.000Z' };
   const approvals = {
     enabled: jest.fn(() => approverOn),
@@ -32,10 +39,12 @@ describe('rewrite one draft with AI', () => {
     const { service, prisma, ai, reviseDraft } = setup();
     await expect(service.start('owner-1', 'variant-1', { instruction: '  Mở bài bằng số liệu  ' })).resolves.toEqual({ status: 'generating' });
     expect(prisma.contentVariant.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'variant-1', content: { ownerId: 'owner-1' } } }));
-    expect(ai.assertReady).toHaveBeenCalledWith(['bluesky'], 'openai');
+    // The reviser must be ready, not the campaign's writer.
+    expect(ai.reviserFor).toHaveBeenCalledWith('openai');
+    expect(ai.assertReady).toHaveBeenCalledWith(['bluesky'], 'vpsttt');
     const claim = (prisma.contentVariant.updateMany.mock.calls[0] as UpdateCall)[0];
     expect(claim.where).toEqual({ id: 'variant-1', updatedAt, targets: { none: {} } });
-    expect(claim.data.aiRevision).toMatchObject({ status: 'generating', instruction: 'Mở bài bằng số liệu' });
+    expect(claim.data.aiRevision).toMatchObject({ status: 'generating', instruction: 'Mở bài bằng số liệu', provider: 'vpsttt', writerLabel: 'Claude Opus' });
     await settle(); await settle();
     expect(reviseDraft).toHaveBeenCalledWith('owner-1', {
       contentId: 'content-1', platformSlug: 'bluesky', image: null,
@@ -143,6 +152,29 @@ describe('rewrite one draft with AI', () => {
     await service.start('owner-1', 'variant-1', {});
     await settle(); await settle();
     expect(approvals.launch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the stored draft when the edit still fails and scores lower, and says why', async () => {
+    const worse = { ...revised, recommended: false, reason: 'Cần xem lại (AI chấm 4/10): Lạc đề' };
+    const { service, prisma, approvals } = setup(draft(), jest.fn().mockResolvedValue(worse), true);
+    await service.start('owner-1', 'variant-1', { notes: ['Mở bài chung chung'] });
+    await settle(); await settle();
+    expect(prisma.contentVariant.updateMany).toHaveBeenCalledTimes(2);
+    const kept = (prisma.contentVariant.updateMany.mock.calls[1] as UpdateCall)[0];
+    expect(kept.data).not.toHaveProperty('body');
+    expect(kept.data.aiRevision).toMatchObject({ status: 'failed', error: 'Bản AI sửa chỉ được 4/10, thấp hơn bản hiện tại (5/10), nên giữ nguyên bản hiện tại. Sửa tay hoặc chọn khuyến nghị khác rồi thử lại.' });
+    expect(approvals.launch).not.toHaveBeenCalled();
+  });
+
+  it('saves an edit that scores lower but passes, or that scores the same', async () => {
+    const passing = setup(draft({ reason: 'AI duyệt cuối (Claude Opus) từ chối: Lộ chỉ dẫn (AI chấm 9/10)' }), jest.fn().mockResolvedValue({ ...revised, reason: 'Hợp người đọc (AI chấm 8/10)' }));
+    await passing.service.start('owner-1', 'variant-1', {});
+    await settle(); await settle();
+    expect((passing.prisma.contentVariant.updateMany.mock.calls[1] as UpdateCall)[0].data).toMatchObject({ body: 'Bản mới có số liệu', aiRevision: { status: 'done' } });
+    const same = setup(draft(), jest.fn().mockResolvedValue({ ...revised, recommended: false, reason: 'Cần xem lại (AI chấm 5/10): Còn chung chung' }));
+    await same.service.start('owner-1', 'variant-1', {});
+    await settle(); await settle();
+    expect((same.prisma.contentVariant.updateMany.mock.calls[1] as UpdateCall)[0].data).toMatchObject({ body: 'Bản mới có số liệu', aiRevision: { status: 'done' } });
   });
 
   it('restarts a rewrite left "generating" by a restart after ten minutes', async () => {

@@ -1,6 +1,6 @@
 import { isIP } from 'node:net';
 import { AI_PROVIDER_IDS, AiProvider, isAiProvider } from '../ai/ai-provider';
-import { aiRoleSetting, DEFAULT_AI_APPROVER, DEFAULT_AI_REVIEWER, parseAiRole } from '../ai/content-approval';
+import { aiRoleSetting, DEFAULT_AI_APPROVER, DEFAULT_AI_REVIEWER, DEFAULT_AI_REVISER, parseAiRole } from '../ai/content-approval';
 
 export type NodeEnvironment = 'development' | 'test' | 'production';
 
@@ -36,6 +36,8 @@ export interface Environment {
   AI_REVIEWER: string;
   /** `provider:model` of the final approver, e.g. `vpsttt:claude:opus`. */
   AI_APPROVER: string;
+  /** `provider:model` that writes "Viết lại bằng AI" / "Sửa theo khuyến nghị", `vpsttt:claude:opus` by default. */
+  AI_REVISER: string;
   AI_APPROVAL_ENABLED: boolean;
   MCP_ENABLED: boolean;
   MCP_ALLOW_PUBLISH: boolean;
@@ -225,6 +227,7 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   // set only here, so a request cannot pick who judges its drafts.
   const aiReviewer = parseAiRoleSetting(raw.AI_REVIEWER, 'AI_REVIEWER', DEFAULT_AI_REVIEWER);
   const aiApprover = parseAiRoleSetting(raw.AI_APPROVER, 'AI_APPROVER', DEFAULT_AI_APPROVER);
+  const aiReviser = parseAiRoleSetting(raw.AI_REVISER, 'AI_REVISER', DEFAULT_AI_REVISER);
   const aiApprovalEnabled = parseBoolean(raw.AI_APPROVAL_ENABLED, 'AI_APPROVAL_ENABLED', true);
   // The MCP endpoint for AI agents is off unless explicitly enabled; letting an
   // agent approve (= really publish) campaigns is a separate opt-in.
@@ -313,6 +316,7 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
     VPSTTT_AI_RPM: vpstttAiRpm,
     AI_REVIEWER: aiReviewer,
     AI_APPROVER: aiApprover,
+    AI_REVISER: aiReviser,
     AI_APPROVAL_ENABLED: aiApprovalEnabled,
     MCP_ENABLED: mcpEnabled,
     MCP_ALLOW_PUBLISH: mcpAllowPublish,

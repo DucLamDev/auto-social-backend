@@ -1,7 +1,7 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
-## 1.27.1 · 06/11/2026
+## 1.28.1 · 06/11/2026
 ### Sửa lỗi
 - Bài AI viết không còn câu "Mình làm ở VPSTTT…" lạc chỗ; bài mạng xã hội ngắn có bố cục gọn
   - **Câu tự giới thiệu chỉ khi cần.** Chỉ bài trên diễn đàn, cộng đồng, trang lập trình viên (và Product Hunt) có câu
@@ -15,6 +15,21 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   - **AI chấm và AI duyệt cuối bắt lỗi này.** Câu tự giới thiệu thừa (tài khoản công ty, bài không nhắc sản phẩm),
     đứng riêng hoặc ghép với ý khác bị trừ điểm / bị từ chối kèm lý do; bài ngắn có nhiều câu kết rời rạc bị trừ điểm.
   - Có hiệu lực ngay sau khi triển khai, không cần đồng bộ lời dặn trong cơ sở dữ liệu.
+
+## 1.28.0 · 06/11/2026
+### Tính năng
+- Viết lại bằng AI do Claude Opus làm, chỉ sửa chỗ bị nhắc và giữ phần đã ổn
+  - **AI sửa bài mới `AI_REVISER`**, mặc định `vpsttt:claude:opus`. "Viết lại bằng AI" và "Sửa theo khuyến nghị" do Opus
+    sửa, không còn do AI viết của chiến dịch (GPT). Key VPSTTT AI chưa cấu hình thì dùng AI viết như cũ. `GET /ai/roles`
+    trả thêm `reviser`.
+  - **Chỉ sửa chỗ bị nhắc.** AI được dặn chỉ sửa đúng câu mà khuyến nghị / hướng dẫn chỉ ra, giữ nguyên tiêu đề, bố cục,
+    hashtag và các câu khác. Trước đây, nếu bài sửa chưa đạt, các lượt sửa tiếp theo **viết lại từ đầu theo brief** và bỏ
+    mất bài cũ, nên điểm hay tụt. Giờ mỗi lượt sửa tiếp theo sửa trên bản tốt nhất với nhận xét mới.
+  - **Không lưu bản tệ hơn.** Bản sửa vẫn chưa đạt mà điểm thấp hơn bản hiện tại thì giữ nguyên bản hiện tại và báo "Bản
+    AI sửa chỉ được X/10, thấp hơn bản hiện tại (Y/10)…".
+  - **Khuyến nghị không còn bị cắt giữa câu.** Lý do từ chối của AI duyệt cuối ghi vào ghi chú bài chỉ gồm các lý do
+    trọn vẹn (danh sách đủ vẫn ở `aiApproval.reasons`). Trước đây ghi chú bị cắt ở 450 ký tự, sinh ra khuyến nghị cụt như
+    "Câu discl".
 
 ## 1.27.0 · 06/11/2026
 ### Tính năng
