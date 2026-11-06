@@ -255,6 +255,11 @@ export class UnapprovedVariantContractDto {
   @ApiProperty({ description: 'Vietnamese reason from the final AI approver gate shown to the reviewer.' }) message!: string;
 }
 
+export class DeletedCampaignContractDto {
+  @ApiProperty() deleted!: boolean;
+  @ApiProperty({ description: 'True when the brief content made for this AI run was deleted with it (library content is kept).' }) contentRemoved!: boolean;
+}
+
 export class AutomatedCampaignContractDto {
   @ApiProperty({ type: CampaignContractDto }) campaign!: CampaignContractDto;
   @ApiProperty({ type: ContentContractDto }) content!: ContentContractDto;

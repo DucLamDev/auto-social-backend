@@ -1,6 +1,18 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.25.0 · 06/11/2026
+### Tính năng
+- Xoá một lượt nội dung AI khỏi Content đợi duyệt
+  `DELETE /campaigns/:id` (ADMIN, EDITOR) xoá lượt AI cùng các bài chưa đăng, job đăng và nội dung brief tạo riêng cho
+  lượt đó. Nội dung lấy từ thư viện thì giữ lại.
+  - **Không cho xoá**, kèm lý do tiếng Việt:
+    - khi AI đang viết bài cho lượt;
+    - khi đang có bài được đăng hoặc tiện ích Chrome đang làm;
+    - khi lượt đã có bài lên social (giữ lịch sử đăng).
+  - Dòng của lượt được khoá trong lúc xoá để worker không nhận chạy giữa chừng. Mỗi lần xoá được ghi nhật ký
+    (`CAMPAIGN_AUTOMATION_DELETED`).
+
 ## 1.24.0 · 06/11/2026
 ### Tính năng
 - Quy trình 3 vai AI: AI viết, AI chấm (bắt seeding và rủi ro cho công ty), AI duyệt cuối chặn đăng

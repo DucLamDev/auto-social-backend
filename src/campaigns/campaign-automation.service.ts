@@ -757,6 +757,50 @@ export class CampaignAutomationService {
     return this.result(ownerId, id);
   }
 
+  /**
+   * Deletes an AI run from "Content đợi duyệt": the run, its unpublished drafts and
+   * jobs, and the brief content made for it (library content stays). A run the AI is
+   * still writing, one with a post being published, or one with a post already live
+   * on a social network is kept (the publishing history must not disappear).
+   */
+  async remove(ownerId: string, id: string) {
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      // The worker claims a queued run with a compare-and-set on this row: lock it first.
+      await tx.$queryRaw`SELECT id FROM campaigns WHERE id = ${id}::uuid FOR UPDATE`;
+      const campaign = await tx.campaign.findFirst({
+        where: { id, ownerId, automationState: { not: null } },
+        select: { id: true, name: true, contentId: true, automationState: true, content: { select: { aiAnalysis: true } } },
+      });
+      if (!campaign) throw new NotFoundException('AI campaign not found');
+      if (campaign.automationState === 'PROCESSING') {
+        throw new ConflictException('AI đang viết bài cho lượt này. Đợi lượt chạy xong hoặc báo lỗi rồi xoá.');
+      }
+      const published = await tx.publishedPost.count({ where: { job: { target: { campaignId: id } } } });
+      if (published) {
+        throw new ConflictException(`Lượt này đã có ${published} bài đăng lên social nên được giữ lại để còn lịch sử đăng. Từ chối các bài còn chờ nếu không muốn đăng tiếp.`);
+      }
+      const active = await tx.publishJob.count({
+        where: { target: { campaignId: id }, OR: [{ status: PublishJobStatus.PUBLISHING }, { status: PublishJobStatus.NEEDS_ACTION, lockedAt: { not: null } }] },
+      });
+      if (active) throw new ConflictException('Đang có bài của lượt này được đăng (hoặc tiện ích Chrome đang làm). Đợi xong rồi xoá.');
+      // Targets, publish jobs and their attempts go with the campaign (cascade).
+      await tx.campaign.delete({ where: { id } });
+      // The brief content created for this run only; content from the library is kept.
+      const brief = (campaign.content.aiAnalysis as { kind?: unknown } | null)?.kind === 'brief';
+      const stillUsed = await tx.campaign.count({ where: { contentId: campaign.contentId } })
+        + await tx.campaignTarget.count({ where: { contentVariant: { contentId: campaign.contentId } } });
+      const contentRemoved = brief && !stillUsed;
+      // Variants and media rows go with the content (cascade); stored files follow the storage lifecycle.
+      if (contentRemoved) await tx.content.delete({ where: { id: campaign.contentId } });
+      return { name: campaign.name, contentId: campaign.contentId, contentRemoved };
+    });
+    await this.audit.recordBestEffort({
+      actorId: ownerId, action: 'CAMPAIGN_AUTOMATION_DELETED', entityType: 'campaigns', entityId: id,
+      after: { name: outcome.name, contentId: outcome.contentId, contentRemoved: outcome.contentRemoved },
+    });
+    return { deleted: true, contentRemoved: outcome.contentRemoved };
+  }
+
   async retry(ownerId: string, id: string) {
     const updated = await this.prisma.campaign.updateMany({
       where: { id, ownerId, automationState: 'FAILED', targets: { none: {} } },

@@ -5684,6 +5684,109 @@
         "tags": [
           "campaigns"
         ]
+      },
+      "delete": {
+        "operationId": "Campaigns_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/DeletedCampaignContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "campaigns"
+        ]
       }
     },
     "/api/v1/campaigns/automate": {
@@ -13490,6 +13593,22 @@
             "description": "Future ISO-8601 timestamp with an explicit UTC offset. Required for SCHEDULED."
           }
         }
+      },
+      "DeletedCampaignContractDto": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "contentRemoved": {
+            "type": "boolean",
+            "description": "True when the brief content made for this AI run was deleted with it (library content is kept)."
+          }
+        },
+        "required": [
+          "deleted",
+          "contentRemoved"
+        ]
       },
       "PublishJobContractDto": {
         "type": "object",
