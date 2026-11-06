@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
 import { AiProvider } from './ai-provider';
-import { AiContentService, contractInstructions, extractJsonObject } from './ai-content.service';
+import { failedPlatformOf, AiContentService, contractInstructions, extractJsonObject } from './ai-content.service';
 import { platformContract } from '../platforms/platform-contract';
 import { checkPostLength } from '../platforms/post-length';
 import { BrandProfileService } from './brand-profile.service';
@@ -904,9 +904,9 @@ describe('AiContentService quality-checked generation', () => {
   });
 
   it('suggests campaigns from the brand, the chosen platforms and past scores, keeping only usable ideas', async () => {
-    const idea = (name: string, bestFor: string[]) => ({ name, brief: 'Hướng dẫn tối ưu NGINX trên VPS 2 GB: worker_processes, gzip, cache; gắn VPS NVMe của VPSTTT.', angle: 'Hướng dẫn', whyEffective: 'Giải quyết vấn đề thật.', bestFor });
+    const idea = (name: string) => ({ name, brief: 'Hướng dẫn tối ưu NGINX trên VPS 2 GB: worker_processes, gzip, cache; gắn VPS NVMe của VPSTTT.', angle: 'Hướng dẫn', whyEffective: 'Giải quyết vấn đề thật.', platformFit: 'Diễn đàn: hỏi kinh nghiệm; Bluesky: một mẹo ngắn.' });
     const create = jest.fn().mockResolvedValueOnce({ output_text: JSON.stringify({ suggestions: [
-      idea('Tối ưu NGINX trên VPS nhỏ', ['Bluesky', 'Facebook']), idea('Tối ưu NGINX trên VPS nhỏ', []), { ...idea('x', []), name: 'x' },
+      idea('Tối ưu NGINX trên VPS nhỏ'), idea('Tối ưu NGINX trên VPS nhỏ'), idea('x'),
     ] }) });
     const { service } = setup(create);
     const result = await service.suggestCampaigns('owner-1', { platformSlugs: ['bluesky', 'nginx-community', 'unknown-site'], hint: 'proxy dân cư' }, 'openai');
@@ -914,6 +914,8 @@ describe('AiContentService quality-checked generation', () => {
     const sent = request(create, 0);
     expect(sent.text.format.name).toBe('campaign_suggestions');
     expect(sent.instructions).toContain('The company and its product appear as the natural solution or tool, at most once per post; never an advertisement.');
+    expect(sent.instructions).toContain('Every idea must work on ALL the chosen platforms at once');
+    expect(sent.input).toContain('Chosen platforms (every idea must fit all 2 of them):');
     expect(sent.input).toContain('Brand: VPSTTT');
     expect(sent.input).toMatch(/- Bluesky \(social, at most 300 characters\)/);
     expect(sent.input).toContain('- NGINX Community (');
@@ -921,8 +923,16 @@ describe('AiContentService quality-checked generation', () => {
     expect(sent.input).toContain('"Giới thiệu proxy": Giới thiệu proxy, VPS của vpsttt qua chia sẻ kiến thức (drafts: 2, average editor score: 7/10, published: 1)');
     expect(sent.input).toContain('- Bluesky: 6/10 over 1 drafts');
     expect(sent.input).toContain('The operator wants ideas about: proxy dân cư');
-    // Duplicates and empty ideas are dropped; bestFor keeps only chosen platforms.
-    expect(result.suggestions).toEqual([expect.objectContaining({ name: 'Tối ưu NGINX trên VPS nhỏ', bestFor: ['Bluesky'] })]);
+    // Duplicates and empty ideas are dropped.
+    expect(result.suggestions).toEqual([expect.objectContaining({ name: 'Tối ưu NGINX trên VPS nhỏ', platformFit: 'Diễn đàn: hỏi kinh nghiệm; Bluesky: một mẹo ngắn.' })]);
+  });
+
+  it('remembers which platform was being written when a run failed', async () => {
+    const create = jest.fn().mockRejectedValue({ status: 401, message: 'raw-auth' });
+    const { service } = setup(create);
+    const error: unknown = await service.generate('owner-1', 'content-1', ['bluesky'], 'openai').catch((caught: unknown) => caught);
+    expect(failedPlatformOf(error)).toBe('bluesky');
+    expect(failedPlatformOf(new Error('other'))).toBeUndefined();
   });
 
   it('stops rewriting as soon as a rewrite passes', async () => {
@@ -1012,8 +1022,10 @@ describe('AiContentService quality-checked generation', () => {
     expect(created[0]).toMatchObject({ recommended: false, reason: 'Cần xem lại (AI chấm 8/10): AI đánh giá không hợp nơi đăng: Không phải câu hỏi thật' });
   });
 
-  it('retries a rate-limited write once and still stores the draft when the reviewer is unavailable', async () => {
+  it('waits longer and longer for a rate-limited write, and still stores the draft when the reviewer is unavailable', async () => {
     const create = jest.fn()
+      .mockRejectedValueOnce({ status: 429, message: 'raw-limit' })
+      .mockRejectedValueOnce({ status: 429, message: 'raw-limit' })
       .mockRejectedValueOnce({ status: 429, message: 'raw-limit' })
       .mockResolvedValueOnce(variant(shortBody))
       .mockRejectedValueOnce(new Error('reviewer down'));
@@ -1021,8 +1033,9 @@ describe('AiContentService quality-checked generation', () => {
 
     await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
 
-    expect(delay).toHaveBeenCalledWith(2_000);
-    expect(create).toHaveBeenCalledTimes(3);
+    // The IDE counts calls over the last minute: a 2-second retry would be refused again.
+    expect(delay.mock.calls.map(([ms]) => ms)).toEqual([15_000, 30_000, 60_000]);
+    expect(create).toHaveBeenCalledTimes(5);
     expect(created[0]).toMatchObject({ recommended: true, reason: 'Hợp người đọc (AI chưa chấm được)' });
   });
 });

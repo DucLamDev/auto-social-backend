@@ -208,6 +208,11 @@ export class CampaignContractDto {
   @ApiPropertyOptional({ enum: ['AUTOMATION', 'EXISTING_CAMPAIGN', 'CONTENT'] }) reviewMode?: string;
   @ApiPropertyOptional({ nullable: true, type: String }) automationState?: string | null;
   @ApiPropertyOptional({ nullable: true, type: String }) automationErrorCode?: string | null;
+  @ApiPropertyOptional({
+    nullable: true, type: Object,
+    description: 'Why the last AI run failed: { code, message, platform, platformName, provider, at }.',
+    example: { code: 'PLATFORM_RATE_LIMITED', message: 'VPSTTT AI rate limit was reached. Try again later', platform: 'product-hunt', platformName: 'Product Hunt', provider: 'vpsttt', at: '2026-11-06T04:39:56.000Z' },
+  }) automationErrorDetail?: { code: string; message: string; platform?: string; platformName?: string; provider?: string; at: string } | null;
   @ApiPropertyOptional({ type: [String], format: 'uuid' }) automationVariantIds?: string[];
   @ApiPropertyOptional({ type: [String], format: 'uuid' }) automationAccountIds?: string[];
   @ApiProperty({ format: 'uuid' }) id!: string;

@@ -1,11 +1,12 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { ConflictException, HttpException, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { ContentStatus } from '@prisma/client';
+import { ContentStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { RedisService } from '../queue/redis.service';
 import { RedisLockLease } from '../queue/redis-lock-lease';
 import { CampaignAutomationService } from './campaign-automation.service';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
+import { describeAutomationFailure } from './automation-failure';
 
 /** Persistent database queue, consumed by the API scheduler independently of HTTP requests. */
 @Injectable()
@@ -32,7 +33,7 @@ export class CampaignAutomationWorkerService {
       if (!campaign) return;
       const claimed = await this.prisma.campaign.updateMany({
         where: { id: campaign.id, automationState: campaign.automationState, updatedAt: campaign.updatedAt },
-        data: { automationState: 'PROCESSING', automationErrorCode: null },
+        data: { automationState: 'PROCESSING', automationErrorCode: null, automationErrorDetail: Prisma.DbNull },
       });
       if (!claimed.count) return;
       try {
@@ -46,11 +47,16 @@ export class CampaignAutomationWorkerService {
           assertOwnership: async () => { if (!await lease.verify()) throw new ConflictException('AI worker lease was lost'); },
         });
       } catch (error) {
+        // The real cause (code, message, the platform being written, the AI provider) is kept
+        // for the review screen instead of one generic "AI_GENERATION_FAILED".
+        const provider = (campaign.automationRequest as { aiProvider?: unknown } | null)?.aiProvider;
+        const failure = describeAutomationFailure(error, campaign.id, typeof provider === 'string' ? provider : undefined);
         if (await lease.verify()) await this.prisma.campaign.updateMany({
           where: { id: campaign.id, automationState: 'PROCESSING' },
-          data: { automationState: 'FAILED', automationErrorCode: 'AI_GENERATION_FAILED' },
+          data: { automationState: 'FAILED', automationErrorCode: failure.code, automationErrorDetail: failure as unknown as Prisma.InputJsonObject },
         });
-        this.logger.warn(`AI campaign ${campaign.id} failed (${error instanceof Error ? error.name : 'unknown error'})`);
+        this.logger.warn(`AI campaign ${campaign.id} failed${failure.platform ? ` on ${failure.platform}` : ''} (${failure.code}): ${failure.message}`);
+        if (!(error instanceof HttpException)) this.logger.error(error instanceof Error ? error.stack ?? error.message : String(error));
       }
     } finally {
       await lease.stop();

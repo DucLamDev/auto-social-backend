@@ -1,8 +1,9 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { ProviderThrottle } from './provider-throttle';
+import { VpstttQuota } from './vpsttt-quota';
 
 /** Sizes accepted by the IDE AI API image endpoint. */
 export const AI_IMAGE_SIZES = ['1024x1024', '1536x1024', '1024x1536'] as const;
@@ -56,7 +57,7 @@ export class AiImageService {
   private readonly quality: OpenAiQuality;
   private readonly throttle: ProviderThrottle;
 
-  constructor(config: ConfigService) {
+  constructor(config: ConfigService, @Optional() private readonly vpstttQuota?: VpstttQuota) {
     this.provider = String(config.get<string>('AI_IMAGE_PROVIDER', 'vpsttt')).trim().toLowerCase() === 'openai' ? 'openai' : 'vpsttt';
     const openai = this.provider === 'openai';
     this.model = openai
@@ -108,7 +109,9 @@ export class AiImageService {
       const request = this.provider === 'openai'
         ? { model: this.model, prompt: text, size, n: 1, quality: this.quality }
         : { model: this.model, prompt: text, size, n: 1, response_format: 'b64_json' as const };
-      const response = await this.throttle.run(() => client.images.generate(request));
+      // VPSTTT images also count against the quota the writing calls use.
+      const call = () => client.images.generate(request);
+      const response = await this.throttle.run(() => (this.provider === 'vpsttt' && this.vpstttQuota ? this.vpstttQuota.run(call) : call()));
       encoded = response.data?.[0]?.b64_json ?? undefined;
     } catch (error) {
       throw this.normalizeError(error);
