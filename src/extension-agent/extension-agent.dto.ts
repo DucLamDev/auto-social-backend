@@ -14,9 +14,11 @@ export class ClaimExtensionTaskDto {
   @MaxLength(2048, { each: true })
   excludeOrigins?: string[];
 
+  // Every flow the extension ships: the limit follows the list, so a new flow never
+  // makes the newest extension's claims fail (1.16.0 sent 33 engines to a limit of 30).
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(30)
+  @ArrayMaxSize(EXTENSION_ENGINES.length)
   @IsIn(EXTENSION_ENGINES, { each: true })
   supportedEngines?: ExtensionEngine[];
 }
