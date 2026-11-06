@@ -1119,16 +1119,16 @@ describe('AiContentService quality-checked generation', () => {
       const leaked = 'Nội dung gắn với thương hiệu VPS vpsttt: chưa xác nhận hỗ trợ IPv6. Triển khai VPS NVMe trong 60 giây. #vps';
       const create = jest.fn().mockResolvedValueOnce(variant(leaked)).mockResolvedValueOnce(variant(shortBody));
       const vpsttt = jest.fn()
-        .mockResolvedValueOnce(opusReview({ score: 5, issues: ['Câu "Nội dung gắn với thương hiệu…" lộ chỉ dẫn nội bộ: đổi thành "Mình làm ở VPSTTT."'] }))
+        .mockResolvedValueOnce(opusReview({ score: 5, issues: ['Câu "Nội dung gắn với thương hiệu…" lộ chỉ dẫn nội bộ: xoá câu này.'] }))
         .mockResolvedValueOnce(opusReview());
       const { service, created } = setup(create, { approve: vpsttt, config: { AI_REVIEWER: '' } });
 
       await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
 
-      // The writer's rules forbid copying the brief and ask for a natural disclosure.
+      // The writer's rules forbid copying the brief; Bluesky posts come from the brand's account, so no disclosure.
       expect(request(create, 0).instructions).toContain('never quote, copy or paraphrase them into the post');
-      expect(request(create, 0).instructions).toContain('Mình làm ở VPSTTT, bên cung cấp VPS và proxy');
-      expect(request(create, 1).input).toContain('lộ chỉ dẫn nội bộ: đổi thành "Mình làm ở VPSTTT."');
+      expect(request(create, 0).instructions).toContain('Never add an "I work at …" or "Mình làm ở …" sentence');
+      expect(request(create, 1).input).toContain('lộ chỉ dẫn nội bộ: xoá câu này.');
       expect(vpsttt).toHaveBeenCalledTimes(2);
       expect(stored(created[0]!)).toMatchObject({ body: shortBody, recommended: true, aiApproval: { status: 'approved', score: 8 } });
     });

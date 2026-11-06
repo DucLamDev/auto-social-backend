@@ -1,4 +1,5 @@
 import { platformContract } from '../platforms/platform-contract';
+import { approvalInstructions } from './content-approval';
 import {
   clampReview, ContentReview, deterministicIssues, draftRank, missingSafetyFields, qualityInstructions, reviewInstructions, reviewJsonSchema,
   reviewPassed, ReviewSchema, reviewSummary, reviewVerdict, rewriteFeedback, safetyProblems, scoreFromReason,
@@ -190,8 +191,19 @@ describe('content quality checks', () => {
     expect(writer).toContain('never quote, copy or paraphrase them into the post');
     expect(writer).toContain('do not mention it at all, not even to say it is unconfirmed');
     expect(writer).toContain('Never put notes to the operator in the post');
-    expect(writer).toContain('"Disclosure: I work at VPSTTT, a VPS and proxy provider');
-    expect(qualityInstructions(platformContract('bluesky', { sourceText: VI }))).toContain('"Mình làm ở VPSTTT, bên cung cấp VPS và proxy');
     expect(reviewInstructions(platformContract('bluesky'))).toContain('Leaked internal text');
+  });
+
+  it('asks for a disclosure only inside a product mention on forums, never on the brand\'s own social account', () => {
+    const forum = platformContract('server-fault');
+    const social = platformContract('bluesky', { sourceText: VI });
+    // No fixed example sentence: drafts copied it word for word.
+    expect(qualityInstructions(forum)).toContain('only when the post names or recommends the brand or its product, say that you work there inside that same sentence');
+    expect(qualityInstructions(forum)).not.toMatch(/I work at VPSTTT|Mình làm ở VPSTTT|Layout/);
+    expect(qualityInstructions(social)).toContain('posts go out from the brand\'s own account');
+    expect(qualityInstructions(social)).toContain('one hook line; then the body as one short paragraph or 2 to 4 short bullets');
+    expect(reviewInstructions(social)).toContain('any other disclosure is unnecessary and reads oddly');
+    expect(reviewInstructions(forum)).toContain('glued to an unrelated tip or caveat');
+    expect(approvalInstructions(social)).toContain('Refuse a post with an "I work at …" or "Mình làm ở …" sentence');
   });
 });

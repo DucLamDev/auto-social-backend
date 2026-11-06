@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import type { PlatformContract } from '../platforms/platform-contract';
+import { peerAudience, socialFeed, type PlatformContract } from '../platforms/platform-contract';
 import { AI_PROVIDER_LABELS, isAiProvider, type AiProvider } from './ai-provider';
 
 /**
@@ -178,11 +178,14 @@ export function approvalInstructions(contract: PlatformContract): string {
     `You receive the post exactly as readers will see it on ${contract.name}, its image description if it has one, the brief, the brand facts, the destination rules and the last review by the editor. The review is context, not a verdict: judge the text yourself.`,
     'Approve only when every point holds:',
     `- Quality: ready to publish as is on ${contract.name}: clear, specific, written in ${language}, within the destination rules; a reader would not find it generic, confusing or unfinished.`,
-    '- Natural, no seeding: it does not pretend to be an unaffiliated customer or a neutral user while promoting the brand; no fake or invented testimonials; no forced or repeated brand mentions; no over-praise; no stacked links or calls to action; no advertising tone in a technical community or forum; no disparaging competitors; when it promotes the brand in a forum or community it says the author is affiliated. One short, natural first-person disclosure (for example "Mình làm ở VPSTTT, bên cung cấp VPS và proxy.") is what you want, not a problem.',
+    '- Natural, no seeding: it does not pretend to be an unaffiliated customer or a neutral user while promoting the brand; no fake or invented testimonials; no forced or repeated brand mentions; no over-praise; no stacked links or calls to action; no advertising tone in a technical community or forum; no disparaging competitors; when it promotes the brand in a forum or community it says the author is affiliated.',
+    peerAudience(contract)
+      ? '- Disclosure: when the post names or recommends the brand or its product, the author says they work there inside that same sentence; that is what you want, not a problem. Refuse a disclosure standing as its own sentence, glued to an unrelated tip or caveat, repeated, or present when the post never mentions the brand, and ask to fold it into the product sentence or remove it.'
+      : `- Disclosure: ${contract.name} posts go out from the brand's own account, so readers already know who is speaking. Refuse a post with an "I work at …" or "Mình làm ở …" sentence or any other disclosure, and ask to remove it.`,
     '- Clean: no leaked internal text. Refuse a post that mentions a brief, a campaign, instructions, "this post/content", what is not confirmed, or carries a note to the operator ("before posting add…"), and a disclosure written as a stiff label ("brand-related content", "this post is associated with the brand").',
     '- Factual: every statement about the brand, its products, prices, performance, customers or offers comes from the brief or the brand facts. No guarantee they do not back, such as cheapest, 100% uptime, unlimited, never blocked or undetectable.',
     '- Safe for the company: nothing explains how to use proxies or VPS to break laws or website terms (evading bans or blocks, scraping against terms of service, spam, mass account creation, fraud); no sensitive political, legal, religious or offensive content; nothing that would embarrass the company if a reader took a screenshot. An image description must fit the post and show no real people, logos or text.',
-    `- Fits the community: tone, format and purpose suit ${contract.name} and its members.`,
+    `- Fits the community: tone, format and purpose suit ${contract.name} and its members.${socialFeed(contract) ? ' A short social post reads as one hook line, one short paragraph or 2 to 4 bullets, and exactly one closing line; scattered one-line paragraphs or several closing lines lower the score and are a reason.' : ''}`,
     'Return:',
     '- approved: true only when every point above holds.',
     '- score: how ready to publish the post is, from 1 to 10 (8 or more: publish as is).',

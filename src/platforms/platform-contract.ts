@@ -82,6 +82,23 @@ const GROUP_DEFAULT_FORMAT: Record<PlatformGroupKey, TextFormat> = {
   EVENT: 'plain',
 };
 
+/**
+ * Forums, communities, developer sites and maker communities: the post goes out
+ * under a member's name among peers, so recommending the brand's product means
+ * saying the author works there. Social feeds, blogs, media and events publish
+ * from the brand's own account, where readers already know who is speaking.
+ */
+const PEER_GROUPS: ReadonlySet<PlatformGroupKey> = new Set(['FORUM', 'COMMUNITY', 'DEVELOPER', 'COMMERCE']);
+
+export function peerAudience(contract: Pick<PlatformContract, 'slug'>): boolean {
+  return PEER_GROUPS.has(PLATFORM_CATALOG.find((platform) => platform.slug === contract.slug)?.groupKey ?? 'SOCIAL');
+}
+
+/** Short social feeds, where the layout rule for short posts applies. */
+export function socialFeed(contract: Pick<PlatformContract, 'slug'>): boolean {
+  return (PLATFORM_CATALOG.find((platform) => platform.slug === contract.slug)?.groupKey ?? 'SOCIAL') === 'SOCIAL';
+}
+
 export interface ContractOptions {
   /** Extension engine actually used by the account, when known. */
   engine?: ExtensionEngine;

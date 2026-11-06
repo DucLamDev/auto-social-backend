@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { countChars, detectLanguage, PlatformContract } from '../platforms/platform-contract';
+import { countChars, detectLanguage, PlatformContract, peerAudience, socialFeed } from '../platforms/platform-contract';
 import { publishedLength } from '../platforms/post-text';
 import { BRAND_RISKS, BRAND_RISK_LABELS_VI, brandRiskAcceptable, MAX_APPROVAL_REASONS, normalizeBrandRisk, type AiApproval, type BrandRisk } from './content-approval';
 
@@ -176,8 +176,20 @@ const SAFETY_REVIEW_RULES = [
   'seeding: clumsy seeding (astroturfing) is promotion a community would call out as a disguised advertisement. Set seeding.detected to true when the draft: pretends to be an unaffiliated customer or a neutral user while promoting the brand; contains fake or invented testimonials, reviews or "a friend tried it" stories; repeats the brand or product name, or forces it in where it does not help the reader; over-praises (superlatives, no downside or trade-off); stacks links or calls to action; uses an advertising tone in a technical community or forum; disparages competitors, by name or by implication; promotes the brand in a forum or community without saying the author is affiliated (the brand facts may give the disclosure line). One relevant, neutral mention of the brand, disclosed where needed, is not seeding. seeding.notes lists at most three short notes in Vietnamese that point to the sentence and say how to fix it; empty when nothing is detected.',
   'brandRisk: the risk for the company publishing the post (the brand in the brand facts: VPSTTT, a VPS and proxy provider) if it went out as is. Risks: false or exaggerated claims about its products; guarantees the brief and the brand facts do not back (cheapest, 100% uptime, unlimited, never blocked, undetectable, guaranteed results); explaining how to use proxies or VPS to break laws or website terms (evading bans or blocks, scraping against terms of service, spam, mass account creation, fraud); sensitive political, legal, religious or offensive content; anything that would embarrass the company if a reader took a screenshot. Rate it none (nothing), low (a small wording issue a reader would hardly notice), medium (must change before publishing) or high (must never be published). riskNotes lists at most three short notes in Vietnamese saying what to change; empty for none.',
   'A draft with seeding detected or a medium or high brandRisk fails whatever its score: keep score for the writing quality and report these problems in their own fields.',
-  'Leaked internal text: a sentence that mentions a brief, a campaign, instructions, "this post/content", what is not confirmed, or a note to the operator ("before posting add…") would embarrass the company if published. Score such a draft 6 at most and name the sentence in issues with a natural replacement. A brand disclosure must be one natural first-person sentence (for example "Mình làm ở VPSTTT, bên cung cấp VPS và proxy."); a stiff label such as "brand-related content" or "this post is associated with the brand" is an issue, a natural one is not.',
+  'Leaked internal text: a sentence that mentions a brief, a campaign, instructions, "this post/content", what is not confirmed, or a note to the operator ("before posting add…") would embarrass the company if published. Score such a draft 6 at most and name the sentence in issues with a natural replacement. A disclosure written as a stiff label such as "brand-related content" or "this post is associated with the brand" is an issue.',
 ];
+
+/** How the editor judges a disclosure and the layout on this destination (see the writer's rules). */
+function destinationReviewRules(contract: PlatformContract): string[] {
+  return [
+    peerAudience(contract)
+      ? 'Disclosure: when the draft names or recommends the brand or its product, the author says they work there inside that same sentence; that is right, not a problem. A disclosure standing as its own sentence, glued to an unrelated tip or caveat, repeated, or present when the draft never mentions the brand reads oddly: it lowers naturalness and is an issue asking to fold it into the product sentence or remove it.'
+      : `Disclosure: ${contract.name} posts go out from the brand's own account. A sentence such as "I work at …" or "Mình làm ở …" or any other disclosure is unnecessary and reads oddly: it lowers naturalness and is an issue asking to remove it.`,
+    socialFeed(contract)
+      ? 'Layout: a short social post is one hook line, a body of one short paragraph or 2 to 4 bullets, and exactly one closing line (a takeaway or one question). Scattered one-line paragraphs, a caveat on its own line away from the point it qualifies, or more than one closing line lower platformFit and are an issue.'
+      : '',
+  ];
+}
 
 /**
  * The editor's instructions. With the draft's published length, the editor
@@ -205,7 +217,8 @@ export function reviewInstructions(contract: PlatformContract, publishedLength?:
     'unsupportedClaims lists only statements about the brand, its products, prices, customers, performance, locations or offers that add facts the brief and the brand facts do not give. Whatever the brief or the brand facts state, even in a few words, is supported: if the brief says the brand offers VPS and proxies, "the brand has VPS and proxies" is supported. General, widely known technical knowledge is not an unsupported claim. Never list a statement you consider supported or partly supported.',
     'issues lists at most five short, actionable fixes written in Vietnamese for the operator, most important first: only changes that would raise the score, not matters of taste. Fixes must not contradict each other. Leave it empty for a score of 9 or 10. Do not rewrite the post.',
     ...SAFETY_REVIEW_RULES,
-    previous && (fixes.length || previous.score !== null)
+    ...destinationReviewRules(contract),
+    previous &&(fixes.length || previous.score !== null)
       ? [
           `This draft revises an earlier version${previous.score !== null ? ` that you scored ${previous.score}/10` : ''}.${fixes.length ? ` The operator asked the writer to fix:\n${fixes.map((fix) => `- ${fix}`).join('\n')}` : ''}`,
           `Check those fixes first. When they are made and nothing else got worse, the score must be ${previous.score !== null ? `higher than ${previous.score}` : 'raised accordingly'}. Never ask to undo a requested fix or for its opposite, and raise a new issue only for a real problem a reader would notice.`,
@@ -229,15 +242,20 @@ export function qualityInstructions(contract: PlatformContract, engine?: string)
       : '',
     `- Naturalness: an experienced practitioner talking to peers, varied sentence length, no filler. Never use: ${CLICHES.map((phrase) => `"${phrase}"`).join(', ')}.`,
     ...WRITER_HYGIENE_RULES,
-    `- Disclosure: when the post mentions the brand in a forum, community or developer site, add exactly one short, natural first-person sentence next to that mention saying who you are, for example ${DISCLOSURE_EXAMPLES[contract.language]} (use the brand facts' disclosure line instead when one is given). Never write a label or legal-sounding line such as "brand-related content", "this post is associated with", "this post is for …", "disclosure of brand relationship".`,
+    peerAudience(contract)
+      ? `- Disclosure: only when the post names or recommends the brand or its product, say that you work there inside that same sentence, as a short clause in your own words (keep the meaning of the brand facts' disclosure line when one is given). Never a disclosure sentence or paragraph on its own, never glued to an unrelated tip or caveat, at most once. A post that does not mention the brand has no disclosure. ${LABEL_BAN}`
+      : `- Disclosure: ${contract.name} posts go out from the brand's own account, so readers already know who is speaking. Never add an "I work at …" or "Mình làm ở …" sentence or any other disclosure, and ignore the brand facts' disclosure line here.`,
+    socialFeed(contract) ? SOCIAL_LAYOUT_RULE : '',
   ].filter(Boolean).join('\n');
 }
 
-/** A natural first-person disclosure, per post language (the brand facts' own line wins when set). */
-const DISCLOSURE_EXAMPLES: Record<PlatformContract['language'], string> = {
-  vi: '"Mình làm ở VPSTTT, bên cung cấp VPS và proxy, nên hay gặp đúng lỗi này."',
-  en: '"Disclosure: I work at VPSTTT, a VPS and proxy provider, so we run into this a lot."',
-};
+const LABEL_BAN = 'Never write a label or legal-sounding line such as "brand-related content", "this post is associated with", "this post is for …", "disclosure of brand relationship".';
+
+/**
+ * Short social posts read best as hook, body, one ending. Drafts that ended with a
+ * caveat, a takeaway and a question on separate lines read as scattered notes.
+ */
+const SOCIAL_LAYOUT_RULE = '- Layout (this replaces any looser layout given above): one hook line; then the body as one short paragraph or 2 to 4 short bullets, keeping each caveat inside the bullet or sentence it belongs to; then exactly one closing line, either a takeaway or one question. No other one-line paragraphs, no second closing line.';
 
 /**
  * The brief and the brand facts carry instructions for the writer ("disclose the brand",
