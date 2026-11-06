@@ -1,6 +1,7 @@
 import { EXTENSION_RECIPES } from '../connectors/extension/extension-delivery';
 import { PrismaService } from '../database/prisma.service';
 import { ContentVariantsService } from './content-variants.service';
+import type { VariantApprovalService } from './variant-approval.service';
 import { previewRoute, variantPreview, type PreviewRoute } from './variant-preview';
 
 const markdown = '## Why\n\nA **fast** VPS with `nvme` disks.\n\n- 2 vCPU\n- 4 GB RAM';
@@ -95,7 +96,7 @@ describe('ContentVariantsService.preview', () => {
       contentVariant: { findFirstOrThrow: jest.fn().mockResolvedValue({ title: 'Stored', body: 'Stored body', hashtags: ['vps'], platformId: 'platform-1', platform: { slug: 'nginx-community' }, content: { canonicalUrl: null } }) },
       platformAccount: { findFirst: jest.fn().mockResolvedValue(account) },
     };
-    return { prisma, service: new ContentVariantsService(prisma as unknown as PrismaService) };
+    return { prisma, service: new ContentVariantsService(prisma as unknown as PrismaService, { enabled: () => false } as unknown as VariantApprovalService) };
   }
 
   it('previews unsaved edits of an owned variant and reads the route only from the same owner and platform', async () => {

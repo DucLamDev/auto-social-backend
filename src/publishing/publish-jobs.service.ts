@@ -7,6 +7,7 @@ import {
   PublishJobStatus,
   VariantStatus,
 } from '@prisma/client';
+import { AiContentService } from '../ai/ai-content.service';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
 import { stableIdempotencyKey } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
@@ -55,6 +56,7 @@ export class PublishJobsService {
     private readonly prisma: PrismaService,
     private readonly queue: PublishQueueService,
     private readonly campaignStatus: CampaignStatusService,
+    private readonly ai: AiContentService,
   ) {}
 
   async list(ownerId: string, query: ListPublishJobsQueryDto) {
@@ -192,6 +194,11 @@ export class PublishJobsService {
    * scheduling it cannot duplicate a post.
    */
   async approveContent(ownerId: string, id: string, dto: ApproveContentDto) {
+    // This creates an approved version straight from (possibly edited) text,
+    // which the final AI approver never read.
+    if (this.ai.approvalEnabled()) {
+      throw new BadRequestException('AI duyệt cuối đang bật: bài phải được AI duyệt trước khi đăng. Sửa và duyệt bài ở "Content đợi duyệt".');
+    }
     const job = await this.prisma.publishJob.findFirstOrThrow({
       where: { id, target: { campaign: { ownerId } } },
       include: {

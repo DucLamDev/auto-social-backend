@@ -2,14 +2,15 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import { MediaType, Prisma, VariantStatus } from '@prisma/client';
 import { AiContentService } from '../ai/ai-content.service';
 import { AiProvider } from '../ai/ai-provider';
+import { approvalHash, type AiApproval } from '../ai/content-approval';
 import { scoreFromReason } from '../ai/content-quality';
 import { imagePlanFor } from '../campaigns/image-plan';
 import { ApplicationException } from '../common/exceptions/application.exception';
 import { repairEscapedNewlines } from '../common/utils/escaped-text';
 import { PrismaService } from '../database/prisma.service';
+import { rewriteRunning } from './rewrite-state';
+import { VariantApprovalService } from './variant-approval.service';
 
-/** A rewrite still "generating" after this long is treated as lost (API restart). */
-const GENERATING_STALE_AFTER_MS = 10 * 60 * 1000;
 export const MAX_REWRITE_INSTRUCTION_LENGTH = 2_000;
 /** "Sửa theo khuyến nghị": how many review points one request may carry, and how long each may be. */
 export const MAX_REWRITE_NOTES = 20;
@@ -17,13 +18,6 @@ export const MAX_REWRITE_NOTE_LENGTH = 1_000;
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-/** A rewrite is running (and not left over from a restart): the draft's text is about to change. */
-export function rewriteRunning(aiRevision: unknown): boolean {
-  const revision = record(aiRevision);
-  const startedAt = typeof revision.startedAt === 'string' ? Date.parse(revision.startedAt) : NaN;
-  return revision.status === 'generating' && Date.now() - startedAt < GENERATING_STALE_AFTER_MS;
 }
 
 /**
@@ -36,7 +30,11 @@ export function rewriteRunning(aiRevision: unknown): boolean {
 export class VariantRewriteService {
   private readonly logger = new Logger(VariantRewriteService.name);
 
-  constructor(private readonly prisma: PrismaService, private readonly ai: AiContentService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ai: AiContentService,
+    private readonly approvals: VariantApprovalService,
+  ) {}
 
   async start(ownerId: string, variantId: string, input: { instruction?: string; notes?: string[]; aiProvider?: AiProvider }) {
     const instruction = input.instruction?.trim() ?? '';
@@ -99,6 +97,13 @@ export class VariantRewriteService {
             : { notes: variant.recommended ? null : variant.reason }),
         },
       }, provider);
+      const post = { title: result.title, body: repairEscapedNewlines(result.body), hashtags: result.hashtags };
+      // The final approver's verdict comes with the new text. Without one for exactly
+      // the stored text (approver off, or the body repaired after it read it) the
+      // approver runs again when it is on; else the old verdict stays, no longer current.
+      const verdict = result.approval?.textHash === approvalHash(post) ? result.approval : undefined;
+      const rerun = !verdict && this.approvals.enabled() ? await this.approvals.runningApproval(post) : undefined;
+      const approval: AiApproval | undefined = verdict ?? rerun;
       const saved = await this.prisma.contentVariant.updateMany({
         // Unchanged text only: an edit saved by the operator meanwhile is kept.
         where: {
@@ -106,20 +111,23 @@ export class VariantRewriteService {
           aiRevision: { path: ['startedAt'], equals: revision.startedAt as Prisma.InputJsonValue },
         },
         data: {
-          title: result.title,
-          body: repairEscapedNewlines(result.body),
+          title: post.title,
+          body: post.body,
           summary: result.summary,
-          hashtags: result.hashtags,
+          hashtags: post.hashtags,
           cta: result.cta,
           recommended: result.recommended,
           reason: result.reason,
           // New text needs a new decision: an approved draft goes back to waiting.
           ...(variant.status === VariantStatus.APPROVED ? { status: VariantStatus.GENERATED } : {}),
           aiRevision: { ...revision, status: 'done', finishedAt: new Date().toISOString() },
+          ...(approval ? { aiApproval: approval as unknown as Prisma.InputJsonObject } : {}),
         },
       });
       if (!saved.count) {
         await this.finish(variant.id, revision, 'Bài đã được duyệt hoặc sửa tay trong lúc AI viết lại; giữ nguyên bản hiện tại.');
+      } else if (rerun) {
+        this.approvals.launch(ownerId, variant.id, rerun);
       }
     } catch (error) {
       const message = error instanceof ApplicationException || error instanceof NotFoundException

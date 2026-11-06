@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { AI_PROVIDER_IDS, AiProvider, isAiProvider } from '../ai/ai-provider';
+import { aiRoleSetting, DEFAULT_AI_APPROVER, DEFAULT_AI_REVIEWER, parseAiRole } from '../ai/content-approval';
 
 export type NodeEnvironment = 'development' | 'test' | 'production';
 
@@ -31,6 +32,11 @@ export interface Environment {
   VPSTTT_AI_TIMEOUT_MS: number;
   VPSTTT_AI_MAX_CONCURRENCY: number;
   VPSTTT_AI_RPM: number;
+  /** `provider:model` of the reviewer, e.g. `vpsttt:claude:sonnet`. */
+  AI_REVIEWER: string;
+  /** `provider:model` of the final approver, e.g. `vpsttt:claude:opus`. */
+  AI_APPROVER: string;
+  AI_APPROVAL_ENABLED: boolean;
   MCP_ENABLED: boolean;
   MCP_ALLOW_PUBLISH: boolean;
   MCP_RATE_LIMIT_PER_MINUTE: number;
@@ -104,6 +110,12 @@ function parseBoolean(value: unknown, key: string, fallback: boolean): boolean {
     if (normalized === 'false') return false;
   }
   throw new Error(`${key} must be true or false`);
+}
+
+/** An AI role setting (`provider:model`), normalized; empty means the default. */
+function parseAiRoleSetting(value: unknown, key: string, fallback: string): string {
+  if (value !== undefined && typeof value !== 'string') throw new Error(`${key} must look like provider:model`);
+  return aiRoleSetting(parseAiRole(value?.trim() || fallback, key));
 }
 
 function isPrivateOrLocalHost(hostname: string): boolean {
@@ -209,6 +221,11 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
   if (vpstttAiMaxConcurrency > 32) throw new Error('VPSTTT_AI_MAX_CONCURRENCY must not exceed 32');
   const vpstttAiRpm = parsePositiveInteger(raw.VPSTTT_AI_RPM, 'VPSTTT_AI_RPM', 10);
   if (vpstttAiRpm > 600) throw new Error('VPSTTT_AI_RPM must not exceed 600');
+  // The writer is chosen per campaign; the reviewer and the final approver are
+  // set only here, so a request cannot pick who judges its drafts.
+  const aiReviewer = parseAiRoleSetting(raw.AI_REVIEWER, 'AI_REVIEWER', DEFAULT_AI_REVIEWER);
+  const aiApprover = parseAiRoleSetting(raw.AI_APPROVER, 'AI_APPROVER', DEFAULT_AI_APPROVER);
+  const aiApprovalEnabled = parseBoolean(raw.AI_APPROVAL_ENABLED, 'AI_APPROVAL_ENABLED', true);
   // The MCP endpoint for AI agents is off unless explicitly enabled; letting an
   // agent approve (= really publish) campaigns is a separate opt-in.
   const mcpEnabled = parseBoolean(raw.MCP_ENABLED, 'MCP_ENABLED', false);
@@ -294,6 +311,9 @@ export function validateEnvironment(raw: Record<string, unknown>): Record<string
     VPSTTT_AI_TIMEOUT_MS: vpstttAiTimeoutMs,
     VPSTTT_AI_MAX_CONCURRENCY: vpstttAiMaxConcurrency,
     VPSTTT_AI_RPM: vpstttAiRpm,
+    AI_REVIEWER: aiReviewer,
+    AI_APPROVER: aiApprover,
+    AI_APPROVAL_ENABLED: aiApprovalEnabled,
     MCP_ENABLED: mcpEnabled,
     MCP_ALLOW_PUBLISH: mcpAllowPublish,
     MCP_RATE_LIMIT_PER_MINUTE: mcpRateLimitPerMinute,

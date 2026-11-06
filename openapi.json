@@ -3101,6 +3101,103 @@
         ]
       }
     },
+    "/api/v1/ai/roles": {
+      "get": {
+        "operationId": "Ai_roles",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/AiRolesContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "AI chấm điểm và AI duyệt cuối đang cấu hình trên máy chủ (không có key).",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
     "/api/v1/ai/campaign-suggestions": {
       "post": {
         "operationId": "Ai_suggestCampaigns",
@@ -4361,6 +4458,87 @@
             }
           }
         },
+        "responses": {
+          "202": {
+            "description": ""
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "content-variants"
+        ]
+      }
+    },
+    "/api/v1/content-variants/{id}/ai-approval": {
+      "post": {
+        "operationId": "ContentVariants_requestAiApproval",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "202": {
             "description": ""
@@ -12074,6 +12252,16 @@
             "nullable": true,
             "description": "Last \"rewrite with AI\" request: status generating | done | failed, instruction, notes (review points chosen by the operator, when sent), startedAt, finishedAt, error."
           },
+          "aiApproval": {
+            "type": "object",
+            "additionalProperties": true,
+            "nullable": true,
+            "description": "Final AI approver verdict: status running | approved | rejected | failed, approver (provider:model), approverLabel, textHash (the text it read), score, risk, seeding, reasons, startedAt, finishedAt, error. Null when the variant was never sent to the approver."
+          },
+          "aiApprovalCurrent": {
+            "type": "boolean",
+            "description": "True when the stored aiApproval was given on the current title, body and hashtags; false after an edit or when there is none."
+          },
           "status": {
             "type": "string",
             "enum": [
@@ -12174,6 +12362,70 @@
           "model",
           "configured",
           "isDefault"
+        ]
+      },
+      "AiRoleContractDto": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "openai",
+              "deepseek",
+              "gemini",
+              "vpsttt"
+            ],
+            "example": "vpsttt"
+          },
+          "model": {
+            "type": "string",
+            "example": "claude:opus",
+            "description": "Model used for this role (the provider default when not set)."
+          },
+          "label": {
+            "type": "string",
+            "example": "Claude Opus"
+          },
+          "configured": {
+            "type": "boolean",
+            "description": "False when the provider has no key: the reviewer then falls back to the writer, approvals fail."
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "label",
+          "configured"
+        ]
+      },
+      "AiRolesContractDto": {
+        "type": "object",
+        "properties": {
+          "reviewer": {
+            "description": "Scores every draft and checks seeding and risk for the company (AI_REVIEWER).",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiRoleContractDto"
+              }
+            ]
+          },
+          "approver": {
+            "description": "Final gate on the finished draft (AI_APPROVER).",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AiRoleContractDto"
+              }
+            ]
+          },
+          "approvalEnabled": {
+            "type": "boolean",
+            "description": "AI_APPROVAL_ENABLED: whether drafts go through the final approver."
+          }
+        },
+        "required": [
+          "reviewer",
+          "approver",
+          "approvalEnabled"
         ]
       },
       "CampaignSuggestionsDto": {
@@ -12989,6 +13241,28 @@
           "message"
         ]
       },
+      "UnapprovedVariantContractDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "platform": {
+            "type": "string",
+            "description": "Platform display name."
+          },
+          "message": {
+            "type": "string",
+            "description": "Vietnamese reason from the final AI approver gate shown to the reviewer."
+          }
+        },
+        "required": [
+          "id",
+          "platform",
+          "message"
+        ]
+      },
       "AutomatedCampaignContractDto": {
         "type": "object",
         "properties": {
@@ -13029,6 +13303,13 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/OverLimitVariantContractDto"
+            }
+          },
+          "unapprovedVariants": {
+            "description": "Review decisions only: drafts left waiting because the final AI approver has not approved their current text.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnapprovedVariantContractDto"
             }
           }
         },

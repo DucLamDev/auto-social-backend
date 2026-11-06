@@ -93,7 +93,9 @@ lượt; backend đưa khuôn JSON vào lời dặn hệ thống, cắt phần n
 các provider khác. Mỗi lượt chạy một phiên Claude/Codex nên chậm: backend giới hạn `VPSTTT_AI_MAX_CONCURRENCY` lượt cùng
 lúc và rải đều `VPSTTT_AI_RPM` lượt mỗi phút (chừa 1 lượt), tính chung cho viết bài và tạo ảnh vì IDE đếm chung; đặt hai số
 này không vượt hạn mức của key (mặc định của IDE: 2 và 10). Bị từ chối vì hạn mức thì backend chờ 15, 30, 60 giây rồi thử lại. Một
-bài cho mỗi nền tảng cần 2–7 lượt (viết, chấm, viết lại tối đa 2 lần khi chưa đạt, thêm 1 lượt rút gọn khi còn quá dài; giữ bản điểm cao nhất), nên với 10
+bài cho mỗi nền tảng cần 3–9 lượt (viết, chấm, viết lại tối đa 2 lần khi chưa đạt, thêm 1 lượt rút gọn khi còn quá dài, 1 lượt mô tả
+ảnh và 1 lượt AI duyệt cuối; giữ bản điểm cao nhất). AI chấm và AI duyệt cuối mặc định cũng chạy trên VPSTTT AI nên dùng chung hạn
+mức này, kể cả khi AI viết là nhà cung cấp khác. Với 10
 lượt/phút nên chọn khoảng 6–8 nền tảng mỗi lần tạo tự động. Model: `claude:haiku` (nhanh), `claude:sonnet`, `claude:opus`, `gpt:`.
 
 **Giới hạn ký tự (từ backend 1.17.0).** Một hàm đếm chung (`src/platforms/post-length.ts`) được dùng ở mọi chỗ:
@@ -110,6 +112,37 @@ khi AI viết, khi duyệt, khi sửa, khi giao bài cho tiện ích và trong c
   `overLimitVariants`, các bài khác vẫn đăng.
 - Tiện ích không bao giờ nhận bài quá dài: job chuyển "Tiện ích cần bạn" (`EXTENSION_CONTENT_TOO_LONG`), các bài sau vẫn
   chạy. Rút gọn rồi bấm **Giao lại cho tiện ích**.
+
+**Quy trình 3 vai AI (từ backend 1.24.0).** Mỗi bài qua ba AI độc lập, đều có thể là model của key VPSTTT AI
+(`gpt:`, `claude:haiku`, `claude:sonnet`, `claude:opus`):
+
+| Vai | Mặc định | Làm gì |
+|---|---|---|
+| **AI viết** | AI chọn ở hộp tạo bài (`AI_DEFAULT_PROVIDER`; với VPSTTT AI là `VPSTTT_AI_MODEL`, đặt `gpt:` để GPT viết) | Viết bài, mô tả ảnh, viết lại theo nhận xét |
+| **AI chấm** | `AI_REVIEWER=vpsttt:claude:sonnet` | Chấm điểm và nhận xét; bắt **seeding vụng** và **rủi ro cho công ty** |
+| **AI duyệt cuối** | `AI_APPROVER=vpsttt:claude:opus` | Đọc bản sẽ đăng, quyết định cho đăng hay không |
+
+- **AI chấm đánh trượt bài có seeding** dù điểm cao:
+  - giả làm khách hàng hay người ngoài, khen quá;
+  - nhắc sản phẩm gượng ép, nhiều link / CTA;
+  - giọng quảng cáo trong cộng đồng kỹ thuật, hạ thấp đối thủ;
+  - quảng bá trong cộng đồng mà không công khai.
+- **AI chấm cũng đánh trượt bài có rủi ro `medium` / `high`:**
+  - nói quá hoặc sai về sản phẩm, hứa hẹn không căn cứ;
+  - hướng dẫn dùng proxy / VPS lách luật hay vi phạm điều khoản;
+  - nội dung nhạy cảm.
+- Nhận xét được gửi lại cho AI viết để sửa. AI chấm lỗi thì bài không được coi là đạt.
+- **Cổng duyệt cuối** (`AI_APPROVAL_ENABLED=true`):
+  - Bài chỉ duyệt và đăng được khi AI duyệt cuối đã duyệt **đúng nội dung hiện tại**. Kết quả lưu ở
+    `content_variants.aiApproval`, kèm dấu nội dung.
+  - Mọi lối duyệt đều kiểm: từng bài, cả lượt, nội dung có sẵn, Studio, MCP, và worker đăng.
+  - Bài bị từ chối thì không ai duyệt được. Sửa tay hoặc viết lại bằng AI thì máy chủ tự duyệt lại; bấm
+    `POST /content-variants/:id/ai-approval` để chạy lại khi lỗi.
+  - Bài đã duyệt trước khi có tính năng này vẫn đăng như cũ.
+- **Giới hạn:**
+  - AI chat VPSTTT chỉ nhận chữ, nên AI chấm / duyệt đọc **mô tả ảnh và alt text**, không xem được ảnh.
+  - Key VPSTTT AI phải được cho dùng các model trên. Thiếu quyền thì bài báo "AI duyệt cuối chưa chạy được" và không đăng.
+  - `GET /ai/roles` trả 3 vai để giao diện hiện và cảnh báo khi AI viết trùng AI chấm / duyệt.
 
 **Chấm điểm và viết lại từng bài.** Người viết được dặn đúng thang chấm của biên tập AI:
 - mở bài giữ chân người đọc;

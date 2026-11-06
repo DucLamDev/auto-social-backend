@@ -1,7 +1,12 @@
 import { CampaignStatus, PublishJobStatus, VariantStatus } from '@prisma/client';
+import { approvalHash } from '../ai/content-approval';
 import { PrismaService } from '../database/prisma.service';
 import { PublishQueueService } from '../queue/publish-queue.service';
 import { CampaignsService } from './campaigns.service';
+import type { AiContentService } from '../ai/ai-content.service';
+
+/** Final AI approver off unless a test turns it on. */
+const approverOff = { approvalEnabled: () => false } as unknown as AiContentService;
 
 describe('CampaignsService', () => {
   it('returns publish progress derived from job states', async () => {
@@ -18,7 +23,7 @@ describe('CampaignsService', () => {
       ],
     }]);
     const prisma = { campaign: { findMany } } as unknown as PrismaService;
-    const service = new CampaignsService(prisma, {} as PublishQueueService);
+    const service = new CampaignsService(prisma, {} as PublishQueueService, approverOff);
 
     const result = await service.list('owner-1');
 
@@ -45,7 +50,7 @@ describe('CampaignsService', () => {
       },
       contentVariant: { findMany: variantFindMany },
     } as unknown as PrismaService;
-    const service = new CampaignsService(prisma, {} as PublishQueueService);
+    const service = new CampaignsService(prisma, {} as PublishQueueService, approverOff);
 
     await expect(service.create('owner-1', {
       name: 'Launch',
@@ -88,7 +93,7 @@ describe('CampaignsService', () => {
       },
     } as unknown as PrismaService;
     const enqueue = jest.fn().mockResolvedValue(undefined);
-    const service = new CampaignsService(prisma, { enqueue } as unknown as PublishQueueService);
+    const service = new CampaignsService(prisma, { enqueue } as unknown as PublishQueueService, approverOff);
 
     await service.publish('owner-1', 'campaign-1');
 
@@ -115,6 +120,7 @@ describe('CampaignsService', () => {
     const service = new CampaignsService(
       prisma,
       { enqueue } as unknown as PublishQueueService,
+      approverOff,
     );
 
     await expect(service.publish('owner-1', 'campaign-1')).rejects.toThrow(
@@ -137,7 +143,7 @@ describe('CampaignsService', () => {
         update,
       },
     } as unknown as PrismaService;
-    const service = new CampaignsService(prisma, {} as PublishQueueService);
+    const service = new CampaignsService(prisma, {} as PublishQueueService, approverOff);
 
     await expect(service.publish('owner-1', 'campaign-1'))
       .rejects.toThrow('at least one target with a publish job');
@@ -170,6 +176,7 @@ describe('CampaignsService', () => {
     const service = new CampaignsService(
       prisma,
       { enqueue: jest.fn().mockRejectedValue(enqueueError) } as unknown as PublishQueueService,
+      approverOff,
     );
 
     await expect(service.publish('owner-1', 'campaign-1')).rejects.toBe(enqueueError);
@@ -177,5 +184,68 @@ describe('CampaignsService', () => {
       where: { id: 'job-1', status: PublishJobStatus.QUEUED },
       data: { status: PublishJobStatus.SCHEDULED },
     });
+  });
+
+  describe('manual campaign from approved variants with the final AI approver on', () => {
+    const contentId = '11111111-1111-4111-8111-111111111111';
+    const accountId = '22222222-2222-4222-8222-222222222222';
+    const variantId = '33333333-3333-4333-8333-333333333333';
+    const post = { title: 'Tiêu đề', body: 'Bài về VPS', hashtags: ['vps'] };
+    const approverOn = { approvalEnabled: () => true } as unknown as AiContentService;
+
+    function setup(aiApproval: unknown, ai: AiContentService = approverOn) {
+      const campaignCreate = jest.fn().mockResolvedValue({ id: 'campaign-1' });
+      const transaction = {
+        campaign: { create: campaignCreate },
+        campaignTarget: { create: jest.fn().mockResolvedValue({ id: 'target-1' }) },
+        publishJob: { create: jest.fn().mockResolvedValue({}) },
+      };
+      const prisma = {
+        content: { findFirstOrThrow: jest.fn().mockResolvedValue({ id: contentId }) },
+        platformAccount: { findMany: jest.fn().mockResolvedValue([{ id: accountId, platformId: 'platform-1', platform: { slug: 'devto' } }]) },
+        contentVariant: { findMany: jest.fn().mockResolvedValue([{ id: variantId, platformId: 'platform-1', status: VariantStatus.APPROVED, ...post, aiApproval }]) },
+        campaign: { findFirstOrThrow: jest.fn().mockResolvedValue({ id: 'campaign-1', targets: [], automationRequest: null }) },
+        $transaction: jest.fn((callback: (client: typeof transaction) => unknown) => callback(transaction)),
+      } as unknown as PrismaService;
+      const service = new CampaignsService(prisma, {} as PublishQueueService, ai);
+      const create = () => service.create('owner-1', { name: 'Launch', contentId, targets: [{ platformAccountId: accountId, contentVariantId: variantId }] });
+      return { create, campaignCreate };
+    }
+    const verdict = (status: string, extra: Record<string, unknown> = {}) => ({ status, approver: 'vpsttt:claude:opus', approverLabel: 'Claude Opus', textHash: approvalHash(post), startedAt: new Date().toISOString(), ...extra });
+
+    it('allows a variant approved before the approver existed and one the approver passed', async () => {
+      const legacy = setup(null);
+      await expect(legacy.create()).resolves.toMatchObject({ id: 'campaign-1' });
+      expect(legacy.campaignCreate).toHaveBeenCalled();
+      await expect(setup(verdict('approved')).create()).resolves.toMatchObject({ id: 'campaign-1' });
+    });
+
+    it('refuses a variant whose stored verdict is not "yes" for its current text', async () => {
+      await expect(setup(verdict('rejected', { reasons: ['Seeding vụng'] })).create()).rejects.toThrow('AI duyệt cuối (Claude Opus) từ chối: Seeding vụng');
+      await expect(setup(verdict('failed', { error: 'Hết lượt.' })).create()).rejects.toThrow('AI duyệt cuối chưa chạy được: Hết lượt.');
+      await expect(setup(verdict('running')).create()).rejects.toThrow('AI duyệt cuối đang đọc bài');
+      const edited = setup(verdict('approved', { textHash: 'older-text' }));
+      await expect(edited.create()).rejects.toThrow('Bài đã sửa sau khi AI duyệt');
+      expect(edited.campaignCreate).not.toHaveBeenCalled();
+    });
+
+    it('does not check when the approver is off', async () => {
+      await expect(setup(verdict('rejected'), approverOff).create()).resolves.toMatchObject({ id: 'campaign-1' });
+    });
+  });
+
+  it('returns each target variant with whether its AI approval is for the current text', async () => {
+    const post = { title: null, body: 'Bài', hashtags: [] };
+    const prisma = {
+      campaign: { findFirstOrThrow: jest.fn().mockResolvedValue({
+        id: 'campaign-1', automationRequest: null,
+        targets: [
+          { id: 't1', contentVariant: { id: 'v1', ...post, aiApproval: { status: 'approved', textHash: approvalHash(post), startedAt: 'x' } } },
+          { id: 't2', contentVariant: { id: 'v2', ...post, aiApproval: null } },
+        ],
+      }) },
+    } as unknown as PrismaService;
+    const campaign = await new CampaignsService(prisma, {} as PublishQueueService, approverOff).get('owner-1', 'campaign-1');
+    expect(campaign.targets.map((target) => target.contentVariant.aiApprovalCurrent)).toEqual([true, false]);
   });
 });

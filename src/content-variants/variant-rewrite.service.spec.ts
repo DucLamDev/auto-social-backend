@@ -1,5 +1,7 @@
 import { VariantStatus } from '@prisma/client';
+import { approvalHash } from '../ai/content-approval';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
+import type { VariantApprovalService } from './variant-approval.service';
 import { VariantRewriteService } from './variant-rewrite.service';
 
 const updatedAt = new Date('2026-11-04T08:00:00.000Z');
@@ -10,11 +12,17 @@ const draft = (extra: Record<string, unknown> = {}) => ({
 });
 const revised = { platform: 'bluesky', title: null, body: 'Bản mới có số liệu', summary: null, hashtags: ['vps'], cta: null, recommended: true, reason: 'Hợp người đọc (AI chấm 8/10)', media: { type: 'none', altText: '' } };
 
-function setup(variant: unknown = draft(), reviseDraft = jest.fn().mockResolvedValue(revised)) {
+function setup(variant: unknown = draft(), reviseDraft = jest.fn().mockResolvedValue(revised), approverOn = false) {
   const prisma = { contentVariant: { findFirst: jest.fn().mockResolvedValue(variant), updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
   const ai = { resolveProvider: jest.fn((provider?: string) => provider ?? 'openai'), assertReady: jest.fn().mockResolvedValue(undefined), reviseDraft };
-  const service = new VariantRewriteService(prisma as never, ai as never);
-  return { service, prisma, ai, reviseDraft };
+  const rerun = { status: 'running', approver: 'vpsttt:claude:opus', approverLabel: 'Claude Opus', textHash: 'h', startedAt: '2026-11-06T10:00:00.000Z' };
+  const approvals = {
+    enabled: jest.fn(() => approverOn),
+    runningApproval: jest.fn().mockResolvedValue(rerun),
+    launch: jest.fn(),
+  };
+  const service = new VariantRewriteService(prisma as never, ai as never, approvals as unknown as VariantApprovalService);
+  return { service, prisma, ai, reviseDraft, approvals, rerun };
 }
 const settle = () => new Promise((resolve) => { setImmediate(resolve); });
 type UpdateCall = [{ where: Record<string, unknown>; data: Record<string, unknown> }];
@@ -100,6 +108,41 @@ describe('rewrite one draft with AI', () => {
     await expect(setup().service.start('owner-1', 'variant-1', { notes: [], instruction: 'Ngắn hơn' })).resolves.toEqual({ status: 'generating' });
     await expect(setup().service.start('owner-1', 'variant-1', { notes: Array.from({ length: 21 }, (_, index) => `Mục ${index}`) })).rejects.toThrow('tối đa 20');
     await expect(setup().service.start('owner-1', 'variant-1', { notes: ['x'.repeat(1_001)] })).rejects.toThrow('1.000 ký tự');
+  });
+
+  it('stores the final approver\'s verdict that came with the new text', async () => {
+    const approval = { status: 'approved', approver: 'vpsttt:claude:opus', approverLabel: 'Claude Opus', textHash: approvalHash(revised), startedAt: '2026-11-06T10:00:00.000Z', finishedAt: '2026-11-06T10:01:00.000Z' };
+    const { service, prisma, approvals } = setup(draft(), jest.fn().mockResolvedValue({ ...revised, approval }), true);
+    await service.start('owner-1', 'variant-1', {});
+    await settle(); await settle();
+    const saved = (prisma.contentVariant.updateMany.mock.calls[1] as UpdateCall)[0];
+    expect(saved.data).toMatchObject({ body: 'Bản mới có số liệu', aiApproval: approval });
+    // A verdict for exactly this text: no second approver run.
+    expect(approvals.launch).not.toHaveBeenCalled();
+  });
+
+  it('runs the approver again when the verdict does not match the stored text, and keeps the old verdict when the approver is off', async () => {
+    const stale = { status: 'approved', textHash: 'other-text', approver: 'x', approverLabel: 'X', startedAt: '2026-11-06T10:00:00.000Z' };
+    const on = setup(draft(), jest.fn().mockResolvedValue({ ...revised, approval: stale }), true);
+    await on.service.start('owner-1', 'variant-1', {});
+    await settle(); await settle();
+    expect(on.approvals.runningApproval).toHaveBeenCalledWith({ title: null, body: 'Bản mới có số liệu', hashtags: ['vps'] });
+    expect((on.prisma.contentVariant.updateMany.mock.calls[1] as UpdateCall)[0].data.aiApproval).toBe(on.rerun);
+    expect(on.approvals.launch).toHaveBeenCalledWith('owner-1', 'variant-1', on.rerun);
+
+    const off = setup();
+    await off.service.start('owner-1', 'variant-1', {});
+    await settle(); await settle();
+    expect((off.prisma.contentVariant.updateMany.mock.calls[1] as UpdateCall)[0].data).not.toHaveProperty('aiApproval');
+    expect(off.approvals.launch).not.toHaveBeenCalled();
+  });
+
+  it('does not start an approver run for a rewrite that was dropped', async () => {
+    const { service, prisma, approvals } = setup(draft(), jest.fn().mockResolvedValue(revised), true);
+    prisma.contentVariant.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+    await service.start('owner-1', 'variant-1', {});
+    await settle(); await settle();
+    expect(approvals.launch).not.toHaveBeenCalled();
   });
 
   it('restarts a rewrite left "generating" by a restart after ten minutes', async () => {

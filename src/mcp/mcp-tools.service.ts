@@ -446,7 +446,15 @@ export class McpToolsService {
         hourlyLimit: 5,
         run: async ({ principal }, args) => {
           const result = await this.automation.approve(principal.ownerId, args.id, { publishMode: args.publishMode, scheduledAt: args.scheduledAt });
-          return this.campaignSummary(result.campaign, 'Approved. Follow progress with list_publish_jobs.');
+          // Drafts left waiting (final AI approver, length, no ready account) are reported with their reasons.
+          const held = [...(result.unapprovedVariants ?? []), ...(result.overLimitVariants ?? [])];
+          return {
+            ...this.campaignSummary(result.campaign, held.length
+              ? 'Approved the ready drafts; the drafts listed in heldVariants keep waiting for review. Follow progress with list_publish_jobs.'
+              : 'Approved. Follow progress with list_publish_jobs.'),
+            ...(held.length ? { heldVariants: held.map(({ id, platform, message }) => ({ id, platform, message })) } : {}),
+            ...(result.skippedAccounts?.length ? { skippedAccounts: result.skippedAccounts.map(({ name, platform, reasonLabel }) => ({ name, platform, reason: reasonLabel })) } : {}),
+          };
         },
       }));
     }

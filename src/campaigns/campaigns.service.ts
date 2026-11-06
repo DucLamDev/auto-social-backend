@@ -1,5 +1,7 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { CampaignStatus, Prisma, PublishJobStatus, VariantStatus } from '@prisma/client';
+import { AiContentService } from '../ai/ai-content.service';
+import { storedApprovalProblem, withAiApprovalCurrent } from '../content-variants/ai-approval-gate';
 import { stableIdempotencyKey } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
 import { PublishQueueService } from '../queue/publish-queue.service';
@@ -15,6 +17,7 @@ export class CampaignsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly queue: PublishQueueService,
+    private readonly ai: AiContentService,
   ) {}
 
   async listAiReview(ownerId: string) {
@@ -106,7 +109,11 @@ export class CampaignsService {
         },
       },
     });
-    return { ...campaign, automationAccountIds: automationAccountIds(automationRequest) };
+    return {
+      ...campaign,
+      targets: campaign.targets.map(({ contentVariant, ...target }) => ({ ...target, contentVariant: contentVariant && withAiApprovalCurrent(contentVariant) })),
+      automationAccountIds: automationAccountIds(automationRequest),
+    };
   }
 
   async create(ownerId: string, dto: CreateCampaignDto) {
@@ -137,6 +144,14 @@ export class CampaignsService {
     if (accounts.length !== dto.targets.length || variants.length !== variantIds.length) {
       throw new BadRequestException('Every target needs an enabled, connected account and an approved variant from this content');
     }
+    // Approved before the final AI approver existed (nothing stored): allowed as
+    // before. A stored verdict must be "yes" for the variant's current text.
+    const approverOn = this.ai.approvalEnabled();
+    const unapproved = variants.flatMap((variant) => {
+      const problem = storedApprovalProblem(variant, approverOn);
+      return problem ? [problem] : [];
+    });
+    if (unapproved.length) throw new BadRequestException([...new Set(unapproved)].join(' '));
     const accountMap = new Map(accounts.map((account) => [account.id, account]));
     const variantMap = new Map(variants.map((variant) => [variant.id, variant]));
     for (const target of dto.targets) {

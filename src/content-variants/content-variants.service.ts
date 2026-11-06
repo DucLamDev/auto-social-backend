@@ -1,9 +1,12 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { ContentStatus, Prisma, VariantStatus } from '@prisma/client';
+import { approvalHash, type AiApproval } from '../ai/content-approval';
 import { PrismaService } from '../database/prisma.service';
 import { platformContract } from '../platforms/platform-contract';
 import { checkPostLength, postLengthMessage } from '../platforms/post-length';
 import type { PostTextInput } from '../platforms/post-text';
+import { aiApprovalProblem, withAiApprovalCurrent } from './ai-approval-gate';
+import { VariantApprovalService } from './variant-approval.service';
 import { previewRoute, variantPreview, type PreviewRoute } from './variant-preview';
 import { CreateContentVariantDto } from './dto/create-content-variant.dto';
 
@@ -24,7 +27,7 @@ const variantInclude = {
 
 @Injectable()
 export class ContentVariantsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly approvals: VariantApprovalService) {}
 
   async createManual(ownerId: string, dto: CreateContentVariantDto) {
     const body = dto.body.trim();
@@ -33,8 +36,11 @@ export class ContentVariantsService {
     const platformSlug = dto.platformSlug.trim().toLowerCase();
     if (!platformSlug) throw new BadRequestException('Platform slug must not be blank');
     const hashtags = this.normalizeHashtags(dto.hashtags ?? []);
+    const title = dto.title?.trim() || null;
+    // A hand-written post goes to the final approver like an AI draft.
+    const approval = this.approvals.enabled() ? await this.approvals.runningApproval({ title, body, hashtags }) : undefined;
 
-    return this.prisma.$transaction(async (transaction) => {
+    const created = await this.prisma.$transaction(async (transaction) => {
       const content = await transaction.content.findFirstOrThrow({
         where: { id: dto.contentId, ownerId },
         select: { id: true, canonicalUrl: true },
@@ -43,7 +49,6 @@ export class ContentVariantsService {
         where: { slug: platformSlug, enabled: true },
         select: { id: true },
       });
-      const title = dto.title?.trim() || null;
       assertFitsPlatform(platformSlug, { title, body, hashtags }, content.canonicalUrl);
 
       // Updating the parent row serializes concurrent manual creates for the
@@ -68,19 +73,23 @@ export class ContentVariantsService {
           reason: 'Created manually by an editor',
           status: VariantStatus.GENERATED,
           version: (latest._max.version ?? 0) + 1,
+          ...(approval ? { aiApproval: approval as unknown as Prisma.InputJsonObject } : {}),
         },
         include: variantInclude,
       });
     });
+    if (approval) this.approvals.launch(ownerId, created.id, approval);
+    return withAiApprovalCurrent(created);
   }
 
-  list(ownerId: string, contentId?: string) {
-    return this.prisma.contentVariant.findMany({
+  async list(ownerId: string, contentId?: string) {
+    const variants = await this.prisma.contentVariant.findMany({
       where: { contentId, content: { ownerId } },
       include: variantInclude,
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
+    return variants.map(withAiApprovalCurrent);
   }
 
   async updateUnreferenced(
@@ -88,14 +97,15 @@ export class ContentVariantsService {
     id: string,
     data: Prisma.ContentVariantUpdateManyMutationInput,
   ) {
-    await this.assertEditFits(ownerId, id, data);
+    const approval = await this.checkEdit(ownerId, id, data);
     const updated = await this.prisma.contentVariant.updateMany({
       where: {
         id,
         content: { ownerId },
         targets: { none: {} },
       },
-      data,
+      // New text is sent to the final approver again; its old verdict no longer applies.
+      data: approval ? { ...data, aiApproval: approval as unknown as Prisma.InputJsonObject } : data,
     });
     if (!updated.count) {
       await this.prisma.contentVariant.findFirstOrThrow({
@@ -104,26 +114,40 @@ export class ContentVariantsService {
       });
       throw new ConflictException('A content variant is immutable after it has been added to a campaign');
     }
-    return this.prisma.contentVariant.findUniqueOrThrow({ where: { id }, include: variantInclude });
+    const variant = await this.prisma.contentVariant.findUniqueOrThrow({ where: { id }, include: variantInclude });
+    if (approval) this.approvals.launch(ownerId, id, approval);
+    return withAiApprovalCurrent(variant);
   }
 
   /**
    * An edit of the text or hashtags, or an approval, must leave a post its
    * platform accepts. Other edits (summary, a rejection) are not blocked by
-   * an older post that is too long.
+   * an older post that is too long. With the final approver on, an approval
+   * needs its "yes" for the text being approved, and new text gets a new
+   * approver run (returned, to be stored with the edit).
    */
-  private async assertEditFits(ownerId: string, id: string, data: Prisma.ContentVariantUpdateManyMutationInput): Promise<void> {
+  private async checkEdit(ownerId: string, id: string, data: Prisma.ContentVariantUpdateManyMutationInput): Promise<AiApproval | undefined> {
     const body = typeof data.body === 'string' ? data.body : undefined;
     const hashtags = Array.isArray(data.hashtags) ? data.hashtags : undefined;
-    if (body === undefined && hashtags === undefined && data.status !== VariantStatus.APPROVED) return;
+    const title = typeof data.title === 'string' || data.title === null ? data.title : undefined;
+    const approving = data.status === VariantStatus.APPROVED;
+    if (body === undefined && hashtags === undefined && title === undefined && !approving) return undefined;
     const variant = await this.prisma.contentVariant.findFirst({
       where: { id, content: { ownerId } },
-      select: { title: true, body: true, hashtags: true, platform: { select: { slug: true } }, content: { select: { canonicalUrl: true } } },
+      select: { title: true, body: true, hashtags: true, status: true, aiApproval: true, platform: { select: { slug: true } }, content: { select: { canonicalUrl: true } } },
     });
     // A missing or foreign variant is reported by the update itself.
-    if (!variant) return;
-    const title = typeof data.title === 'string' || data.title === null ? data.title : variant.title;
-    assertFitsPlatform(variant.platform.slug, { title, body: body ?? variant.body, hashtags: hashtags ?? variant.hashtags }, variant.content.canonicalUrl);
+    if (!variant) return undefined;
+    const post = { title: title === undefined ? variant.title : title, body: body ?? variant.body, hashtags: hashtags ?? variant.hashtags };
+    if (body !== undefined || hashtags !== undefined || approving) assertFitsPlatform(variant.platform.slug, post, variant.content.canonicalUrl);
+    const enabled = this.approvals.enabled();
+    if (approving) {
+      const problem = aiApprovalProblem({ ...post, aiApproval: variant.aiApproval }, enabled);
+      if (problem) throw new BadRequestException(problem);
+    }
+    // A rejected draft is not sent; restoring it and asking for approval is explicit.
+    const rejected = (data.status ?? variant.status) === VariantStatus.REJECTED;
+    return enabled && !rejected && approvalHash(post) !== approvalHash(variant) ? await this.approvals.runningApproval(post) : undefined;
   }
 
   /**

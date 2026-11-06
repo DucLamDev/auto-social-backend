@@ -8,6 +8,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { ApiCreatedEnvelope, ApiOkEnvelope, ContentVariantContractDto } from '../common/swagger/api-contract.dto';
 import { ContentVariantsService } from './content-variants.service';
+import { VariantApprovalService } from './variant-approval.service';
 import { VariantImageService } from './variant-image.service';
 import { MAX_REWRITE_INSTRUCTION_LENGTH, MAX_REWRITE_NOTE_LENGTH, MAX_REWRITE_NOTES, VariantRewriteService } from './variant-rewrite.service';
 import { CreateContentVariantDto } from './dto/create-content-variant.dto';
@@ -80,6 +81,7 @@ export class ContentVariantsController {
     private readonly variants: ContentVariantsService,
     private readonly images: VariantImageService,
     private readonly rewrites: VariantRewriteService,
+    private readonly approvals: VariantApprovalService,
   ) {}
 
   @Post()
@@ -131,6 +133,14 @@ export class ContentVariantsController {
   @Roles(RoleName.ADMIN, RoleName.EDITOR)
   rewrite(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string, @Body() dto: RewriteVariantDto) {
     return this.rewrites.start(user.id, id, dto);
+  }
+
+  /** Runs the final AI approver again on a draft's current text; the review screen follows `aiApproval.status`. */
+  @Post(':id/ai-approval')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  requestAiApproval(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) {
+    return this.approvals.start(user.id, id);
   }
 
   @Delete(':id/image/:mediaId')

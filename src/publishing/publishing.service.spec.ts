@@ -5,6 +5,8 @@ import {
   PublishJobStatus,
   VariantStatus,
 } from '@prisma/client';
+import type { AiContentService } from '../ai/ai-content.service';
+import { approvalHash } from '../ai/content-approval';
 import { ConnectorAccountsService } from '../connectors/connector-accounts.service';
 import { ConnectorRegistryService } from '../connectors/core/connector-registry.service';
 import { ConnectorError } from '../connectors/core/connector-error';
@@ -1125,4 +1127,85 @@ describe('PublishingService idempotency', () => {
         expect(accountUpdate).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+describe('final AI approver backstop in the publishing worker', () => {
+  const post = { title: 'A topic', body: 'hello', hashtags: [] as string[] };
+  const verdict = (status: string, extra: Record<string, unknown> = {}) => ({
+    status, approver: 'vpsttt:claude:opus', approverLabel: 'Claude Opus', textHash: approvalHash(post), startedAt: new Date().toISOString(), ...extra,
+  });
+
+  it('refuses a variant whose stored verdict is not "yes" for its current text, and lets a legacy one through', () => {
+    const approved = VariantStatus.APPROVED;
+    expect(() => assertVariantApproved(approved, { ...post, aiApproval: null })).not.toThrow();
+    expect(() => assertVariantApproved(approved, { ...post, aiApproval: verdict('approved') })).not.toThrow();
+    expect(() => assertVariantApproved(approved, { ...post, aiApproval: verdict('rejected', { reasons: ['Seeding vụng'] }) }))
+      .toThrow('Không đăng bài này: AI duyệt cuối (Claude Opus) từ chối: Seeding vụng');
+    expect(() => assertVariantApproved(approved, { ...post, aiApproval: verdict('failed', { error: 'Hết lượt.' }) })).toThrow('AI duyệt cuối chưa chạy được: Hết lượt.');
+    expect(() => assertVariantApproved(approved, { ...post, aiApproval: verdict('running') })).toThrow('AI duyệt cuối đang đọc bài');
+    expect(() => assertVariantApproved(approved, { ...post, body: 'edited', aiApproval: verdict('approved') })).toThrow('Bài đã sửa sau khi AI duyệt');
+    // Approver turned off: stored verdicts no longer stop a post.
+    expect(() => assertVariantApproved(approved, { ...post, aiApproval: verdict('rejected') }, false)).not.toThrow();
+    // Not approved at all still wins.
+    expect(() => assertVariantApproved(VariantStatus.REJECTED, { ...post, aiApproval: verdict('approved') })).toThrow('no longer approved');
+    let refusal: unknown;
+    try { assertVariantApproved(approved, { ...post, aiApproval: verdict('rejected') }); } catch (error) { refusal = error; }
+    // Same failure as a variant that is no longer approved: permanent, never retried.
+    expect(refusal).toBeInstanceOf(ConnectorError);
+    expect(refusal).toMatchObject({ code: ErrorCode.PLATFORM_CONTENT_REJECTED, retryable: false });
+  });
+
+  function worker(aiApproval: unknown, approverOn: boolean) {
+    const job = publishJobFixture();
+    job.target.contentVariant = { ...job.target.contentVariant, aiApproval } as typeof job.target.contentVariant;
+    const transactionClient = {
+      publishJob: { update: jest.fn().mockResolvedValue({}) },
+      publishAttempt: { create: jest.fn().mockResolvedValue({ id: 'attempt-1' }), update: jest.fn().mockResolvedValue({}) },
+      publishedPost: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const jobUpdate = jest.fn().mockResolvedValue({});
+    const prisma = {
+      publishJob: { findUniqueOrThrow: jest.fn().mockResolvedValue(job), update: jobUpdate },
+      publishAttempt: { update: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn((input: unknown) => typeof input === 'function'
+        ? (input as (client: typeof transactionClient) => Promise<unknown>)(transactionClient)
+        : Promise.all(input as Promise<unknown>[])),
+    } as unknown as PrismaService;
+    const publish = jest.fn().mockResolvedValue({ externalId: 'post-1', url: 'https://x.example/post-1', status: 'PUBLISHED' });
+    const service = new PublishingService(
+      prisma,
+      {
+        acquireLock: jest.fn().mockResolvedValue('token'),
+        extendLock: jest.fn().mockResolvedValue(true),
+        releaseLock: jest.fn().mockResolvedValue(true),
+        consumeRateLimit: jest.fn().mockResolvedValue({ allowed: true, remaining: 9 }),
+      } as unknown as RedisService,
+      { load: jest.fn().mockResolvedValue(loadedAccountFixture()) } as unknown as ConnectorAccountsService,
+      { get: jest.fn().mockReturnValue({ validate: jest.fn(), publish }) } as unknown as ConnectorRegistryService,
+      { refresh: jest.fn().mockResolvedValue(undefined) } as unknown as CampaignStatusService,
+      { approvalEnabled: () => approverOn } as unknown as AiContentService,
+    );
+    return { service, publish, jobUpdate };
+  }
+
+  it('fails the job before the provider is called when the approver refused the post', async () => {
+    const { service, publish, jobUpdate } = worker(verdict('rejected', { reasons: ['Hứa hẹn quá mức'] }), true);
+    await expect(service.process('job-1')).rejects.toBeInstanceOf(DeadLetterDeliveryError);
+    expect(publish).not.toHaveBeenCalled();
+    expect(jobUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: PublishJobStatus.FAILED, lastErrorCode: ErrorCode.PLATFORM_CONTENT_REJECTED,
+        lastErrorMessage: 'Không đăng bài này: AI duyệt cuối (Claude Opus) từ chối: Hứa hẹn quá mức',
+      }) as unknown,
+    }));
+  });
+
+  it('publishes a legacy variant with no stored verdict, and a refused one when the approver is off', async () => {
+    const legacy = worker(null, true);
+    await legacy.service.process('job-1');
+    expect(legacy.publish).toHaveBeenCalledTimes(1);
+    const off = worker(verdict('rejected'), false);
+    await off.service.process('job-1');
+    expect(off.publish).toHaveBeenCalledTimes(1);
+  });
 });

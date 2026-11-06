@@ -1,6 +1,33 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.24.0 · 06/11/2026
+### Tính năng
+- Quy trình 3 vai AI: AI viết, AI chấm (bắt seeding và rủi ro cho công ty), AI duyệt cuối chặn đăng
+  Cần migration mới `20261106120000_content_variant_ai_approval`, chỉ thêm cột `content_variants.aiApproval` và tự chạy khi
+  backend khởi động. Hướng dẫn đầy đủ trong `README.md`, mục "Quy trình 3 vai AI".
+  - **Ba vai độc lập, đều chọn được trong các model của key VPSTTT AI:**
+    - **AI viết** là AI chọn ở hộp tạo bài. Muốn GPT viết qua key IDE thì đặt `VPSTTT_AI_MODEL=gpt:`.
+    - **AI chấm:** `AI_REVIEWER`, mặc định `vpsttt:claude:sonnet`.
+    - **AI duyệt cuối:** `AI_APPROVER`, mặc định `vpsttt:claude:opus`.
+    - Mỗi lượt gọi dùng đúng model của vai đó. `GET /ai/roles` trả 3 vai cho giao diện.
+  - **AI chấm đánh trượt bài dù điểm cao khi:**
+    - có **seeding vụng**: giả làm khách hàng, khen quá, nhắc sản phẩm gượng ép, nhiều link, giọng quảng cáo, hạ thấp đối
+      thủ, quảng bá không công khai;
+    - hoặc **rủi ro cho công ty** từ mức trung bình trở lên: nói quá hoặc sai về sản phẩm, hứa hẹn không căn cứ, hướng dẫn
+      lách luật hay vi phạm điều khoản, nội dung nhạy cảm.
+    Nhận xét được gửi lại cho AI viết để sửa. AI chấm lỗi thì bài không còn được coi là đạt.
+  - **AI duyệt cuối** đọc đúng bản sẽ đăng, mô tả ảnh và nhận xét của AI chấm, rồi quyết định cho đăng hay không. Kết quả lưu
+    kèm dấu nội dung.
+  - **Cổng chặn** (`AI_APPROVAL_ENABLED=true`): mọi lối duyệt và đăng chỉ cho qua bài được duyệt cuối đúng nội dung hiện tại:
+    từng bài, cả lượt, nội dung có sẵn, Studio, MCP, và worker đăng.
+    - Bài bị từ chối thì không ai duyệt được.
+    - Sửa tay hoặc viết lại bằng AI thì máy chủ tự duyệt lại; `POST /content-variants/:id/ai-approval` để chạy lại.
+    - "Duyệt tất cả" giữ bài chưa đạt lại và trả `unapprovedVariants`.
+    - Bài đã duyệt trước bản này vẫn đăng như cũ.
+  - **Giới hạn:** AI chat của VPSTTT chỉ nhận chữ, nên AI chấm / duyệt đọc mô tả ảnh, không xem ảnh. Mỗi nền tảng tốn thêm
+    1 lượt AI duyệt cuối.
+
 ## 1.23.2 · 06/11/2026
 ### Sửa lỗi
 - Tạo bài hàng loạt bằng VPSTTT AI không còn dừng giữa chừng vì "đạt hạn mức"

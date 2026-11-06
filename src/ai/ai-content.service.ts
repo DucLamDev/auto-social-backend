@@ -8,8 +8,9 @@ import { ApplicationException, ErrorCode } from '../common/exceptions/applicatio
 import { PrismaService } from '../database/prisma.service';
 import { repairEscapedNewlines } from '../common/utils/escaped-text';
 import { countChars, PlatformContract, platformContract } from '../platforms/platform-contract';
-import { markdownToPlain, publishedLength, sourceLine } from '../platforms/post-text';
+import { markdownToPlain, publishedLength, renderPostText, sourceLine } from '../platforms/post-text';
 import { checkPostLength, contractFor, fitToLimit } from '../platforms/post-length';
+import type { ExtensionEngine } from '../connectors/extension/extension-delivery';
 import { extensionFlowForPlatform } from '../connectors/extension/extension-flows';
 import { tagStyle } from '../connectors/extension/extension-tags';
 import { BrandProfile, brandProfileBlock, BrandProfileService } from './brand-profile.service';
@@ -20,16 +21,36 @@ import {
   deterministicIssues,
   DraftForCheck,
   draftRank,
+  missingSafetyFields,
   QUALITY_MAX_REWRITES,
   QUALITY_PASS_SCORE,
   qualityInstructions,
   reviewInstructions,
   reviewJsonSchema,
+  ReviewOutput,
   reviewPassed,
   ReviewSchema,
+  reviewSummary,
   rewriteFeedback,
+  safetyProblems,
   scoreFromReason,
 } from './content-quality';
+import {
+  AiApproval,
+  aiRoleLabel,
+  aiRoleSetting,
+  AiRole,
+  approvalHash,
+  approvalInput,
+  approvalInstructions,
+  approvalJsonSchema,
+  ApprovalOutput,
+  ApprovalSchema,
+  approvalVerdict,
+  DEFAULT_AI_APPROVER,
+  DEFAULT_AI_REVIEWER,
+  parseAiRole,
+} from './content-approval';
 import type { PlatformImagePlan } from '../campaigns/image-plan';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
 import {
@@ -62,6 +83,40 @@ const VariantSchema = z.object({
 });
 
 export type GeneratedVariant = z.infer<typeof VariantSchema>;
+
+/**
+ * A checked draft. `approval` is the final approver's verdict on exactly the
+ * returned title, body and hashtags; absent when AI_APPROVAL_ENABLED=false.
+ */
+export type CheckedVariant = GeneratedVariant & { approval?: AiApproval };
+
+/** A stored or edited draft for the final approver (`approveDraft`). */
+export interface ApproveDraftInput {
+  contentId: string;
+  platformSlug: string;
+  /** The posting flow of the account, when it posts through the extension; the platform's default flow otherwise. */
+  engine?: ExtensionEngine;
+  title: string | null;
+  body: string;
+  hashtags: string[];
+  image?: { prompt?: string | null; altText?: string | null } | null;
+  /** The last review ("AI chấm 8/10 …" / "Cần xem lại …"), given to the approver as context. */
+  reviewNotes?: string | null;
+}
+
+/** A reviewer or approver as configured on the server, for the UI. */
+export interface AiRoleDescriptor extends AiRole {
+  /** "Claude Opus", "GPT (VPSTTT AI)", "OpenAI · gpt-5-mini". */
+  label: string;
+  /** False when the role's provider has no key: the reviewer then falls back to the writer, approvals fail. */
+  configured: boolean;
+}
+
+export interface AiRolesDescriptor {
+  reviewer: AiRoleDescriptor;
+  approver: AiRoleDescriptor;
+  approvalEnabled: boolean;
+}
 
 const outputSchema = {
   type: 'object',
@@ -155,7 +210,10 @@ const IMAGE_BRIEF_SPEC: StructuredSpec<ImageBrief> = {
   },
   zod: ImageBriefSchema,
 };
-const REVIEW_SPEC: StructuredSpec<ContentReview> = { name: 'content_review', jsonSchema: reviewJsonSchema, zod: ReviewSchema };
+const REVIEW_SPEC: StructuredSpec<ReviewOutput> = { name: 'content_review', jsonSchema: reviewJsonSchema, zod: ReviewSchema };
+const APPROVAL_SPEC: StructuredSpec<ApprovalOutput> = { name: 'content_approval', jsonSchema: approvalJsonSchema, zod: ApprovalSchema };
+/** The approver's verdict leads the stored reason; capped so the "AI chấm N/10" after it always survives. */
+const MAX_APPROVAL_REASON_PREFIX = 450;
 /** The platform being written when a multi-platform run failed (shown to the operator). */
 const failedPlatforms = new WeakMap<object, string>();
 export function failedPlatformOf(error: unknown): string | undefined {
@@ -426,6 +484,12 @@ export class AiContentService {
   private readonly geminiFallbackModel?: string;
   private readonly vpstttThrottle: ProviderThrottle;
   private readonly vpstttBaseUrl?: string;
+  /** Scores and critiques every draft (AI_REVIEWER); falls back to the writer when its provider has no key. */
+  private readonly reviewer: AiRole;
+  /** Final gate on the finished draft (AI_APPROVER). */
+  private readonly approver: AiRole;
+  private readonly approvalOn: boolean;
+  private reviewerFallbackWarned = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -448,6 +512,11 @@ export class AiContentService {
       && configuredGeminiFallback !== this.models.gemini
       ? configuredGeminiFallback
       : undefined;
+    // validateEnvironment already rejected invalid values; an empty one means the default.
+    this.reviewer = parseAiRole(String(config.get<string>('AI_REVIEWER') ?? '').trim() || DEFAULT_AI_REVIEWER, 'AI_REVIEWER');
+    this.approver = parseAiRole(String(config.get<string>('AI_APPROVER') ?? '').trim() || DEFAULT_AI_APPROVER, 'AI_APPROVER');
+    const approvalSetting = config.get<boolean | string>('AI_APPROVAL_ENABLED', true);
+    this.approvalOn = !(approvalSetting === false || String(approvalSetting).trim().toLowerCase() === 'false');
 
     const timeout = config.get<number>(
       'AI_TIMEOUT_MS',
@@ -551,6 +620,41 @@ export class AiContentService {
     }));
   }
 
+  /** The reviewer and the final approver configured on the server (never a key). */
+  async roles(): Promise<AiRolesDescriptor> {
+    const describe = async (role: AiRole): Promise<AiRoleDescriptor> => ({
+      provider: role.provider,
+      model: role.model || this.models[role.provider],
+      label: aiRoleLabel(role, this.models[role.provider]),
+      configured: await this.providerReady(role.provider),
+    });
+    return { reviewer: await describe(this.reviewer), approver: await describe(this.approver), approvalEnabled: this.approvalOn };
+  }
+
+  /** Whether drafts go through the final approver (AI_APPROVAL_ENABLED, on by default). */
+  approvalEnabled(): boolean {
+    return this.approvalOn;
+  }
+
+  private async providerReady(provider: AiProvider): Promise<boolean> {
+    return provider === 'gemini' ? this.geminiKeys.configured() : Boolean(this.clients[provider]);
+  }
+
+  /**
+   * The configured reviewer, or the writer when the reviewer's provider has no
+   * key: a draft is still scored, only less independently.
+   */
+  private async reviewerFor(writer: AiProvider): Promise<AiRole> {
+    let ready = false;
+    try { ready = await this.providerReady(this.reviewer.provider); } catch { ready = false; }
+    if (ready) return this.reviewer;
+    if (!this.reviewerFallbackWarned) {
+      this.reviewerFallbackWarned = true;
+      this.logger.warn(`AI_REVIEWER ${aiRoleSetting(this.reviewer)} is not configured; drafts are reviewed by their writer's provider instead`);
+    }
+    return { provider: writer, model: '' };
+  }
+
   resolveProvider(requested?: string): AiProvider {
     const provider = requested ?? this.defaultProvider;
     if (!isAiProvider(provider)) {
@@ -626,7 +730,7 @@ export class AiContentService {
     }
     try {
       const brand = await this.brandProfiles?.load() ?? null;
-      const generated: Array<GeneratedVariant | undefined> = [];
+      const generated: Array<CheckedVariant | undefined> = [];
       const saved: Array<ContentVariant | undefined> = [];
       let failure: { error: unknown; platform: string } | undefined;
       let next = 0;
@@ -691,7 +795,7 @@ export class AiContentService {
   }
 
   /** The next version of this platform's variant for the content. */
-  private async saveVariant(db: Prisma.TransactionClient, contentId: string, platformId: string, generated: GeneratedVariant): Promise<ContentVariant> {
+  private async saveVariant(db: Prisma.TransactionClient, contentId: string, platformId: string, generated: CheckedVariant): Promise<ContentVariant> {
     const latest = await db.contentVariant.aggregate({ where: { contentId, platformId }, _max: { version: true } });
     return db.contentVariant.create({
       data: {
@@ -705,6 +809,8 @@ export class AiContentService {
         recommended: generated.recommended,
         reason: generated.reason,
         mediaRecommendation: generated.media,
+        // The final approver's verdict on exactly this text (content_variants.aiApproval).
+        ...(generated.approval ? { aiApproval: generated.approval as unknown as Prisma.InputJsonValue } : {}),
         status: VariantStatus.GENERATED,
         version: (latest._max.version ?? 0) + 1,
       },
@@ -738,8 +844,10 @@ export class AiContentService {
   }
 
   /**
-   * Writes, checks and, when needed, rewrites once. A draft that still falls
-   * short is returned with recommended=false so it is never auto-approved.
+   * The writer writes, the reviewer checks and, when needed, the writer
+   * rewrites. The final approver then reads the finished draft once. A draft
+   * that falls short anywhere is returned with recommended=false so it is
+   * never auto-approved.
    */
   private async generateChecked(
     provider: AiProvider,
@@ -750,7 +858,8 @@ export class AiContentService {
     brand: BrandProfile | null,
     image: PlatformImagePlan | null = null,
     revision?: DraftRevision,
-  ): Promise<GeneratedVariant> {
+  ): Promise<CheckedVariant> {
+    const reviewer = await this.reviewerFor(provider);
     const contract = platformContract(platform, {
       sourceText: content.body,
       defaultLanguage: brand?.defaultLanguage,
@@ -769,7 +878,7 @@ export class AiContentService {
     let draft = await write(undefined, revision ? revisionBrief(revision) : undefined);
     // Every check of a revision, the rewrites included, is judged against the stored draft's review.
     const previous = previousReviewOf(revision);
-    let assessment = await this.assess(provider, draft, contract, content, brand, previous);
+    let assessment = await this.assess(reviewer, draft, contract, content, brand, previous);
     let best = { draft, assessment };
     // A draft the writer itself flags as off-topic for this audience
     // (recommended=false) is not fixed by rewriting; it goes to the operator.
@@ -782,7 +891,7 @@ export class AiContentService {
     const rank = (candidate: Assessment) => draftRank(candidate.passed, candidate.review, candidate.issues, candidate.overLimit);
     for (let rewrite = 0; rewrite < QUALITY_MAX_REWRITES && !assessment.passed; rewrite += 1) {
       draft = await write(`${rewriteFeedback(assessment.issues, assessment.review)}${standing}`);
-      assessment = await this.assess(provider, draft, contract, content, brand, previous);
+      assessment = await this.assess(reviewer, draft, contract, content, brand, previous);
       if (rank(assessment) >= rank(best.assessment)) best = { draft, assessment };
     }
     const fitted = await this.fitDraft(write, platform, contract, best.draft, best.assessment, content.canonicalUrl);
@@ -791,30 +900,133 @@ export class AiContentService {
     // A revision keeps the post's current image; only new drafts get one designed.
     if (image && !revision) draft = { ...draft, media: await this.directImage(provider, contract, draft, content, brand, image) };
     const hashtags = [...new Set(draft.hashtags.map((tag) => tag.trim().replace(/^#+/, '')).filter(Boolean))];
-    const scoreText = assessment.review ? `AI chấm ${assessment.review.score}/10` : 'AI chưa chấm được';
-    // A machine cut may have dropped the post's ending: a person reads it first.
-    const recommended = assessment.passed && draft.recommended && shortened !== 'cut';
+    // Exactly what the caller stores: the approval below is valid only for this text.
+    const post: DraftForCheck = {
+      title: draft.title,
+      body: repairEscapedNewlines(draft.body),
+      hashtags: contract.hashtagMode === 'inline' ? hashtags : hashtags.slice(0, contract.maxHashtags),
+    };
+    const { review } = assessment;
+    const scoreText = review ? `AI chấm ${review.score}/10` : 'AI chưa chấm được';
+    // A machine cut may have dropped the post's ending, and an unscored draft
+    // (reviewer outage) was never judged: a person reads both first.
+    const reviewOk = assessment.passed && review !== null && draft.recommended && shortened !== 'cut';
+    const approval = this.approvalOn
+      ? await this.runApproval(contract, content, brand, post, draft.media.type === 'image' ? draft.media : null, [
+          reviewSummary(review, assessment.issues),
+          !draft.recommended ? `The writer judged the post unsuitable for this destination: ${draft.reason}` : '',
+          shortened === 'cut' ? 'The machine cut the end of the post to fit the character limit.' : '',
+        ].filter(Boolean).join('\n'))
+      : undefined;
+    const recommended = reviewOk && (!approval || approval.status === 'approved');
     const problems = [
       ...(!draft.recommended ? [`AI đánh giá không hợp nơi đăng: ${draft.reason}`] : []),
       ...(shortened === 'cut' ? ['Máy đã cắt bớt phần cuối bài, đọc lại trước khi duyệt'] : []),
+      ...(!review ? [`Chưa có điểm của AI chấm (${aiRoleLabel(reviewer, this.models[reviewer.provider])}), đọc kỹ trước khi duyệt`] : []),
       ...assessment.issues,
-      ...(assessment.review && !reviewPassed(assessment.review) ? assessment.review.unsupportedClaims.map((claim) => `Thông tin chưa có căn cứ: ${claim}`) : []),
-      ...(assessment.review && !reviewPassed(assessment.review) ? assessment.review.issues : []),
+      ...(review && !reviewPassed(review) ? safetyProblems(review) : []),
+      ...(review && !reviewPassed(review) ? review.unsupportedClaims.map((claim) => `Thông tin chưa có căn cứ: ${claim}`) : []),
+      ...(review && !reviewPassed(review) ? review.issues : []),
     ];
-    const reason = recommended
+    const reviewReason = reviewOk
       ? `${draft.reason} (${scoreText})`
       : `Cần xem lại (${scoreText}): ${[...new Set(problems)].join('; ') || `điểm dưới ${QUALITY_PASS_SCORE}/10`}`;
+    // The approver's refusal leads; the editor's "(AI chấm N/10)" follows so the score stays readable.
+    const verdict = approvalReason(approval);
+    const reason = verdict
+      ? `${verdict.slice(0, MAX_APPROVAL_REASON_PREFIX)}${reviewOk ? ` (${scoreText})` : `. ${reviewReason}`}`
+      : reviewReason;
     const note = shortened ? ` · đã rút gọn tự động để vừa ${contract.maxChars} ký tự` : '';
     return {
       ...draft,
+      ...post,
       // A planned image is created after the post is saved: until then the
       // post is not ready to approve or publish.
       media: image && !revision ? { ...draft.media, status: 'pending' } : draft.media,
-      hashtags: contract.hashtagMode === 'inline' ? hashtags : hashtags.slice(0, contract.maxHashtags),
       recommended,
       // The shortening note is kept even when a long reason is cut.
       reason: `${reason.slice(0, MAX_REASON_LENGTH - note.length)}${note}`,
+      ...(approval ? { approval } : {}),
     };
+  }
+
+  /**
+   * The final approver reads one draft exactly as it will be published. Never
+   * throws for AI or provider errors: the verdict is then `failed` with a
+   * Vietnamese error, and the post waits for a person.
+   */
+  private async runApproval(
+    contract: PlatformContract,
+    content: SourceContent,
+    brand: BrandProfile | null,
+    post: DraftForCheck,
+    image: { prompt?: string | null; altText?: string | null } | null,
+    reviewNotes: string | null,
+    engine?: ExtensionEngine,
+  ): Promise<AiApproval> {
+    const role = this.approver;
+    const model = role.model || this.models[role.provider];
+    const base = {
+      approver: aiRoleSetting({ provider: role.provider, model }),
+      approverLabel: aiRoleLabel(role, this.models[role.provider]),
+      textHash: approvalHash(post),
+      startedAt: new Date().toISOString(),
+    };
+    try {
+      if (!await this.providerReady(role.provider)) {
+        return { ...base, status: 'failed', finishedAt: new Date().toISOString(), error: approverMissingMessage(role.provider, model) };
+      }
+      const tags = [...new Set(post.hashtags.map((tag) => tag.trim().replace(/^#+/, '')).filter(Boolean))];
+      const rendered = renderPostText(post, contract, content.canonicalUrl);
+      let body = rendered.body;
+      // As variantPreview shows it: connectors append Instagram-style hashtags
+      // after the caption, and Quora's flow puts a written title above the body.
+      if (contract.hashtagMode === 'appended' && tags.length) body = `${body}\n\n${tags.map((tag) => `#${tag}`).join(' ')}`;
+      if (!contract.titleRequired && rendered.title && (engine ?? extensionFlowForPlatform(contract.slug)?.engine) === 'quora') body = `${rendered.title}\n\n${body}`;
+      const input = approvalInput(contract, {
+        rules: contractInstructions(contract, content.canonicalUrl),
+        briefKind: isBrief(content) ? 'short marketing brief' : 'source content',
+        brief: content.body,
+        brandBlock: brandProfileBlock(brand),
+        post: {
+          title: contract.titleRequired ? rendered.title : '',
+          body,
+          tags: contract.hashtagMode === 'tags' ? tags.slice(0, contract.maxHashtags) : [],
+        },
+        image,
+        reviewNotes,
+      });
+      const output = await this.withGenerationRetry(() => this.requestStructured(role.provider, approvalInstructions(contract), input, APPROVAL_SPEC, model));
+      return { ...base, ...approvalVerdict(output), finishedAt: new Date().toISOString(), error: null };
+    } catch (error) {
+      this.logger.warn(`AI approval unavailable for ${contract.slug} (${base.approver}): ${error instanceof Error ? error.message : String(error)}`);
+      return { ...base, status: 'failed', finishedAt: new Date().toISOString(), error: approvalErrorMessage(error, role.provider, model) };
+    }
+  }
+
+  /**
+   * The final approver's verdict on a stored or edited draft (after an
+   * operator's edit, or when a draft has none yet). Loads the content and the
+   * brand like reviseDraft; the verdict's `textHash` is that of the given text.
+   */
+  async approveDraft(ownerId: string, input: ApproveDraftInput): Promise<AiApproval> {
+    const content = await this.prisma.content.findFirstOrThrow({ where: { id: input.contentId, ownerId } });
+    const brand = await this.brandProfiles?.load() ?? null;
+    const contract = platformContract(input.platformSlug, {
+      ...(input.engine ? { engine: input.engine } : {}),
+      sourceText: content.body,
+      defaultLanguage: brand?.defaultLanguage,
+      platformLanguages: brand?.platformLanguages,
+    });
+    return this.runApproval(
+      contract,
+      content,
+      brand,
+      { title: input.title, body: input.body, hashtags: input.hashtags },
+      input.image?.prompt || input.image?.altText ? input.image : null,
+      input.reviewNotes ?? null,
+      input.engine,
+    );
   }
 
   /**
@@ -941,7 +1153,7 @@ export class AiContentService {
     ownerId: string,
     input: { contentId: string; platformSlug: string; revision: DraftRevision; image?: PlatformImagePlan | null },
     requestedProvider?: AiProvider,
-  ): Promise<GeneratedVariant> {
+  ): Promise<CheckedVariant> {
     const provider = this.resolveProvider(requestedProvider);
     await this.assertConfigured(provider);
     const content = await this.prisma.content.findFirstOrThrow({ where: { id: input.contentId, ownerId } });
@@ -955,8 +1167,9 @@ export class AiContentService {
     return this.generateChecked(provider, input.platformSlug, prompt.systemPrompt, prompt.userTemplate, content, brand, input.image ?? null, input.revision);
   }
 
+  /** Machine checks plus the reviewer's score, seeding and brand-risk check of one draft. */
   private async assess(
-    provider: AiProvider,
+    reviewer: AiRole,
     draft: GeneratedVariant,
     contract: PlatformContract,
     content: SourceContent,
@@ -967,8 +1180,8 @@ export class AiContentService {
     const length = contract.maxChars ? publishedLength(draft, contract, content.canonicalUrl) : 0;
     let review: ContentReview | null = null;
     try {
-      review = clampReview(await this.withGenerationRetry(() => this.requestStructured(
-        provider,
+      const output = await this.withGenerationRetry(() => this.requestStructured(
+        reviewer.provider,
         reviewInstructions(contract, contract.maxChars ? length : undefined, previous),
         [
           `Brief or source (${isBrief(content) ? 'short marketing brief' : 'source content'}):\n${content.body.slice(0, 20_000)}`,
@@ -976,10 +1189,14 @@ export class AiContentService {
           `Draft:\n${JSON.stringify({ title: draft.title, body: draft.body, hashtags: draft.hashtags })}`,
         ].filter(Boolean).join('\n\n'),
         REVIEW_SPEC,
-      )));
+        reviewer.model || undefined,
+      ));
+      const missing = missingSafetyFields(output);
+      if (missing.length) this.logger.warn(`AI review for ${contract.slug} left out ${missing.join(', ')}; taken as not detected / none`);
+      review = clampReview(output);
     } catch (error) {
       // The draft itself was generated; a reviewer outage must not block every
-      // campaign. Machine checks still apply and the reason says it was unscored.
+      // campaign. The draft is kept, but never recommended unscored.
       this.logger.warn(`AI review unavailable for ${contract.slug}: ${error instanceof Error ? error.message : String(error)}`);
     }
     const passed = issues.length === 0 && reviewPassedOrMissing(review);
@@ -1031,11 +1248,16 @@ export class AiContentService {
     return this.requestStructured(provider, instructions, input, VARIANT_SPEC);
   }
 
-  private async requestStructured<T>(provider: AiProvider, instructions: string, input: string, spec: StructuredSpec<T>): Promise<T> {
-    if (provider === 'gemini') return this.callGemini(instructions, input, spec);
-    if (provider === 'vpsttt') return this.callVpsttt(instructions, input, spec);
+  /**
+   * One structured answer. `model` picks a model of the provider for this call
+   * (the reviewer's or the approver's); empty means the provider's configured
+   * model. The provider's throttles apply either way.
+   */
+  private async requestStructured<T>(provider: AiProvider, instructions: string, input: string, spec: StructuredSpec<T>, requestedModel?: string): Promise<T> {
+    if (provider === 'gemini') return this.callGemini(instructions, input, spec, requestedModel);
+    if (provider === 'vpsttt') return this.callVpsttt(instructions, input, spec, requestedModel);
     const client = this.clientFor(provider);
-    const model = this.models[provider];
+    const model = requestedModel || this.models[provider];
     if (provider === 'openai') {
       const response = await this.requestFromProvider(provider, () => (
         client.responses.create({
@@ -1071,7 +1293,7 @@ export class AiContentService {
    * any other parameter is rejected with HTTP 400. The JSON contract therefore
    * travels in the system message and the reply is validated here.
    */
-  private async callVpsttt<T>(instructions: string, input: string, spec: StructuredSpec<T>): Promise<T> {
+  private async callVpsttt<T>(instructions: string, input: string, spec: StructuredSpec<T>, model?: string): Promise<T> {
     const client = this.clientFor('vpsttt');
     const system = `${instructions}\n\nReturn only one JSON object, with no Markdown, code fence or text around it, matching this JSON Schema:\n${JSON.stringify(spec.jsonSchema)}`;
     const budget = VPSTTT_MAX_TOTAL_CHARS - system.length - VPSTTT_CHAR_MARGIN;
@@ -1082,7 +1304,7 @@ export class AiContentService {
     if (user.length < input.length) this.logger.warn(`VPSTTT AI input trimmed from ${input.length} to ${user.length} characters`);
     const response = await this.requestFromProvider('vpsttt', () => this.vpstttThrottle.run(() => (
       client.chat.completions.create({
-        model: this.models.vpsttt,
+        model: model || this.models.vpsttt,
         messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
         stream: false,
       })
@@ -1090,11 +1312,12 @@ export class AiContentService {
     return this.parseStructured(extractJsonObject(response.choices[0]?.message.content ?? ''), spec);
   }
 
-  private async requestFromGemini<T>(request: (model: string) => Promise<T>): Promise<T> {
+  /** `primary` is the role's own model when it names one; the fallback model still applies after it. */
+  private async requestFromGemini<T>(request: (model: string) => Promise<T>, primary = this.models.gemini): Promise<T> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= GEMINI_PRIMARY_MAX_ATTEMPTS; attempt += 1) {
       try {
-        return await request(this.models.gemini);
+        return await request(primary);
       } catch (error) {
         lastError = error;
         if ([429, 402].includes(this.readNumericErrorProperty(error, 'status') ?? 0)) throw error;
@@ -1107,7 +1330,7 @@ export class AiContentService {
       }
     }
 
-    if (this.geminiFallbackModel) {
+    if (this.geminiFallbackModel && this.geminiFallbackModel !== primary) {
       try {
         return await request(this.geminiFallbackModel);
       } catch (error) {
@@ -1131,13 +1354,14 @@ export class AiContentService {
     instructions: string,
     input: string,
     spec: StructuredSpec<T> = VARIANT_SPEC as unknown as StructuredSpec<T>,
+    primaryModel?: string,
   ): Promise<T> {
     const response = await this.requestFromProvider('gemini', () => this.geminiKeys.run((apiKey) => {
       const client = this.createGeminiClient(apiKey);
       return this.requestFromGemini((model) => client.chat.completions.parse({ model,
         messages: [{ role: 'system', content: instructions }, { role: 'user', content: input }],
         response_format: zodResponseFormat(spec.zod, spec.name),
-      }));
+      }), primaryModel || this.models.gemini);
     }));
     const parsed: unknown = response.choices[0]?.message.parsed;
     if (!parsed) return this.parseStructured(response.choices[0]?.message.content ?? '', spec);
@@ -1292,6 +1516,46 @@ export function extractJsonObject(text: string): string {
 
 function reviewPassedOrMissing(review: ContentReview | null): boolean {
   return review === null || reviewPassed(review);
+}
+
+/** The start of the stored reason when the final approver did not say yes; empty otherwise. */
+function approvalReason(approval: AiApproval | undefined): string {
+  if (approval?.status === 'rejected') {
+    const reasons = (approval.reasons ?? []).map((reason) => reason.replace(/[\s.;]+$/, '')).filter(Boolean);
+    return `AI duyệt cuối (${approval.approverLabel}) từ chối: ${reasons.join('; ') || 'không nêu lý do'}`;
+  }
+  if (approval?.status === 'failed') return `AI duyệt cuối chưa chạy được: ${(approval.error ?? 'lỗi không rõ').replace(/[\s.;]+$/, '')}`;
+  return '';
+}
+
+/** Why the approver cannot run at all: its provider has no key. */
+function approverMissingMessage(provider: AiProvider, model: string): string {
+  if (provider === 'vpsttt') return `Chưa cấu hình VPSTTT AI (VPSTTT_AI_BASE_URL, VPSTTT_AI_API_KEY) để chạy ${model}`;
+  return `Chưa cấu hình ${AI_PROVIDER_LABELS[provider]} (${PROVIDER_API_KEY_ENV[provider]}) để chạy ${model}`;
+}
+
+/** A provider error of the final approver, in Vietnamese for the operator (never the upstream body). */
+function approvalErrorMessage(error: unknown, provider: AiProvider, model: string): string {
+  const label = AI_PROVIDER_LABELS[provider];
+  if (!(error instanceof ApplicationException)) return `${label} gặp lỗi không rõ khi duyệt bài`;
+  if (error.message === INVALID_JSON_MESSAGE || error.message === SCHEMA_MISMATCH_MESSAGE) return `${label} trả kết quả duyệt sai định dạng, thử lại sau`;
+  switch (error.code) {
+    case ErrorCode.PLATFORM_AUTH_FAILED:
+      return provider === 'vpsttt'
+        ? `VPSTTT AI chưa cho key này dùng ${model} (kiểm tra quyền model và IP được phép của key trong mục AI API)`
+        : `${label} từ chối API key đã cấu hình`;
+    case ErrorCode.PLATFORM_RATE_LIMITED:
+      return `${label} đang giới hạn số lượt gọi (429), thử lại sau ít phút`;
+    case ErrorCode.VALIDATION_FAILED:
+      return `Bài quá dài để ${label} duyệt`;
+    case ErrorCode.INFRASTRUCTURE_UNAVAILABLE:
+      if (error.getStatus() === Number(HttpStatus.GATEWAY_TIMEOUT)) return `${label} trả lời quá thời gian chờ, thử lại sau`;
+      return /balance or quota/.test(error.message) ? `${label} hết số dư hoặc hạn mức` : `${label} tạm thời không phản hồi, thử lại sau`;
+    default:
+      return provider === 'vpsttt'
+        ? `VPSTTT AI từ chối yêu cầu duyệt (model ${model} không hợp lệ hoặc bài quá dài)`
+        : `${label} không xử lý được yêu cầu duyệt`;
+  }
 }
 
 /** Rate limits, provider outages and malformed JSON are worth one more attempt. */

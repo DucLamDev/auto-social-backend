@@ -2,6 +2,7 @@ import { ConflictException } from '@nestjs/common';
 import { CampaignStatus, ContentStatus, PlatformMode, VariantStatus } from '@prisma/client';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { AiContentService } from '../ai/ai-content.service';
+import { approvalHash } from '../ai/content-approval';
 import { AuditService } from '../audit/audit.service';
 import { sha256 } from '../common/utils/crypto.utils';
 import { PrismaService } from '../database/prisma.service';
@@ -91,7 +92,7 @@ describe('CampaignAutomationService', () => {
       $transaction: jest.fn((callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma)),
     });
     const ai = {
-      resolveProvider: providerResolver(),
+      resolveProvider: providerResolver(), approvalEnabled: () => false,
       assertReady: jest.fn().mockResolvedValue(undefined),
       generate: jest.fn().mockResolvedValue([{
         id: variantId,
@@ -138,7 +139,7 @@ describe('CampaignAutomationService', () => {
     };
     const unavailable = new Error('OPENAI_API_KEY is not configured');
     const ai = {
-      resolveProvider: providerResolver(),
+      resolveProvider: providerResolver(), approvalEnabled: () => false,
       assertReady: jest.fn().mockRejectedValue(unavailable),
       generate: jest.fn(),
     };
@@ -181,7 +182,7 @@ describe('CampaignAutomationService', () => {
       platformAccount: { findMany: platformFindMany },
       content: { findFirstOrThrow: jest.fn().mockResolvedValue({ id: contentId }) },
     };
-    const ai = { resolveProvider: providerResolver(), assertReady: jest.fn(), generate: jest.fn() };
+    const ai = { resolveProvider: providerResolver(), approvalEnabled: () => false, assertReady: jest.fn(), generate: jest.fn() };
     const campaigns = { publish: jest.fn(), get: jest.fn().mockResolvedValue(resultCampaign()) };
     const service = new CampaignAutomationService(
       prisma as unknown as PrismaService,
@@ -231,7 +232,7 @@ describe('CampaignAutomationService', () => {
     const service = new CampaignAutomationService(
       prisma as unknown as PrismaService,
       {
-        resolveProvider: providerResolver(), assertReady: jest.fn(), generate: jest.fn(),
+        resolveProvider: providerResolver(), approvalEnabled: () => false, assertReady: jest.fn(), generate: jest.fn(),
       } as unknown as AiContentService,
       campaigns as unknown as CampaignsService,
       { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
@@ -269,7 +270,7 @@ describe('CampaignAutomationService', () => {
     const service = new CampaignAutomationService(
       prisma as unknown as PrismaService,
       {
-        resolveProvider: providerResolver(), assertReady: jest.fn(), generate: jest.fn(),
+        resolveProvider: providerResolver(), approvalEnabled: () => false, assertReady: jest.fn(), generate: jest.fn(),
       } as unknown as AiContentService,
       campaigns as unknown as CampaignsService,
       { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
@@ -326,7 +327,7 @@ describe('CampaignAutomationService', () => {
       $transaction: jest.fn((callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma)),
     });
     const ai = {
-      resolveProvider: providerResolver(),
+      resolveProvider: providerResolver(), approvalEnabled: () => false,
       assertReady: jest.fn().mockResolvedValue(undefined),
       generate: jest.fn(),
     };
@@ -377,7 +378,7 @@ describe('CampaignAutomationService', () => {
       $transaction: jest.fn((callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma)),
     });
     const ai = {
-      resolveProvider: providerResolver(),
+      resolveProvider: providerResolver(), approvalEnabled: () => false,
       assertReady: jest.fn().mockResolvedValue(undefined),
       generate: jest.fn().mockResolvedValue([{
         id: variantId, platformId: account.platformId, status: VariantStatus.GENERATED, recommended: false, reason,
@@ -401,6 +402,48 @@ describe('CampaignAutomationService', () => {
     });
   });
 
+  it('with the final AI approver on, holds a passing draft it did not approve in needs-action, and approves one it passed', async () => {
+    const text = { title: null, body: 'Bài về VPS', hashtags: ['vps'] };
+    const approval = (status: string) => ({ status, approver: 'vpsttt:claude:opus', approverLabel: 'Claude Opus', textHash: approvalHash(text), startedAt: new Date().toISOString(), reasons: ['Hứa hẹn quá mức'] });
+    for (const [status, approved] of [['rejected', false], ['approved', true]] as const) {
+      const prisma = {
+        platformAccount: { findMany: jest.fn().mockResolvedValue([account]) },
+        campaign: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockImplementation((input: { data: { automationRequestHash: string } }) => ({
+            id: campaignId, ownerId, contentId, status: CampaignStatus.DRAFT, automationRequestHash: input.data.automationRequestHash,
+            automationErrorCode: null, updatedAt: new Date(), content: { id: contentId }, targets: [],
+          })),
+          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        content: { create: jest.fn().mockResolvedValue({ id: contentId }), update: jest.fn().mockResolvedValue({}), findFirstOrThrow: jest.fn().mockResolvedValue({ id: contentId }) },
+        contentVariant: { updateMany: jest.fn().mockResolvedValue({ count: approved ? 1 : 0 }) },
+        campaignTarget: { create: jest.fn().mockResolvedValue({ id: 'target-1' }) },
+        publishJob: { create: jest.fn().mockResolvedValue({ id: 'job-1' }) },
+      };
+      Object.assign(prisma, { $transaction: jest.fn((callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma)) });
+      const ai = {
+        resolveProvider: providerResolver(), approvalEnabled: () => true,
+        assertReady: jest.fn().mockResolvedValue(undefined),
+        generate: jest.fn().mockResolvedValue([{ id: variantId, platformId: account.platformId, status: VariantStatus.GENERATED, recommended: true, reason: 'Đạt', ...text, aiApproval: approval(status) }]),
+      };
+      const service = new CampaignAutomationService(
+        prisma as unknown as PrismaService,
+        ai as unknown as AiContentService,
+        { publish: jest.fn().mockResolvedValue(undefined), get: jest.fn().mockResolvedValue(resultCampaign()) } as unknown as CampaignsService,
+        { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
+      );
+      await service.automate(ownerId, dto, `request-key-approver-${status}`);
+      expect(prisma.contentVariant.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: approved ? [variantId] : [] } }) as unknown }));
+      expect(prisma.publishJob.create).toHaveBeenCalledWith({
+        data: expect.objectContaining(approved ? { status: 'SCHEDULED' } : {
+          status: 'NEEDS_ACTION', lastErrorCode: 'CONTENT_REVIEW_REQUIRED', lastErrorMessage: 'AI duyệt cuối (Claude Opus) từ chối: Hứa hẹn quá mức',
+        }) as unknown,
+      });
+    }
+  });
+
   it('rejects reuse of an idempotency key with a different payload', async () => {
     const prisma = {
       campaign: { findFirst: jest.fn().mockResolvedValue({
@@ -411,7 +454,7 @@ describe('CampaignAutomationService', () => {
     };
     const service = new CampaignAutomationService(
       prisma as unknown as PrismaService,
-      { resolveProvider: providerResolver(), assertReady: jest.fn() } as unknown as AiContentService,
+      { resolveProvider: providerResolver(), approvalEnabled: () => false, assertReady: jest.fn() } as unknown as AiContentService,
       {} as CampaignsService,
       { recordBestEffort: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
     );
@@ -614,7 +657,7 @@ describe('CampaignAutomationService', () => {
       };
       Object.assign(prisma, { $transaction: jest.fn((callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma)) });
       const ai = {
-        resolveProvider: providerResolver(),
+        resolveProvider: providerResolver(), approvalEnabled: () => false,
         assertReady: jest.fn().mockResolvedValue(undefined),
         generate: jest.fn().mockResolvedValue([
           { id: variantId, platformId: 'platform-pixelfed', status: VariantStatus.GENERATED, recommended: true, reason: 'Đạt',
