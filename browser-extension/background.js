@@ -32,8 +32,8 @@ const WAIT_USER_MS = 10 * 60_000;
 // Waiting tabs do not hold a flow; this only bounds how many tabs one Chrome owns.
 const MAX_OWNED_TABS = 8;
 const MAX_REPORT_MESSAGE = 450;
-// Concurrent publishing flows, each on a different site (origin).
-const MAX_ACTIVE_FLOWS = 2;
+// Concurrent publishing flows (one tab each), each on a different site (origin).
+const MAX_ACTIVE_FLOWS = 3;
 // Phases that hold one of the MAX_ACTIVE_FLOWS slots. Waiting tabs never do.
 const FLOW_PHASES = ['loading', 'authenticating', 'filling', 'submitted', 'verifying', 'reporting'];
 const MAX_LOGIN_CHECKS = 1;
