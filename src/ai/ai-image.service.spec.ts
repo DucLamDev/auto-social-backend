@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { AiImageService, IMAGE_ART_DIRECTION } from './ai-image.service';
+import { VpstttQuota } from './vpsttt-quota';
 
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('rest-of-image')]);
 
@@ -23,6 +24,22 @@ describe('AI image generation through VPSTTT AI', () => {
     const image = await serviceWith(configured, generate).generate('  A server rack in soft blue light  ', '1536x1024');
     expect(generate).toHaveBeenCalledWith({ model: 'vpsttt-image', prompt: `A server rack in soft blue light\n\n${IMAGE_ART_DIRECTION}`, size: '1536x1024', n: 1, response_format: 'b64_json' });
     expect(image).toEqual({ bytes: PNG, mimeType: 'image/png', model: 'vpsttt-image' });
+  });
+
+  it('draws VPSTTT images inside the quota the writing calls share, so text and images never exceed it together', async () => {
+    const quota = new VpstttQuota(new ConfigService({ VPSTTT_AI_MAX_CONCURRENCY: '1', VPSTTT_AI_RPM: '600' }));
+    let release!: () => void;
+    const writing = quota.run(() => new Promise<void>((resolve) => { release = resolve; }));
+    const generate = jest.fn().mockResolvedValue({ data: [{ b64_json: PNG.toString('base64') }] });
+    const service = new AiImageService(new ConfigService(configured), quota);
+    Object.assign(service as unknown as { client: unknown }, { client: { images: { generate } } });
+    const image = service.generate('prompt', '1024x1024');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The one slot is taken by a writing call: the image waits for it.
+    expect(generate).not.toHaveBeenCalled();
+    release(); await writing;
+    await expect(image).resolves.toMatchObject({ mimeType: 'image/png' });
+    expect(generate).toHaveBeenCalledTimes(1);
   });
 
   it('rejects bytes that are not an image', async () => {

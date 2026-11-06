@@ -91,7 +91,8 @@ sinh nội dung, hạn mức), dán địa chỉ hiện trong mục đó vào `V
 `127.0.0.1` ngoài production). API này chỉ nhận `model`, `messages` dạng chữ và `stream=false`, tối đa 100.000 ký tự mỗi
 lượt; backend đưa khuôn JSON vào lời dặn hệ thống, cắt phần nhập quá dài, bóc JSON khỏi khối code và kiểm tra lại như
 các provider khác. Mỗi lượt chạy một phiên Claude/Codex nên chậm: backend giới hạn `VPSTTT_AI_MAX_CONCURRENCY` lượt cùng
-lúc và rải đều `VPSTTT_AI_RPM` lượt mỗi phút, đặt hai số này không vượt hạn mức của key (mặc định của IDE: 2 và 10). Một
+lúc và rải đều `VPSTTT_AI_RPM` lượt mỗi phút (chừa 1 lượt), tính chung cho viết bài và tạo ảnh vì IDE đếm chung; đặt hai số
+này không vượt hạn mức của key (mặc định của IDE: 2 và 10). Bị từ chối vì hạn mức thì backend chờ 15, 30, 60 giây rồi thử lại. Một
 bài cho mỗi nền tảng cần 2–7 lượt (viết, chấm, viết lại tối đa 2 lần khi chưa đạt, thêm 1 lượt rút gọn khi còn quá dài; giữ bản điểm cao nhất), nên với 10
 lượt/phút nên chọn khoảng 6–8 nền tảng mỗi lần tạo tự động. Model: `claude:haiku` (nhanh), `claude:sonnet`, `claude:opus`, `gpt:`.
 
@@ -130,7 +131,7 @@ Bài đạt từ 7/10. Ở Content đợi duyệt:
 - bạn sửa tay trong lúc AI đang viết thì giữ bản bạn sửa.
 
 **Gợi ý chiến dịch** (từ backend 1.23.0): `POST /api/v1/ai/campaign-suggestions` với `platformSlugs` (1–50), tuỳ chọn
-`hint` (tối đa 300 ký tự) và `aiProvider`. Trả về 4 gợi ý `{ name, brief, angle, whyEffective, bestFor }` dựa trên hồ sơ
+`hint` (tối đa 300 ký tự) và `aiProvider`. Trả về 4 gợi ý `{ name, brief, angle, whyEffective, platformFit }`, mỗi gợi ý dùng được cho tất cả nền tảng đã chọn, dựa trên hồ sơ
 thương hiệu, luật viết của các nền tảng đã chọn và kết quả 12 chiến dịch gần nhất (điểm AI, số bài đã đăng). Một lượt AI,
 không lưu gì; hộp **Tạo nội dung hàng loạt** dùng gợi ý để điền tên chiến dịch và mô tả bài đăng.
 

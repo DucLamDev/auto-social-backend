@@ -37,6 +37,7 @@ import {
   SuggestionsOutput, SuggestionsSchema, suggestionsJsonSchema,
 } from './campaign-suggestions';
 import { ProviderThrottle } from './provider-throttle';
+import { VpstttQuota } from './vpsttt-quota';
 import {
   AI_PROVIDER_IDS,
   AI_PROVIDER_LABELS,
@@ -113,6 +114,12 @@ const DEFAULT_GEMINI_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
 const GEMINI_PRIMARY_MAX_ATTEMPTS = 2;
 const GEMINI_RETRY_DELAY_MS = 750;
 const GENERATION_RETRY_DELAY_MS = 2_000;
+/**
+ * Waits before retrying a call refused for quota (429) or a busy provider (503):
+ * the IDE AI API counts a user's calls over the last minute, so a 2-second retry
+ * is refused again and one refusal used to stop a whole campaign.
+ */
+const QUOTA_RETRY_DELAYS_MS = [15_000, 30_000, 60_000];
 const INVALID_JSON_MESSAGE = 'AI returned invalid JSON';
 const SCHEMA_MISMATCH_MESSAGE = 'AI output did not match the required schema';
 const MAX_REASON_LENGTH = 1_000;
@@ -419,6 +426,7 @@ export class AiContentService {
     private readonly config: ConfigService,
     private readonly geminiKeys: GeminiKeyPoolService,
     @Optional() private readonly brandProfiles?: BrandProfileService,
+    @Optional() vpstttQuota?: VpstttQuota,
   ) {
     const configuredDefault = config.get<string>('AI_DEFAULT_PROVIDER', 'openai').trim().toLowerCase();
     this.defaultProvider = isAiProvider(configuredDefault) ? configuredDefault : 'openai';
@@ -440,7 +448,8 @@ export class AiContentService {
       config.get<number>('OPENAI_TIMEOUT_MS', 60_000),
     );
     this.vpstttBaseUrl = config.get<string>('VPSTTT_AI_BASE_URL')?.trim() || undefined;
-    this.vpstttThrottle = new ProviderThrottle(
+    // Shared with image generation: the IDE counts both against one quota.
+    this.vpstttThrottle = vpstttQuota?.throttle ?? new ProviderThrottle(
       Number(config.get<number>('VPSTTT_AI_MAX_CONCURRENCY', 2)),
       Number(config.get<number>('VPSTTT_AI_RPM', 10)),
     );
@@ -520,7 +529,7 @@ export class AiContentService {
       suggestionInput({ brandBlock: brandProfileBlock(brand), platforms, past, platformScores, hint: input.hint }),
       SUGGESTIONS_SPEC,
     ));
-    const suggestions = cleanSuggestions(output, platforms.map((platform) => platform.name));
+    const suggestions = cleanSuggestions(output);
     if (!suggestions.length) throw new ApplicationException(ErrorCode.PLATFORM_API_ERROR, 'AI chưa đưa ra gợi ý dùng được. Thử lại hoặc chọn nhà cung cấp AI khác.', HttpStatus.BAD_GATEWAY);
     return { suggestions };
   }
@@ -969,12 +978,16 @@ export class AiContentService {
   }
 
   private async withGenerationRetry<T>(request: () => Promise<T>): Promise<T> {
-    try {
-      return await request();
-    } catch (error) {
-      if (!isRetryableGenerationError(error)) throw error;
-      await this.delay(GENERATION_RETRY_DELAY_MS);
-      return request();
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await request();
+      } catch (error) {
+        if (!isRetryableGenerationError(error)) throw error;
+        const status = error instanceof ApplicationException ? error.getStatus() : 0;
+        const waits = status === HttpStatus.TOO_MANY_REQUESTS || status === HttpStatus.SERVICE_UNAVAILABLE ? QUOTA_RETRY_DELAYS_MS : [GENERATION_RETRY_DELAY_MS];
+        if (attempt >= waits.length) throw error;
+        await this.delay(waits[attempt]!);
+      }
     }
   }
 

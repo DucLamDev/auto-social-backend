@@ -1,6 +1,20 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.23.2 · 06/11/2026
+### Sửa lỗi
+- Tạo bài hàng loạt bằng VPSTTT AI không còn dừng giữa chừng vì "đạt hạn mức"
+  - AI API của IDE giới hạn chung mỗi người dùng (mặc định 2 lượt chạy cùng lúc, 10 lượt mỗi phút) cho cả viết bài lẫn
+    tạo ảnh. Backend lại điều tốc viết bài và tạo ảnh riêng nên cộng lại vượt hạn mức: IDE trả "Đã đạt hạn mức API",
+    backend chỉ thử lại một lần sau 2 giây rồi dừng cả lượt (chiến dịch 21 kênh chỉ tạo được 4).
+  - Nay viết bài và tạo ảnh dùng chung một bộ điều tốc theo hạn mức của key, chừa 1 lượt mỗi phút cho độ trễ mạng.
+  - Gặp giới hạn lượt (429) hoặc AI bận (503) thì chờ 15, 30 rồi 60 giây và thử lại, thay vì một lần sau 2 giây.
+  - Bấm **Thử lại** ở chiến dịch lỗi: chỉ các kênh chưa tạo được mới được viết lại.
+- Gợi ý chiến dịch phù hợp với **tất cả** các social đã chọn
+  - Mỗi gợi ý phải dùng được cho mọi nền tảng đã chọn cùng lúc (một mô tả bài chung, AI viết lại theo từng nền tảng),
+    theo luật chặt nhất trong số đó; không còn gợi ý chỉ hợp một vài nền tảng.
+  - Trường `bestFor` (nền tảng hợp nhất) thay bằng `platformFit`: cách dùng gợi ý cho từng nhóm nền tảng đã chọn.
+
 ## 1.23.1 · 06/11/2026
 ### Sửa lỗi
 - Xoá được tài khoản có bài treo từ lâu ở "tiện ích không xác nhận được kết quả"
