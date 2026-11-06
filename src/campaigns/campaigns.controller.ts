@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '@prisma/client';
 import type { Request } from 'express';
@@ -12,6 +12,7 @@ import {
   ApiOkEnvelope,
   AutomatedCampaignContractDto,
   CampaignContractDto,
+  DeletedCampaignContractDto,
 } from '../common/swagger/api-contract.dto';
 import { CampaignAutomationService } from './campaign-automation.service';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
@@ -112,6 +113,12 @@ export class CampaignsController {
   @ApiCreatedEnvelope(AutomatedCampaignContractDto)
   @Roles(RoleName.ADMIN, RoleName.EDITOR)
   reject(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) { return this.automation.reject(user.id, id); }
+
+  /** Removes an AI run from "Content đợi duyệt" (not while writing, publishing or once a post is live). */
+  @Delete(':id')
+  @ApiOkEnvelope(DeletedCampaignContractDto)
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  remove(@CurrentUser() user: AuthenticatedUser, @Param('id', ParseUUIDPipe) id: string) { return this.automation.remove(user.id, id); }
 
   @Post(':id/publish')
   @ApiCreatedEnvelope(CampaignContractDto)
