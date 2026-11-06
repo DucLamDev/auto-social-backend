@@ -613,6 +613,16 @@ describe('AiContentService quality-checked generation', () => {
           prompts: [{ systemPrompt: 'System', userTemplate: 'Title or brief: {{title}}\nSummary: {{summary}}\n{{body}}' }],
         }),
       },
+      campaign: {
+        findMany: jest.fn().mockResolvedValue([{
+          name: 'Giới thiệu proxy',
+          content: { body: 'Giới thiệu proxy, VPS của vpsttt qua chia sẻ kiến thức', variants: [
+            { reason: 'Cần xem lại (AI chấm 6/10): Mở bài chung chung', platform: { name: 'Bluesky' } },
+            { reason: 'Hợp người đọc (AI chấm 8/10)', platform: { name: 'NGINX Community' } },
+          ] },
+          targets: [{ publishJobs: [{ publishedPost: { id: 'p1' } }, { publishedPost: null }] }],
+        }]),
+      },
       $transaction: jest.fn((callback: (client: typeof transaction) => Promise<unknown>) => callback(transaction)),
     };
     const config = isolatedConfig();
@@ -891,6 +901,28 @@ describe('AiContentService quality-checked generation', () => {
     const { service } = setup(create);
     await service.generate('owner-1', 'content-1', ['bluesky'], 'openai');
     expect(request(create, 1).instructions).not.toContain('revises an earlier version');
+  });
+
+  it('suggests campaigns from the brand, the chosen platforms and past scores, keeping only usable ideas', async () => {
+    const idea = (name: string, bestFor: string[]) => ({ name, brief: 'Hướng dẫn tối ưu NGINX trên VPS 2 GB: worker_processes, gzip, cache; gắn VPS NVMe của VPSTTT.', angle: 'Hướng dẫn', whyEffective: 'Giải quyết vấn đề thật.', bestFor });
+    const create = jest.fn().mockResolvedValueOnce({ output_text: JSON.stringify({ suggestions: [
+      idea('Tối ưu NGINX trên VPS nhỏ', ['Bluesky', 'Facebook']), idea('Tối ưu NGINX trên VPS nhỏ', []), { ...idea('x', []), name: 'x' },
+    ] }) });
+    const { service } = setup(create);
+    const result = await service.suggestCampaigns('owner-1', { platformSlugs: ['bluesky', 'nginx-community', 'unknown-site'], hint: 'proxy dân cư' }, 'openai');
+
+    const sent = request(create, 0);
+    expect(sent.text.format.name).toBe('campaign_suggestions');
+    expect(sent.instructions).toContain('The company and its product appear as the natural solution or tool, at most once per post; never an advertisement.');
+    expect(sent.input).toContain('Brand: VPSTTT');
+    expect(sent.input).toMatch(/- Bluesky \(social, at most 300 characters\)/);
+    expect(sent.input).toContain('- NGINX Community (');
+    expect(sent.input).not.toContain('unknown-site');
+    expect(sent.input).toContain('"Giới thiệu proxy": Giới thiệu proxy, VPS của vpsttt qua chia sẻ kiến thức (drafts: 2, average editor score: 7/10, published: 1)');
+    expect(sent.input).toContain('- Bluesky: 6/10 over 1 drafts');
+    expect(sent.input).toContain('The operator wants ideas about: proxy dân cư');
+    // Duplicates and empty ideas are dropped; bestFor keeps only chosen platforms.
+    expect(result.suggestions).toEqual([expect.objectContaining({ name: 'Tối ưu NGINX trên VPS nhỏ', bestFor: ['Bluesky'] })]);
   });
 
   it('stops rewriting as soon as a rewrite passes', async () => {
