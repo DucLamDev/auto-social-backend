@@ -1,6 +1,14 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.23.1 · 06/11/2026
+### Sửa lỗi
+- Xoá được tài khoản có bài treo từ lâu ở "tiện ích không xác nhận được kết quả"
+  Khi tiện ích bấm đăng mà không xác nhận được kết quả, bài vẫn được ghi là tiện ích đang giữ để kết quả đến muộn vẫn
+  nhận được. Lệnh xoá tài khoản coi các bài này là đang đăng mãi mãi, nên báo "Đang có bài chờ đăng hoặc đang đăng"
+  dù bài đã treo cả ngày. Nay chỉ bài tiện ích nhận trong 10 phút gần nhất (thời hạn tiện ích giữ một bài) mới chặn
+  xoá. Bài trên trang social không bị đụng tới; lịch sử bài của tài khoản bị xoá cùng tài khoản như trước.
+
 ## 1.23.0 · 06/11/2026
 ### Tính năng
 - Gợi ý chiến dịch và mô tả bài đăng bằng AI (`POST /api/v1/ai/campaign-suggestions`, quyền ADMIN / EDITOR)

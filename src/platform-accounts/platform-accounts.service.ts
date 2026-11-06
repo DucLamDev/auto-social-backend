@@ -12,6 +12,7 @@ import { hasUsableBrowserStorageState } from '../connectors/browser/browser-sess
 import { RedisService } from '../queue/redis.service';
 import { RedisLockLease } from '../queue/redis-lock-lease';
 import { sha256 } from '../common/utils/crypto.utils';
+import { EXTENSION_CLAIM_TIMEOUT_MS } from '../extension-agent/stale-claims';
 
 const safeAccountSelect = {
   id: true,
@@ -482,8 +483,10 @@ export class PlatformAccountsService {
               platformAccountId: account.id,
               OR: [
                 { status: { in: IN_FLIGHT_JOB_STATUSES } },
-                // Chrome has claimed this post and may be submitting it right now.
-                { status: PublishJobStatus.NEEDS_ACTION, lockedAt: { not: null } },
+                // Chrome claimed this post moments ago and may be submitting it right now. A claim
+                // older than the claim timeout is kept only so a late report can still land; Chrome
+                // has given that tab up, so it no longer blocks the delete.
+                { status: PublishJobStatus.NEEDS_ACTION, lockedAt: { gte: new Date(Date.now() - EXTENSION_CLAIM_TIMEOUT_MS) } },
               ],
             },
           });

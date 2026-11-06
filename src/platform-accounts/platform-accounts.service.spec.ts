@@ -550,8 +550,12 @@ describe('PlatformAccountsService.removeMany', () => {
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ['dup', 'busy', 'someone-else'] }, ownerId: 'owner-1' } }));
     // Posts go before their jobs, jobs before targets, the account last; nothing of "busy" is touched.
     expect(calls).toEqual(['posts:', 'jobs:dup', 'targets:dup', 'account:dup']);
-    // A post Chrome has claimed counts as in flight.
-    expect(transaction.publishJob.count).toHaveBeenCalledWith({ where: { platformAccountId: 'busy', OR: expect.arrayContaining([{ status: 'NEEDS_ACTION', lockedAt: { not: null } }]) as unknown } });
+    // A post Chrome claimed less than 10 minutes ago counts as in flight; an older, silent claim does not.
+    const where = (transaction.publishJob.count.mock.calls[1] as [{ where: { platformAccountId: string; OR: Array<{ status: unknown; lockedAt?: { gte: Date } }> } }])[0].where;
+    expect(where.platformAccountId).toBe('busy');
+    const claim = where.OR.find((condition) => condition.status === 'NEEDS_ACTION');
+    expect(Date.now() - claim!.lockedAt!.gte.getTime()).toBeGreaterThanOrEqual(10 * 60_000 - 1_000);
+    expect(Date.now() - claim!.lockedAt!.gte.getTime()).toBeLessThan(10 * 60_000 + 5_000);
   });
 
   it('keeps going when one account fails and reports it as not deleted', async () => {
