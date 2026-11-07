@@ -125,7 +125,8 @@ export class ExtensionLoginCheckService {
     return { kind: 'LOGIN_CHECK', jobId: check.id, targetOrigin: auth.origin, openUrl: movedUrl(typeof target.url === 'string' ? target.url : auth.origin),
       auth: check.verifyOnly ? { ...auth, autoLogin: false, autoTotp: false } : auth,
       account: { id: check.account.id, name: check.account.name, platform: check.account.platform.name },
-      recipe: { engine: target.engine ?? object(check.account.settings).extensionEngine ?? 'generic', workflow: 'login' } };
+      recipe: { engine: target.engine ?? object(check.account.settings).extensionEngine ?? 'generic', workflow: 'login' },
+      uiRecovery: { enabled: this.config?.get<boolean>('EXTENSION_UI_RECOVERY_ENABLED') === true } };
     });
   }
 

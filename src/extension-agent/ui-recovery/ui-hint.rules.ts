@@ -3,7 +3,7 @@ import type { StructuredSpec } from '../../ai/ai-content.service';
 import type { ExtensionRecipe } from '../../connectors/extension/extension-delivery';
 import { MAX_UI_CANDIDATES, UiCandidateDto, UiHintField } from './ui-hint.dto';
 
-export type UiCandidate = Pick<UiCandidateDto, 'index' | 'kind' | 'tag' | 'type' | 'role' | 'label' | 'placeholder' | 'text' | 'name' | 'id' | 'inDialog' | 'inForm' | 'disabled' | 'selector'>;
+export type UiCandidate = Pick<UiCandidateDto, 'index' | 'kind' | 'tag' | 'type' | 'role' | 'label' | 'placeholder' | 'text' | 'name' | 'id' | 'inDialog' | 'inForm' | 'disabled' | 'region' | 'inArticle' | 'selector'>;
 
 /**
  * Page text is untrusted: emails, long opaque strings (tokens, ids) and long
@@ -40,6 +40,8 @@ export function sanitizeCandidates(candidates: UiCandidateDto[]): UiCandidate[] 
       inDialog: candidate.inDialog,
       inForm: candidate.inForm,
       disabled: candidate.disabled,
+      ...(candidate.region ? { region: candidate.region } : {}),
+      ...(candidate.inArticle !== undefined ? { inArticle: candidate.inArticle } : {}),
       selector: candidate.selector.replace(/[\r\n]/g, ' ').slice(0, 300),
     };
   });

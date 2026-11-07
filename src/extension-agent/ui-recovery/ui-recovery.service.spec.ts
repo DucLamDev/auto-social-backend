@@ -67,7 +67,7 @@ describe('ExtensionUiRecoveryService', () => {
   it('limits a task to two hints, not counting AI form fills', async () => {
     const { service, prisma } = setup({ hints: 2 });
     await expect(service.request(device, 'job-1', dto)).rejects.toThrow('already used');
-    expect(prisma.extensionUiHint.count).toHaveBeenCalledWith({ where: { publishJobId: 'job-1', NOT: { missing: { has: 'form' } } } });
+    expect(prisma.extensionUiHint.count).toHaveBeenCalledWith({ where: { publishJobId: 'job-1', NOT: { missing: { hasSome: ['form', 'auth'] } } } });
   });
 
   it('refuses a task that this device does not hold', async () => {

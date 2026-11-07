@@ -30,6 +30,16 @@
   / Nháp), độ tin cậy, và selector luôn lấy từ danh sách gốc. Chữ trên trang được coi là dữ liệu không tin cậy.
 - Gợi ý chưa duyệt chỉ được dùng để điền sẵn, tiện ích không tự bấm Đăng; ADMIN duyệt (web hoặc MCP, có `AuditLog`) thì
   mới dùng cùng tự đăng, và chỉ cho đúng chủ sở hữu, engine, origin đó. Gợi ý bị từ chối không được dùng lại.
+- Bước đăng nhập (cùng cờ): khi tiện ích không nhận ra trang đăng nhập của một bài đăng hoặc lượt Test, AI chỉ số thứ tự
+  của chỗ hiện tài khoản, nút mở menu tài khoản hoặc nút đăng nhập. Chỉ thiết bị đang giữ đúng bài / lượt Test gọi được,
+  trang phải ở origin đích hoặc origin đăng nhập đã cấu hình của tài khoản (không bao giờ trang Google), tối đa 2 lần mỗi
+  bài / lượt Test, chung hạn mức 20 lần/giờ. Không gửi ô nhập, giá trị, mật khẩu; AI chỉ biết username cần tìm.
+- AI không quyết định tài khoản: tiện ích tự đọc chữ / link ở chỗ đó và so với username / URL hồ sơ đã cấu hình; nhãn
+  chung ("Account") không bao giờ được tính. Backend chỉ nhận chỗ hiện tài khoản nằm ở đầu trang / điều hướng / thanh
+  bên / menu, không nằm trong bài viết; nút đăng nhập phải có chữ đăng nhập, không phải nút gửi form, không đăng ký.
+  Tiện ích không bấm gì nằm trong form có ô mật khẩu.
+- Chỗ hiện tài khoản đã khớp được lưu làm CSS nhận diện của tài khoản (`identitySelectorSource: 'ai'`, ghi `AuditLog`);
+  không bao giờ ghi đè CSS người vận hành tự đặt.
 
 ## MCP (Codex)
 

@@ -568,6 +568,21 @@ test('MeWe confirms the account from its own API or the own profile link, never 
   } finally { await page.close(); }
 });
 
+test('an element an AI hint pointed at is read and compared by the extension itself', async () => {
+  const page = await pageAt('https://social.test/home', '<header><a class="me" href="/u/vpsttt"><img alt="VPSTTT" style="width:20px;height:20px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"></a>'
+    + '<button class="acct" aria-label="Account" style="width:20px;height:20px"></button></header><main>Feed</main>');
+  const scoped = (expectedUsername, aiIdentitySelector) => ({ ...job, targetOrigin: 'https://social.test', recipe: { engine: 'generic' }, aiIdentitySelector,
+    auth: { ...job.auth, provider: 'google', expectedUsername, profileUrl: '' } });
+  try {
+    assert.deepEqual(await page.evaluate(accountAuthStep, { job: scoped('vpsttt', 'header a.me') }),
+      { state: 'authenticated', url: 'https://social.test/home', detectedUsername: 'VPSTTT', aiIdentity: true });
+    // The element is the own-profile link of someone else: that account is named.
+    assert.deepEqual(await page.evaluate(accountAuthStep, { job: scoped('vpsttt_group', 'header a.me') }), { state: 'mismatch', url: 'https://social.test/home', detectedUsername: 'vpsttt' });
+    // A generic label proves nothing either way.
+    assert.ok(!['authenticated', 'mismatch'].includes((await page.evaluate(accountAuthStep, { job: scoped('vpsttt', 'header button.acct') })).state));
+  } finally { await page.close(); }
+});
+
 test('a site without a known marker is identified by its own profile link in the navigation', async () => {
   const page = await pageAt('https://daily.dev/', '<aside><a href="/vpsttt"><img alt="" style="width:20px;height:20px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"></a></aside><main><a href="/someone">someone</a></main>');
   const scoped = { ...job, targetOrigin: 'https://daily.dev', recipe: { engine: 'generic' }, auth: { ...job.auth, provider: 'google', expectedUsername: 'vpsttt', profileUrl: 'https://daily.dev/vpsttt' } };

@@ -54,6 +54,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
       }
       if (injection.func.name === 'submitDiscoursePost') return [{ result: state.directResult ?? { status: 'fallback' } }];
       if (injection.func.name === 'collectUiCandidates') return [{ result: state.candidates ?? null }];
+      if (injection.func.name === 'clickAuthElement') { (state.authClicks ??= []).push(injection.args[0]); return [{ result: state.authClickResult ?? true }]; }
       if (injection.func.name === 'verifyUiSelectors') return [{ result: state.verified ?? injection.args[0].selectors }];
       if (injection.func.name === 'collectFormControls') return [{ result: state.formControls ?? null }];
       if (injection.func.name === 'applyFormActions') {
@@ -86,7 +87,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     accountAuthStep: function accountAuthStep() {},
     submitDiscoursePost: function submitDiscoursePost() {},
     showPublishNotice: function showPublishNotice() {},
-    collectUiCandidates: function collectUiCandidates() {}, verifyUiSelectors: function verifyUiSelectors() {},
+    collectUiCandidates: function collectUiCandidates() {}, verifyUiSelectors: function verifyUiSelectors() {}, clickAuthElement: function clickAuthElement() {},
     collectFormControls: function collectFormControls() {}, applyFormActions: function applyFormActions() {},
     PROXY_STORAGE_KEY: 'proxy',
     registerProxyAuth: () => { state.proxyAuthRegistered = (state.proxyAuthRegistered ?? 0) + 1; },
@@ -102,6 +103,12 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
         (state.formFillRequests ??= []).push({ url, method: options.method, body: options.body ? JSON.parse(options.body) : null });
         const answer = typeof state.formFill === 'function' ? state.formFill(state.formFillRequests.length) : state.formFill;
         if (answer instanceof Error) return { ok: false, status: 404, json: async () => ({ success: false, error: { message: answer.message } }) };
+        return { ok: true, json: async () => ({ success: true, data: answer }) };
+      }
+      if (url.includes('/auth-hint')) {
+        (state.authHintRequests ??= []).push({ url, method: options.method, body: options.body ? JSON.parse(options.body) : null });
+        const answer = url.endsWith('/confirm') ? { saved: true } : typeof state.authHint === 'function' ? state.authHint(state.authHintRequests.length) : state.authHint;
+        if (answer instanceof Error || answer === undefined) return { ok: false, status: 404, json: async () => ({ success: false, error: { message: answer?.message ?? 'AI-assisted UI recovery is disabled' } }) };
         return { ok: true, json: async () => ({ success: true, data: answer }) };
       }
       if (url.includes('/ui-hint')) {
@@ -905,6 +912,38 @@ test('a publish job proves the account on its profile page, then fills the compo
   assert.deepEqual(state.openedUrls, [profileUrl, job.openUrl]);
   assert.equal(proceeded, true);
   assert.equal(state.reports.length, 0);
+});
+
+test('an unrecognised "Test" page asks the AI, checks the account element itself, then keeps it for the account', async () => {
+  const { state, worker, chrome } = setup();
+  state.candidates = { url: 'https://forum.test/home', candidates: [{ index: 0, kind: 'image', tag: 'img', label: 'VPSTTT', region: 'header', inDialog: false, inForm: false, disabled: false, selector: 'header img' }] };
+  state.authHint = { hintId: 'h1', status: 'READY', signedIn: 'yes', selectors: { account: 'header img' } };
+  // The probe only confirms once it reads the element the AI pointed at.
+  state.authResult = ({ job: current }) => current.aiIdentitySelector === 'header img'
+    ? { state: 'authenticated', url: 'https://forum.test/home', detectedUsername: 'VPSTTT', aiIdentity: true } : { state: 'unknown', url: 'https://forum.test/home' };
+  await worker.authenticateTask({ tabId: 8, authActivated: true, authUnknownSince: Date.now() - 9_000, job: { ...loginCheck(), uiRecovery: { enabled: true } } });
+  assert.equal(state.reports[0].outcome, 'AUTHENTICATED');
+  assert.deepEqual(state.authHintRequests.map(request => request.url.replace(/^.*\/login-checks\/[^/]+/, '')), ['/auth-hint', '/auth-hint/h1/confirm']);
+  assert.deepEqual(state.authHintRequests[1].body, { selector: 'header img' });
+  const { history } = await chrome.storage.local.get('history');
+  assert.ok(history.some(entry => entry.outcome === 'AI_HINT'), 'the AI step shows in the popup history');
+});
+
+test('an AI menu or sign-in pick is clicked; without a usable answer the "Test" stops as before', async () => {
+  const menu = setup();
+  menu.state.candidates = { url: 'https://forum.test/home', candidates: [{ index: 0, kind: 'button', tag: 'button', label: 'Account', region: 'header', inDialog: false, inForm: false, disabled: false, selector: 'header button' }] };
+  menu.state.authHint = { hintId: 'h1', status: 'READY', signedIn: 'yes', selectors: { accountMenu: 'header button' } };
+  menu.state.authResult = () => (menu.state.authClicks?.length ? { state: 'authenticated', url: 'https://forum.test/home' } : { state: 'unknown', url: 'https://forum.test/home' });
+  await menu.worker.authenticateTask({ tabId: 8, authActivated: true, authUnknownSince: Date.now() - 9_000, job: { ...loginCheck(), uiRecovery: { enabled: true } } });
+  assert.deepEqual(JSON.parse(JSON.stringify(menu.state.authClicks)), [{ selector: 'header button', purpose: 'accountMenu' }]);
+  assert.equal(menu.state.reports[0].outcome, 'AUTHENTICATED');
+
+  const none = setup();
+  none.state.candidates = menu.state.candidates;
+  none.state.authHint = new Error('AI-assisted UI recovery is disabled');
+  none.state.authResult = { state: 'unknown', url: 'https://forum.test/home' };
+  await none.worker.authenticateTask({ tabId: 8, authActivated: true, authUnknownSince: Date.now() - 9_000, job: { ...loginCheck(), uiRecovery: { enabled: true } } });
+  assert.match(none.state.reports[0].message, /chưa nhận diện được form đăng nhập/);
 });
 
 test('a profile on another site is never opened during a login check', async () => {

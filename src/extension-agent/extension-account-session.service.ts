@@ -14,6 +14,8 @@ export interface ExtensionSession {
   expectedUsername: string;
   profileUrl: string;
   identitySelector: string;
+  /** 'ai' when the extension learned it from a confirmed AI sign-in hint; the operator's own selector has none. */
+  identitySelectorSource?: 'ai';
   origin: string;
   provider: 'password' | 'google';
   autoLogin: boolean;

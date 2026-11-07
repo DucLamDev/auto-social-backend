@@ -617,7 +617,9 @@ model McpToken {
 model ExtensionUiHint {
   id           String          @id @default(uuid()) @db.Uuid
   ownerId      String          @db.Uuid
-  publishJobId String          @db.Uuid
+  /// Exactly one of publishJobId / loginCheckId: a publish job, or a "Test" login check (sign-in hints).
+  publishJobId String?         @db.Uuid
+  loginCheckId String?         @db.Uuid
   deviceId     String          @db.Uuid
   engine       String
   origin       String
@@ -631,10 +633,12 @@ model ExtensionUiHint {
   errorCode    String?
   createdAt    DateTime        @default(now())
   finishedAt   DateTime?
-  job          PublishJob      @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
+  job          PublishJob?     @relation(fields: [publishJobId], references: [id], onDelete: Cascade)
+  loginCheck   ExtensionLoginCheck? @relation(fields: [loginCheckId], references: [id], onDelete: Cascade)
   device       ExtensionDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@index([publishJobId, createdAt])
+  @@index([loginCheckId, createdAt])
   @@index([ownerId, createdAt])
   @@map("extension_ui_hints")
 }
@@ -687,6 +691,7 @@ model ExtensionLoginCheck {
   createdAt DateTime @default(now())
   account PlatformAccount @relation(fields: [platformAccountId], references: [id], onDelete: Cascade)
   device ExtensionDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  uiHints ExtensionUiHint[]
 
   @@index([deviceId, status, createdAt])
   @@index([platformAccountId, createdAt])

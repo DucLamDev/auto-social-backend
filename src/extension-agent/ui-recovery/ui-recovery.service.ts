@@ -8,6 +8,7 @@ import { EXTENSION_CONNECTOR_KEY, EXTENSION_RECIPES, parseExtensionDeliverySetti
 import { PrismaService } from '../../database/prisma.service';
 import { RedisService } from '../../queue/redis.service';
 import type { AuthenticatedDevice } from '../extension-agent.service';
+import { AUTH_HINT } from './auth-hint.rules';
 import { UiHintField, UiHintRequestDto } from './ui-hint.dto';
 import { sanitizeCandidates, UI_HINT_INSTRUCTIONS, UI_HINT_SPEC, UiCandidate, validateHint } from './ui-hint.rules';
 
@@ -76,7 +77,7 @@ export class ExtensionUiRecoveryService {
     const origin = new URL(settings.targetUrl).origin;
     const page = new URL(dto.url);
     if (page.origin !== origin) throw new BadRequestException('The page is not on this task destination');
-    if (await this.prisma.extensionUiHint.count({ where: { publishJobId: job.id, NOT: { missing: { has: FORM_FILL_HINT } } } }) >= MAX_HINTS_PER_JOB) {
+    if (await this.prisma.extensionUiHint.count({ where: { publishJobId: job.id, NOT: { missing: { hasSome: [FORM_FILL_HINT, AUTH_HINT] } } } }) >= MAX_HINTS_PER_JOB) {
       throw new HttpException('This task already used its AI hints', HttpStatus.TOO_MANY_REQUESTS);
     }
     const usage = await this.redis?.consumeRateLimit(uiHintRateKey(device.id), HINTS_PER_DEVICE_PER_HOUR, 3_600);

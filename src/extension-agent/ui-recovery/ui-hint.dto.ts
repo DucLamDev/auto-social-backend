@@ -6,7 +6,11 @@ import {
 
 export const UI_HINT_FIELDS = ['title', 'body', 'submit', 'opener'] as const;
 export type UiHintField = (typeof UI_HINT_FIELDS)[number];
-export const UI_CANDIDATE_KINDS = ['input', 'textarea', 'contenteditable', 'textbox', 'button', 'submit', 'link'] as const;
+// image / text: avatars and names in the page header, collected only for sign-in hints.
+export const UI_CANDIDATE_KINDS = ['input', 'textarea', 'contenteditable', 'textbox', 'button', 'submit', 'link', 'image', 'text'] as const;
+/** Where an element sits; sign-in hints use it to keep feed posts out of the account check. */
+export const UI_CANDIDATE_REGIONS = ['header', 'nav', 'aside', 'menu', 'main'] as const;
+export type UiCandidateRegion = (typeof UI_CANDIDATE_REGIONS)[number];
 export type UiCandidateKind = (typeof UI_CANDIDATE_KINDS)[number];
 export const MAX_UI_CANDIDATES = 60;
 
@@ -25,6 +29,8 @@ export class UiCandidateDto {
   @ApiProperty() @IsBoolean() inDialog!: boolean;
   @ApiProperty() @IsBoolean() inForm!: boolean;
   @ApiProperty() @IsBoolean() disabled!: boolean;
+  @ApiPropertyOptional({ enum: UI_CANDIDATE_REGIONS }) @IsOptional() @IsIn(UI_CANDIDATE_REGIONS) region?: UiCandidateRegion;
+  @ApiPropertyOptional({ description: 'Inside a post, comment or feed item' }) @IsOptional() @IsBoolean() inArticle?: boolean;
   @ApiProperty({ description: 'Unique CSS path of the element in its document or shadow root' })
   @IsString() @MinLength(1) @MaxLength(300) selector!: string;
 }
@@ -41,6 +47,23 @@ export class UiHintRequestDto {
   @ApiProperty({ type: [UiCandidateDto] })
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(MAX_UI_CANDIDATES) @ValidateNested({ each: true }) @Type(() => UiCandidateDto)
   candidates!: UiCandidateDto[];
+}
+
+/** The sign-in page the extension could not read, described like a composer (no values, masked labels). */
+export class AuthHintRequestDto {
+  @ApiProperty({ description: 'Current page URL; must be on the account sign-in origins' })
+  @IsUrl({ require_protocol: true, require_tld: false, protocols: ['http', 'https'] }) @MaxLength(2048)
+  url!: string;
+
+  @ApiProperty({ type: [UiCandidateDto] })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(MAX_UI_CANDIDATES) @ValidateNested({ each: true }) @Type(() => UiCandidateDto)
+  candidates!: UiCandidateDto[];
+}
+
+/** The AI-located account element the extension checked against the configured username itself. */
+export class AuthHintConfirmDto {
+  @ApiProperty() @IsString() @MinLength(1) @MaxLength(300)
+  selector!: string;
 }
 
 export class ListSelectorSuggestionsQueryDto {
