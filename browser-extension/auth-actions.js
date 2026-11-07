@@ -187,6 +187,16 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
         }
       }
     }
+    if (job.recipe.engine === 'vanilla' && !identity) {
+      // Vanilla writes the signed-in user into the gdn.meta script of every page
+      // ("currentUser", userID 0 for guests): no rendering, account menu or profile page needed.
+      const meta = [...document.querySelectorAll('script:not([src])')].map(node => node.textContent).find(text => text.includes('"currentUser":{')) ?? '';
+      const field = key => new RegExp(`"currentUser":\\{[^{}]*?"${key}":(\\d+|"(?:[^"\\\\]|\\\\.)*")`).exec(meta)?.[1];
+      try {
+        const userId = Number(field('userID') ?? 0), name = field('name');
+        if (userId > 0 && name) identity = JSON.parse(name);
+      } catch { /* Profile page fallback */ }
+    }
     if (job.recipe.engine === 'flarum' && !identity) {
       // Flarum boots from a JSON payload that names the session user: read only its username.
       try {
