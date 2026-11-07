@@ -9,7 +9,8 @@ import { ClaimExtensionTaskDto, CreateExtensionDeviceDto, ExtensionDeliveryDto, 
 import { ExtensionAccountSessionService } from './extension-account-session.service';
 import { AuthenticatedDevice, ExtensionAgentService } from './extension-agent.service';
 import { CurrentDevice, ExtensionDeviceGuard } from './extension-device.guard';
-import { ListSelectorSuggestionsQueryDto, UiHintRequestDto } from './ui-recovery/ui-hint.dto';
+import { AuthHintConfirmDto, AuthHintRequestDto, ListSelectorSuggestionsQueryDto, UiHintRequestDto } from './ui-recovery/ui-hint.dto';
+import { ExtensionAuthHintService } from './ui-recovery/auth-hint.service';
 import { ExtensionUiRecoveryService } from './ui-recovery/ui-recovery.service';
 import { ExtensionSelectorSuggestionService } from './ui-recovery/selector-suggestion.service';
 import { FormFillRequestDto } from './ui-recovery/form-fill.dto';
@@ -98,6 +99,7 @@ export class ExtensionAgentController {
     private readonly sessions: ExtensionAccountSessionService,
     private readonly uiRecovery: ExtensionUiRecoveryService,
     private readonly formFill: ExtensionFormFillService,
+    private readonly authHints: ExtensionAuthHintService,
   ) {}
 
   @Post('tasks/:id/ui-hint')
@@ -110,6 +112,25 @@ export class ExtensionAgentController {
   @Get('tasks/:id/ui-hint/:hintId')
   uiHintStatus(@CurrentDevice() device: AuthenticatedDevice, @Param('id', ParseUUIDPipe) id: string, @Param('hintId', ParseUUIDPipe) hintId: string) {
     return this.uiRecovery.get(device, id, hintId);
+  }
+
+  @Post('tasks/:id/auth-hint')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Ask the AI where a sign-in page shows the account, its menu or its sign-in button (answers within ~8 s or poll)' })
+  authHint(@CurrentDevice() device: AuthenticatedDevice, @Param('id', ParseUUIDPipe) id: string, @Body() dto: AuthHintRequestDto) {
+    return this.authHints.request(device, { kind: 'task', id }, dto);
+  }
+
+  @Get('tasks/:id/auth-hint/:hintId')
+  authHintStatus(@CurrentDevice() device: AuthenticatedDevice, @Param('id', ParseUUIDPipe) id: string, @Param('hintId', ParseUUIDPipe) hintId: string) {
+    return this.authHints.get(device, { kind: 'task', id }, hintId);
+  }
+
+  @Post('tasks/:id/auth-hint/:hintId/confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'The extension confirmed the AI account element against the configured username: keep it as the identity selector' })
+  authHintConfirm(@CurrentDevice() device: AuthenticatedDevice, @Param('id', ParseUUIDPipe) id: string, @Param('hintId', ParseUUIDPipe) hintId: string, @Body() dto: AuthHintConfirmDto) {
+    return this.authHints.confirm(device, { kind: 'task', id }, hintId, dto.selector);
   }
 
   @Post('tasks/:id/form-fill')

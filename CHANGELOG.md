@@ -1,6 +1,28 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.31.0 · 07/11/2026
+### Tính năng
+- AI giúp tiện ích ở bước đăng nhập / xác nhận tài khoản, không chỉ ở bước điền bài (tiện ích 1.18.0)
+  - Trước đây AI chỉ tìm ô tiêu đề / nội dung / nút Đăng, nhưng gần như mọi bài bị chặn đều dừng sớm hơn, ở bước xác
+    nhận tài khoản ("Trang đã tải nhưng chưa nhận diện được form đăng nhập hoặc đúng tài khoản", "chưa mở được menu",
+    "Chưa xác nhận được đúng tài khoản"), nơi chỉ có quy tắc viết tay cho từng trang. Bảng ghi lần nhờ AI vì thế trống.
+  - Nay khi tiện ích không nhận ra trang (cả lúc đăng bài và lúc bấm Test), nó gửi danh sách nút / link / ảnh đại diện /
+    tên ngắn ở đầu trang, thanh điều hướng, thanh bên (đã che email, số dài; không gửi ô nhập, mật khẩu) và hỏi AI.
+    AI chỉ ra chỗ hiện tài khoản đang đăng nhập, nút mở menu tài khoản, hoặc nút "Đăng nhập / Continue with Google".
+  - **AI chỉ chỉ chỗ, tiện ích tự quyết:** tiện ích đọc tên / link ở chỗ đó và so với username / URL hồ sơ đã cấu hình;
+    khớp mới là đã xác nhận, link hồ sơ của người khác thì báo đúng tên tài khoản đang đăng nhập, nhãn chung như
+    "Account" không bao giờ được tính. Máy chủ loại mọi gợi ý nằm trong bài viết, nút đăng ký, nút gửi form có mật khẩu.
+  - **Học một lần, dùng mãi:** chỗ hiện tài khoản đã khớp được lưu làm "CSS nhận diện" của tài khoản (ghi nhật ký kiểm
+    toán), lần sau không cần gọi AI. Không bao giờ ghi đè CSS bạn tự đặt.
+  - Mỗi lần AI ra tay hiện trong mục "Gần đây" của tiện ích (nhãn "AI hỗ trợ"). Tối đa 2 lần mỗi bài / lượt Test, chung
+    hạn mức 20 lần/giờ mỗi Chrome.
+  - Sửa kèm: bài đã xác nhận tài khoản bằng trang hồ sơ (bản 1.28.3) bị lần kiểm ngay trước khi điền báo "Phiên thay
+    đổi trước khi điền bài" vì trang soạn bài không hiện tên; nay được đi tiếp, trừ khi trang báo chưa đăng nhập hoặc
+    tài khoản khác.
+  - Bật bằng `EXTENSION_UI_RECOVERY_ENABLED=true` (máy chủ đang bật). Cần chạy migration mới khi triển khai; nạp lại
+    tiện ích 1.18.0.
+
 ## 1.30.2 · 06/11/2026
 ### Sửa lỗi
 - Linux Foundation Forum (Vanilla) không còn "mở lên rồi để đấy" (tiện ích 1.17.2)

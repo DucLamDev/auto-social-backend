@@ -102,7 +102,7 @@ export class AccountImportService {
         // The parser names no account for site screens (".../register/complete",
         // "/onboarding"): such a URL is not a profile to compare against.
         const session = { deviceId, provider: login.provider, origin: new URL(loginUrl).origin, loginUrl, loginUsername: login.username,
-          expectedUsername: username, profileUrl: row.expectedUsername ? row.profileUrl.trim() : '', identitySelector: previousSession?.identitySelector ?? '',
+          expectedUsername: username, profileUrl: row.expectedUsername ? row.profileUrl.trim() : '', identitySelector: previousSession?.identitySelector ?? '', ...(previousSession?.identitySelectorSource ? { identitySelectorSource: previousSession.identitySelectorSource } : {}),
           autoLogin: login.provider === 'google' || Boolean(password), autoTotp: Boolean(seed) && object(previousSession).totpNeedsReview !== true,
           totpNeedsReview: object(previousSession).totpNeedsReview === true,
           discoverIdentity: !username, allowIdentityByEmail: true, allowedOrigins: previousSession?.allowedOrigins ?? (platform.slug === 'vivaldi-social' ? ['https://login.vivaldi.net'] : []) };

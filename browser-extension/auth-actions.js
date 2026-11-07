@@ -229,6 +229,28 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
         }
       } catch { /* Own account menu remains the fallback. */ }
     }
+    // An element an AI sign-in hint pointed at (this run), or one learned from a confirmed
+    // hint earlier: read it here and compare it with the configured account. The AI only
+    // says where to look; a page that shows another name never counts as this account.
+    const aiSelector = job.aiIdentitySelector || (auth.identitySelectorSource === 'ai' ? auth.identitySelector : '');
+    if (!identity && aiSelector) {
+      let node = null;
+      try { const found = all(aiSelector).filter(visible); node = found.length === 1 ? found[0] : null; } catch { node = null; }
+      if (node) {
+        const link = node.closest('a[href]') ?? node.querySelector('a[href]');
+        const texts = [node.innerText, node.getAttribute('aria-label'), node.getAttribute('title'), node.getAttribute('alt'),
+          ...[...node.querySelectorAll('img[alt]')].map(image => image.getAttribute('alt'))].map(text => String(text ?? '').trim()).filter(Boolean);
+        const expected = expectedHandles();
+        const named = texts.find(text => loose(text).length >= 3 && expected.includes(loose(text)));
+        const linked = link && handlesOf(link.href).some(handle => expected.includes(handle));
+        const learned = job.aiIdentitySelector ? { aiIdentity: true } : {};
+        if (named) return { ...response('authenticated'), detectedUsername: named.slice(0, 200), ...learned };
+        if (linked) return { ...response('authenticated'), detectedUsername: (auth.expectedUsername || named || '').slice(0, 200), ...learned };
+        // Only an own-profile link naming someone else is a mismatch; a label like "Account" is not.
+        const other = link ? /\/(?:@|profile\/|u\/|users\/|user\/)([^/?#]+)\/?$/.exec(new URL(link.href).pathname)?.[1] : undefined;
+        if (other && job.aiIdentitySelector) return { ...response('mismatch'), detectedUsername: decodeURIComponent(other).slice(0, 200) };
+      }
+    }
     const genericSelectors = ['a[data-testid="AppTabBar_Profile_Link"]', '.p-navgroup-link--user .p-navgroup-linkText', '#username_logged_in .username', '.s-topbar a.s-user-card[href*="/users/"]', 'a[aria-label="My profile"]', 'nav a[href*="/@"]', 'header a[href*="/@"]', 'nav a[href*="/profile/"]', '[data-testid="profile-link"]', 'a[data-testid="profile-link"]', '.profile-dropdown a[href*="/users/"]',
       ...(location.hostname === 'differ.blog' ? ['.dropdown:has(> .avatar) .dropdown-content a[href^="/@"]'] : []),
       ...(location.hostname === 'dzone.com' ? ['header button.user-avatar', '.header button.user-avatar', 'button.user-avatar'] : []),
@@ -237,7 +259,8 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
       ...(location.hostname === 'www.minds.com' ? ['.m-sidebarNavigation__list a[href]:has(img)'] : [])];
     // Bookmarks and settings also link under /@username on Discuit. They are
     // navigation items, not evidence of the identity currently signed in.
-    const selectors = auth.identitySelector ? [auth.identitySelector] : location.hostname === 'discuit.org'
+    // A selector learned from an AI hint does not replace the built-in markers (one the operator set does).
+    const selectors = auth.identitySelector && auth.identitySelectorSource !== 'ai' ? [auth.identitySelector] : location.hostname === 'discuit.org'
       ? ['.navbar-profile .navbar-name'] : job.recipe.engine === 'mastodon'
         ? ['nav footer a[class*="accountLink"][href^="/@"]', '.navigation-bar .account__display-name', '.navigation-bar__profile', '.compose-panel .account__display-name'] : [...({
       discourse: ['#current-user a[data-user-card]', '#current-user img[title]'],

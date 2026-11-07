@@ -1,5 +1,21 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.31.0 / tiện ích 1.18.0: AI ở bước đăng nhập
+
+Cần backend 1.31.0 (migration `20261107090000_extension_ui_hints_login_checks`), `EXTENSION_UI_RECOVERY_ENABLED=true`,
+nạp lại tiện ích 1.18.0.
+
+- Khi trang đăng nhập không được nhận ra quá 8 giây (sau khi đã thử trang hồ sơ), hoặc menu tài khoản không mở được,
+  tiện ích gọi `POST /extension/agent/{tasks|login-checks}/:id/auth-hint` với các phần tử thu bằng
+  `collectUiCandidates({ mode: 'auth' })` (nút, link, ảnh có alt, chữ ngắn; kèm vùng trang `header|nav|aside|menu|main`
+  và cờ nằm trong bài viết), rồi hỏi lại `GET …/auth-hint/:hintId`.
+- Kết quả: `account` (tiện ích đọc phần tử đó trong `accountAuthStep` qua `aiIdentitySelector` và tự so với username),
+  `accountMenu` / `login` (bấm bằng `clickAuthElement`: không bấm nút gửi, không bấm trong form có ô mật khẩu).
+- Xác nhận được thì gọi `POST …/auth-hint/:hintId/confirm`: máy chủ lưu selector vào `extensionSession.identitySelector`
+  với `identitySelectorSource: 'ai'` (không ghi đè CSS người vận hành đặt). Selector học từ AI không thay các dấu hiệu có
+  sẵn, chỉ thêm vào.
+- Tối đa 2 lần mỗi bài / lượt Test, chung hạn mức 20 lần/giờ với gợi ý ô; lịch sử tiện ích ghi `AI_HINT` ("AI hỗ trợ").
+
 ## Tiện ích 1.17.2: Vanilla nhận tài khoản từ `gdn.meta`
 
 Vanilla ghi người dùng đang đăng nhập vào script `gdn.meta` của mọi trang (`"currentUser":{"userID":…,"name":…}`, khách

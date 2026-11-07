@@ -109,3 +109,22 @@ test('a redesigned composer is reported as missing, then filled with the AI sele
   assert.match(await tab.evaluate(() => document.querySelector('.editor-v2').innerText), /Nội dung từ web/);
   await tab.close();
 });
+
+test('sign-in mode describes the avatar, profile links and names with their page region, never form fields', async () => {
+  const tab = await page(`<header><a href="/u/vpsttt"><img alt="VPSTTT Group" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="24" height="24"></a>
+    <button aria-label="Account menu">▾</button></header>
+    <aside><h2>VPSTTT Group</h2><span>Member since August 2026, an@example.com</span></aside>
+    <main><article><a href="/u/someone">Someone</a><span>Posted by someone</span></article>
+    <form><input name="q" value="secret search"><input type="password" value="hunter2"><button type="submit">Log in</button></form></main>`);
+  try {
+    const { candidates } = await tab.evaluate(collectUiCandidates, { mode: 'auth' });
+    const summary = candidates.map(candidate => [candidate.kind, candidate.region, candidate.inArticle, candidate.label ?? candidate.text]);
+    assert.deepEqual(summary.slice(0, 2), [['link', 'header', false, 'VPSTTT Group'], ['button', 'header', false, 'Account menu']]);
+    assert.ok(summary.some(([kind, region, , text]) => kind === 'text' && region === 'aside' && text === 'VPSTTT Group'));
+    assert.ok(summary.some(([kind, , inArticle]) => kind === 'link' && inArticle === true), 'a post author is described but marked as inside a post');
+    // Never a field, a value, or text from the page body; personal data is masked.
+    assert.ok(candidates.every(candidate => !['input', 'textarea', 'contenteditable'].includes(candidate.kind)));
+    const all = JSON.stringify(candidates);
+    assert.ok(!all.includes('hunter2') && !all.includes('secret search') && !all.includes('Posted by someone') && !all.includes('an@example.com'));
+  } finally { await tab.close(); }
+});

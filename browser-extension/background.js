@@ -8,7 +8,7 @@ import { fillSocialAndSubmit, readSocialPublishedPost } from './social-actions.j
 import { accountAuthStep } from './auth-actions.js';
 import { submitDiscoursePost } from './discourse-session.js';
 import { showPublishNotice } from './publish-notice.js';
-import { collectUiCandidates, verifyUiSelectors } from './ui-recovery.js';
+import { clickAuthElement, collectUiCandidates, verifyUiSelectors } from './ui-recovery.js';
 import { applyFormActions, collectFormControls } from './form-fill.js';
 import { applyProxy, PROXY_STORAGE_KEY, registerProxyAuth } from './proxy.js';
 
@@ -47,6 +47,11 @@ const NEXT_JOB_DELAY_MS = 1_000;
 const MAX_UI_HINT_ROUNDS = 2;
 const UI_HINT_POLL_MS = 2_000;
 const UI_HINT_WAIT_MS = 90_000;
+// AI sign-in hints: asked when a sign-in page stays unrecognised this long (after the
+// profile page was tried); at most this many per post or "Test", each answered within the wait.
+const AUTH_HINT_AFTER_MS = 8_000;
+const MAX_AUTH_HINT_ROUNDS = 2;
+const AUTH_HINT_WAIT_MS = 60_000;
 const UI_HINT_FIELDS = ['title', 'body', 'submit', 'opener'];
 // AI form-fill for required controls the recipe does not know (community,
 // language, rules checkbox…): ask, poll, apply, then verify once more.
@@ -325,6 +330,55 @@ async function closeLoginCheckTabs(...tabIds) {
   }
 }
 
+const authHintBase = task => `${task.job.kind === 'LOGIN_CHECK' ? 'login-checks' : 'tasks'}/${task.job.jobId}/auth-hint`;
+
+/**
+ * Asks the backend AI where this unrecognised sign-in page shows the account, its
+ * menu or its sign-in button, then acts on it: an account element becomes the
+ * element the next probe reads (accountAuthStep compares it with the configured
+ * username), a menu or sign-in button is clicked. Returns the updated task, or null
+ * when the AI is off, used up, failed or had nothing usable (the old path goes on).
+ */
+async function askAuthHint(task, tabId) {
+  if (!task.job.uiRecovery?.enabled || (task.authHintRounds ?? 0) >= MAX_AUTH_HINT_ROUNDS) return null;
+  // A Google sign-in by another flow owns the Google session: do not start another one now.
+  if (task.job.auth.provider === 'google' && [...googleSignIns].some(jobId => jobId !== task.job.jobId)) return null;
+  let current = { ...task, authHintRounds: (task.authHintRounds ?? 0) + 1, authUnknownSince: null,
+    authDeadline: Math.max(task.authDeadline ?? 0, Date.now() + AUTH_HINT_WAIT_MS + 20_000) };
+  await setTask(task.tabId, current);
+  try {
+    const [{ result: page }] = await chrome.scripting.executeScript({ target: { tabId }, func: collectUiCandidates, args: [{ mode: 'auth' }] });
+    if (!page?.candidates?.length) return null;
+    // Each request stays short (MV3 stops a worker on a fetch over ~30 s): ask, then poll.
+    let hint = await api(authHintBase(task), { url: page.url, candidates: page.candidates });
+    const until = Date.now() + AUTH_HINT_WAIT_MS;
+    while (hint?.status === 'RUNNING' && Date.now() < until) {
+      await new Promise(resolve => setTimeout(resolve, UI_HINT_POLL_MS));
+      hint = await api(`${authHintBase(task)}/${hint.hintId}`, undefined, 'GET');
+    }
+    current = (await getTasks())[task.tabId] ?? current;
+    if (hint?.status !== 'READY' || current.phase !== 'authenticating') return null;
+    const selectors = hint.selectors ?? {};
+    const note = message => log({ jobId: task.job.jobId, account: task.job.account.name, platform: task.job.account.platform, outcome: 'AI_HINT', message });
+    if (typeof selectors.account === 'string') {
+      current = { ...current, aiIdentitySelector: selectors.account, aiHintId: hint.hintId };
+      await note('Trang lạ: AI chỉ ra chỗ hiện tài khoản đang đăng nhập; tiện ích đang tự so với username đã cấu hình.');
+    } else {
+      const [purpose, selector] = typeof selectors.accountMenu === 'string' ? ['accountMenu', selectors.accountMenu]
+        : typeof selectors.login === 'string' ? ['login', selectors.login] : [];
+      if (!purpose) return null;
+      const [{ result: clicked }] = await chrome.scripting.executeScript({ target: { tabId }, func: clickAuthElement, args: [{ selector, purpose }] });
+      if (!clicked) return null;
+      current = { ...current, ...(purpose === 'login' ? { authLoginOpened: true } : {}) };
+      await note(purpose === 'login' ? 'Trang lạ: AI chỉ ra nút đăng nhập; tiện ích đã bấm để tiếp tục đăng nhập.' : 'Trang lạ: AI chỉ ra nút mở menu tài khoản; tiện ích đã mở để tìm tên tài khoản.');
+    }
+    await setTask(task.tabId, current);
+    return current;
+  } catch {
+    return null;
+  }
+}
+
 async function authenticateTask(task) {
   if (authenticating.has(task.job.jobId)) return false;
   authenticating.add(task.job.jobId);
@@ -355,7 +409,7 @@ async function authenticateTask(task) {
       const tabId = current.authTabId ?? task.tabId;
       let result;
       let documentId;
-      try { [{ result, documentId }] = await withDeadline(chrome.scripting.executeScript({ target: { tabId }, func: accountAuthStep, args: [{ job: { ...task.job, authIdentityVerified: current.googleIdentityVerified === true } }], injectImmediately: true }), AUTH_PROBE_TIMEOUT_MS); }
+      try { [{ result, documentId }] = await withDeadline(chrome.scripting.executeScript({ target: { tabId }, func: accountAuthStep, args: [{ job: { ...task.job, authIdentityVerified: current.googleIdentityVerified === true, aiIdentitySelector: current.aiIdentitySelector } }], injectImmediately: true }), AUTH_PROBE_TIMEOUT_MS); }
       catch (error) {
         if (error.message === 'AUTH_STEP_TIMEOUT') {
           // A page that is still loading cannot answer yet (a slow site behind a proxy took
@@ -426,6 +480,10 @@ async function authenticateTask(task) {
           await new Promise(resolve => setTimeout(resolve, 2_000));
           continue;
         }
+        if (current.authUnknownSince && Date.now() - current.authUnknownSince > AUTH_HINT_AFTER_MS && (!profileUsable || current.authProfileVisited)) {
+          const helped = await askAuthHint(current, tabId);
+          if (helped) { current = helped; await new Promise(resolve => setTimeout(resolve, 1_000)); continue; }
+        }
         if (task.job.kind === 'LOGIN_CHECK' && current.authUnknownSince && Date.now() - current.authUnknownSince > 8_000) return stop('Trang đã tải nhưng chưa nhận diện được form đăng nhập hoặc đúng tài khoản. Cần cập nhật luồng của nền tảng này.');
         if (!current.authUnknownSince) { current = { ...current, authUnknownSince: Date.now() }; await setTask(task.tabId, current); }
       } else if (current.authUnknownSince) { current = { ...current, authUnknownSince: null }; await setTask(task.tabId, current); }
@@ -443,6 +501,13 @@ async function authenticateTask(task) {
         else if (Date.now() - current.authNoGoogleSince > NO_GOOGLE_GRACE_MS) return stop(result.message);
       } else if (current.authNoGoogleSince) { current = { ...current, authNoGoogleSince: null }; await setTask(task.tabId, current); }
       if (result?.state === 'authenticated') {
+        if (result.aiIdentity && current.aiHintId && current.aiIdentitySelector && !current.aiIdentityConfirmed) {
+          current = { ...current, aiIdentityConfirmed: true };
+          await setTask(task.tabId, current);
+          await log({ jobId: task.job.jobId, account: task.job.account.name, platform: task.job.account.platform, outcome: 'AI_HINT',
+            message: `AI chỉ ra chỗ hiện tài khoản; tiện ích đã so khớp @${String(result.detectedUsername ?? '').replace(/^@/, '')} và lưu lại để lần sau dùng ngay.` });
+          try { await api(`${authHintBase(task)}/${current.aiHintId}/confirm`, { selector: current.aiIdentitySelector }); } catch { /* the next run asks again */ }
+        }
         if (task.job.kind === 'LOGIN_CHECK') {
           await report(current, 'AUTHENTICATED', { message: 'Đã xác nhận phiên đăng nhập. Chưa kiểm tra quyền đăng bài.', detectedUsername: result.detectedUsername });
           await setTask(task.tabId, null);
@@ -475,6 +540,10 @@ async function authenticateTask(task) {
           googleSignIns.add(task.job.jobId);
         }
         const attempted = current.authSteps?.[result.state];
+        if (attempted && Date.now() - attempted > 15_000 && result.state === 'accountMenu') {
+          const helped = await askAuthHint(current, tabId);
+          if (helped) { current = helped; await new Promise(resolve => setTimeout(resolve, 1_000)); continue; }
+        }
         if (attempted && Date.now() - attempted > 15_000) return stop(result.state === 'accountMenu'
           ? 'Trang đã đăng nhập nhưng tiện ích chưa mở được menu để xác nhận đúng hồ sơ. Chưa thử lại mật khẩu.'
           : `Bước đăng nhập chưa được chấp nhận (${result.state} tại ${new URL(result.url).origin}${new URL(result.url).pathname}); không tự thử lặp mật khẩu hoặc mã TOTP.`);
@@ -542,14 +611,17 @@ async function fill(task) {
   try {
     if (task.job.auth) {
       const identity = await verifyOwnIdentity(task);
-      if (identity?.state !== 'authenticated') {
+      // A site proved only by its own profile page shows no account on the composer: an
+      // unrecognised (not signed-out, not another account) page is still that session.
+      const provedByProfile = task.authByProfile === true && identity?.state === 'unknown';
+      if (identity?.state !== 'authenticated' && !provedByProfile) {
         await report(task, 'NEEDS_ACTION', { reason: identity?.state === 'mismatch' ? 'ACCOUNT_MISMATCH' : 'AUTH_REQUIRED', message: 'Phiên thay đổi trước khi điền bài. Kiểm tra đúng tài khoản trong hồ sơ Chrome.' });
         filling.delete(task.job.jobId);
         await setTask(task.tabId, { ...task, phase: 'waitingAuth', waitingSince: Date.now(), deadline: Date.now() + WAIT_USER_MS });
         tickSoon();
         return;
       }
-      task = { ...task, job: { ...task.job, verifiedSessionUsername: identity.detectedUsername || task.job.auth.expectedUsername } };
+      task = { ...task, job: { ...task.job, verifiedSessionUsername: identity?.detectedUsername || task.job.auth.expectedUsername } };
     }
     if (task.job.recipe.requiredMedia) {
       if (task.job.media?.length !== 1 || task.job.media[0].sizeBytes > 20 * 1024 * 1024) {
@@ -809,7 +881,7 @@ async function recoverUi(task, result, attachments) {
 async function verifyOwnIdentity(task) {
   const probe = async action => {
     const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: accountAuthStep,
-      args: [{ job: task.job, ...(action ? { action } : {}) }], injectImmediately: true });
+      args: [{ job: { ...task.job, aiIdentitySelector: task.aiIdentitySelector }, ...(action ? { action } : {}) }], injectImmediately: true });
     return result;
   };
   let identity = await probe();
