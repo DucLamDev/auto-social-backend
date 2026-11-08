@@ -17,7 +17,7 @@ import { ManualPublishedDto } from './dto/manual-published.dto';
 import { ListPublishJobsQueryDto } from './dto/list-publish-jobs-query.dto';
 import { paginatedData } from '../common/interceptors/api-response.interceptor';
 import { PublishJobMetricsQueryDto } from './dto/publish-job-metrics-query.dto';
-import { CONTENT_REVIEW_REQUIRED_CODE, WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
+import { CONTENT_REVIEW_REQUIRED_CODE, SUBMITTED_EXTENSION_CODES, WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
 import { collectPublishMedia } from './publishing.service';
 import { reviewDestination } from './review-destination';
 
@@ -68,7 +68,7 @@ export class PublishJobsService {
         AND: [
           { status: PublishJobStatus.NEEDS_ACTION },
           { OR: [
-            { lastErrorCode: 'EXTENSION_MODERATION_PENDING' },
+            { lastErrorCode: { in: SUBMITTED_EXTENSION_CODES } },
             { attempts: { some: { responseMetadata: { path: ['moderationQueue'], equals: true } } } },
           ] },
         ],
@@ -494,9 +494,27 @@ export class PublishJobsService {
   async markPublished(ownerId: string, id: string, dto: ManualPublishedDto) {
     const job = await this.prisma.publishJob.findFirstOrThrow({
       where: { id, target: { campaign: { ownerId } } },
-      include: { target: { select: { campaignId: true } } },
+      include: { target: { select: { campaignId: true } }, attempts: { orderBy: { attemptNumber: 'desc' }, take: 1, select: { responseMetadata: true } } },
     });
     if (job.status !== PublishJobStatus.NEEDS_ACTION) throw new BadRequestException('Only NEEDS_ACTION jobs can be manually marked published');
+    // An extension run that stopped before sending the post (sign-in, CAPTCHA, editor…) has
+    // nothing on the platform to confirm: it goes back to the extension instead. Only a post
+    // the platform received (waiting for its moderators) or one sent without confirmation can be.
+    const [latest] = job.attempts ?? [];
+    const metadata = asRecord(latest?.responseMetadata);
+    if (metadata.extensionQueued === true && !SUBMITTED_EXTENSION_CODES.includes(job.lastErrorCode ?? '')) {
+      throw new BadRequestException('This post was never sent to the platform; hand it to the extension again instead of marking it published');
+    }
+    await this.confirmPublished(job.id, { platformAccountId: job.platformAccountId, externalPostId: dto.externalPostId, url: dto.url, source: 'manual' });
+    await this.campaignStatus.refresh(job.target.campaignId);
+    return { published: true };
+  }
+
+  /**
+   * Turns a post awaiting confirmation into a published post: by hand, or when the
+   * moderation sync finds it on the platform. Fails when the job left NEEDS_ACTION.
+   */
+  async confirmPublished(id: string, input: { platformAccountId: string; externalPostId: string; url?: string; source: 'manual' | 'sync' }) {
     await this.prisma.$transaction(async (transaction) => {
       const claimed = await transaction.publishJob.updateMany({
         where: { id, status: PublishJobStatus.NEEDS_ACTION },
@@ -520,15 +538,14 @@ export class PublishJobsService {
       const existingUrl = typeof existingMetadata.url === 'string'
         ? existingMetadata.url
         : undefined;
-      const publishedUrl = dto.url ?? existingUrl;
+      const publishedUrl = input.url ?? existingUrl;
       const confirmationMetadata = {
         ...existingMetadata,
-        manual: true,
-        manualConfirmed: true,
-        externalPostId: dto.externalPostId,
+        ...(input.source === 'manual' ? { manual: true, manualConfirmed: true } : { autoSynced: true, autoSyncedAt: new Date().toISOString() }),
+        externalPostId: input.externalPostId,
         ...(publishedUrl ? { url: publishedUrl } : {}),
       } as Prisma.InputJsonObject;
-      await transaction.publishedPost.create({ data: { publishJobId: job.id, platformAccountId: job.platformAccountId, externalPostId: dto.externalPostId, url: publishedUrl, metadata: confirmationMetadata } });
+      await transaction.publishedPost.create({ data: { publishJobId: id, platformAccountId: input.platformAccountId, externalPostId: input.externalPostId, url: publishedUrl, metadata: confirmationMetadata } });
       if (attempt) {
         await transaction.publishAttempt.update({
           where: { id: attempt.id },
@@ -542,7 +559,5 @@ export class PublishJobsService {
         });
       }
     });
-    await this.campaignStatus.refresh(job.target.campaignId);
-    return { published: true };
   }
 }

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AttemptStatus, CampaignStatus, PublishJobStatus } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
@@ -10,6 +10,7 @@ import {
   STALE_DELIVERY_AFTER_MS,
 } from '../publishing/publishing.constants';
 import { expireStaleExtensionClaims } from '../extension-agent/stale-claims';
+import { ModerationSyncService } from '../publishing/moderation-sync.service';
 
 @Injectable()
 export class SchedulerService {
@@ -18,6 +19,7 @@ export class SchedulerService {
     private readonly prisma: PrismaService,
     private readonly queue: PublishQueueService,
     private readonly campaignStatus: CampaignStatusService,
+    @Optional() private readonly moderationSync?: ModerationSyncService,
   ) {}
 
   @Cron(CronExpression.EVERY_10_SECONDS, { name: 'publish-due-jobs', waitForCompletion: true })
@@ -125,6 +127,17 @@ export class SchedulerService {
       if (expired) this.logger.warn(`Marked ${expired} silent extension claim(s) as result unknown`);
     } catch (error) {
       this.logger.error(`Failed to expire extension claims: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  /** Posts held for a platform's moderators (or sent unconfirmed) become published once they show. */
+  @Cron(CronExpression.EVERY_10_MINUTES, { name: 'sync-pending-moderation', waitForCompletion: true })
+  async syncPendingModeration(): Promise<void> {
+    try {
+      const result = await this.moderationSync?.syncPending();
+      if (result?.published) this.logger.log(`Moderation sync: ${result.published} post(s) approved and published`);
+    } catch (error) {
+      this.logger.error(`Moderation sync failed: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 }

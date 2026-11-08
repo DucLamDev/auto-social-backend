@@ -1,6 +1,22 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.32.0 · 08/11/2026
+### Tính năng
+- Tự đồng bộ bài chờ duyệt: bài được diễn đàn duyệt thì tự chuyển sang "Đã đăng"; nút "Đã đăng" chỉ còn cho bài đã gửi
+  - **Sửa lỗi:** bài tiện ích dừng giữa chừng (chưa đăng nhập, sai tài khoản, CAPTCHA…) vẫn cho bấm "Đã đăng", dù bài
+    chưa hề gửi lên nền tảng. Nay máy chủ từ chối đánh dấu đã đăng với bài tiện ích chưa gửi; chỉ bài nền tảng đã nhận
+    và đang chờ duyệt, hoặc đã gửi mà tiện ích chưa xác nhận được, mới đánh dấu được (giao diện frontend 1.35.0 bỏ nút
+    ở các hàng còn lại).
+  - **Bài "đã gửi, chưa xác nhận"** của tiện ích nay cũng nằm trong "Bài chờ duyệt", để được kiểm tra như bài chờ duyệt.
+  - **Tự kiểm tra mỗi 10 phút** (và nút "Đồng bộ ngay" trên trang Bài chờ duyệt): với mỗi bài chờ duyệt trong 30 ngày
+    gần nhất, máy chủ xem trang công khai của diễn đàn như khách: Discourse (danh sách chủ đề của tài khoản), Vanilla và
+    Flarum (API công khai liệt kê bài của tài khoản), hoặc mở link bài nếu đã có. Thấy bài cùng tiêu đề, đăng sau lúc
+    gửi, thì tự chuyển sang "Đã đăng" kèm link thật và ID bài. Chưa thấy thì ghi lại giờ kiểm tra cuối để bạn biết hệ
+    thống vẫn đang theo dõi.
+  - Chỉ đọc trang công khai (không đăng nhập, không gửi gì), qua bộ gọi HTTP chặn địa chỉ nội bộ; tối đa 40 bài mỗi lượt.
+    Diễn đàn ẩn hồ sơ người dùng hoặc chặn truy cập tự động thì vẫn phải bấm "Đã được duyệt" bằng tay.
+
 ## 1.31.0 · 07/11/2026
 ### Tính năng
 - AI giúp tiện ích ở bước đăng nhập / xác nhận tài khoản, không chỉ ở bước điền bài (tiện ích 1.18.0)
