@@ -113,6 +113,18 @@ khi AI viết, khi duyệt, khi sửa, khi giao bài cho tiện ích và trong c
 - Tiện ích không bao giờ nhận bài quá dài: job chuyển "Tiện ích cần bạn" (`EXTENSION_CONTENT_TOO_LONG`), các bài sau vẫn
   chạy. Rút gọn rồi bấm **Giao lại cho tiện ích**.
 
+**Footer công ty (từ backend 1.32.0).** Bài tiếng Việt trên kênh của chính công ty tự có khối liên hệ (tên công ty,
+datacenter, hotline, website, email, Zalo) ở cuối, nội dung trong `src/platforms/brand-footer.ts`:
+- Có footer: nhóm SOCIAL / BLOGGING / MEDIA / EVENT có giới hạn từ 1.000 ký tự trở lên hoặc không giới hạn (LinkedIn,
+  Instagram, MeWe, Minds, WordPress, Blogger, Medium, Substack, Tumblr, Differ, TikTok, Dailymotion, SlideShare,
+  Flipboard, Scoop.it, Eventbrite).
+- Không có footer: diễn đàn, cộng đồng, trang lập trình viên, Product Hunt / Gumroad (đăng dưới tên thành viên, luật
+  trang coi chữ ký công ty là quảng cáo); X, Bluesky, Threads, Mastodon, Pixelfed (giới hạn 280–500 ký tự); bài tiếng Anh.
+- Footer nằm dưới dòng "Nguồn" và hashtag, có ở mọi đường đăng (tiện ích, API, xem trước, AI duyệt, Copy & mở qua trường
+  `footer` của `manual-payload`). WordPress / Blogger qua API nhận một đoạn HTML có link.
+- Ngân sách ký tự trong lời nhắc AI đã trừ footer; AI được dặn không tự viết thông tin liên hệ vào bài. Bài đã có số
+  hotline thì không thêm lần nữa. Bài không còn chỗ thì bỏ footer chứ không cắt chữ hay vượt giới hạn.
+
 **Quy trình 3 vai AI (từ backend 1.24.0).** Mỗi bài qua ba vai AI, đều có thể là model của key VPSTTT AI
 (`gpt:`, `claude:haiku`, `claude:sonnet`, `claude:opus`):
 
