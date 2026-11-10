@@ -1,5 +1,8 @@
+import { BRAND_FOOTER_LINES, brandFooter, footerApplies } from './brand-footer';
+import { markdownToHtml } from './markdown-html';
 import { countChars, detectLanguage, platformContract } from './platform-contract';
-import { markdownToPlain, publishedLength, renderForExtension, renderPostText } from './post-text';
+import { checkPostLength } from './post-length';
+import { apiPostBody, markdownToPlain, postFooter, publishedLength, renderForExtension, renderPostText } from './post-text';
 
 const VI = 'Mình vừa chuyển website sang máy chủ mới và thời gian tải trang giảm hẳn, chia sẻ lại các bước đã làm.';
 const EN = 'We moved our website to a new server and page load time dropped a lot, here are the steps we followed.';
@@ -128,7 +131,85 @@ describe('post text rendering', () => {
   });
 
   it('counts hashtags a connector appends after the body', () => {
-    const instagram = platformContract('instagram');
+    // An English caption: no company footer (that one is counted in the footer tests below).
+    const instagram = platformContract('instagram', { sourceText: EN });
     expect(publishedLength({ title: null, body: 'abc', hashtags: ['a', '#b'] }, instagram)).toBe('abc\n\n#a #b'.length);
+  });
+});
+
+describe('company footer', () => {
+  const FOOTER = BRAND_FOOTER_LINES.join('\n');
+
+  it('ends Vietnamese posts on the brand\'s own channels with the footer, below the source line and hashtags', () => {
+    const linkedin = platformContract('linkedin', { sourceText: VI });
+    expect(renderPostText({ title: null, body: VI, hashtags: ['vps'] }, linkedin, 'https://vpsttt.com/x').body)
+      .toBe(`${VI}\n\nNguồn: https://vpsttt.com/x\n\n#vps\n\n${FOOTER}`);
+    for (const slug of ['instagram', 'mewe', 'minds', 'medium', 'substack', 'tumblr', 'tiktok', 'eventbrite']) {
+      expect(renderPostText({ title: 'Tiêu đề', body: VI, hashtags: [] }, platformContract(slug, { sourceText: VI })).body).toBe(`${VI}\n\n${FOOTER}`);
+    }
+  });
+
+  it('never puts it on forums, communities, developer sites, short feeds or English posts', () => {
+    for (const slug of ['voz-forums', 'tinhte', 'reddit', 'discourse', 'devto', 'stack-overflow', 'quora', 'discord', 'product-hunt', 'x', 'bluesky', 'threads', 'mastodon', 'pixelfed-social']) {
+      const contract = platformContract(slug, { sourceText: VI, defaultLanguage: 'vi' });
+      expect(footerApplies(contract, 'vi')).toBe(false);
+      expect(renderPostText({ title: 'Tiêu đề', body: VI, hashtags: [] }, contract).body).not.toContain('Hotline');
+    }
+    expect(renderPostText({ title: null, body: EN, hashtags: [] }, platformContract('linkedin', { sourceText: EN })).body).toBe(EN);
+    expect(footerApplies({ slug: 'not-in-catalog' }, 'vi')).toBe(false);
+  });
+
+  it('is left out rather than pushing a post over its limit, counting the hashtags Instagram appends', () => {
+    const linkedin = platformContract('linkedin', { sourceText: VI });
+    const long = `${VI} ${'a'.repeat(2850)}`;
+    expect(renderPostText({ title: null, body: long, hashtags: [] }, linkedin).body).toBe(long);
+    expect(publishedLength({ title: null, body: long, hashtags: [] }, linkedin)).toBeLessThanOrEqual(3000);
+    expect(checkPostLength({ title: null, body: long, hashtags: [], platformSlug: 'linkedin' }).over).toBe(false);
+    const instagram = platformContract('instagram', { sourceText: VI });
+    const caption = `${VI} ${'a'.repeat(1980 - VI.length)}`;
+    const withFooter = publishedLength({ title: null, body: caption, hashtags: [] }, instagram);
+    expect(withFooter).toBeGreaterThan(2100);
+    expect(withFooter).toBeLessThanOrEqual(2200);
+    // The same caption with hashtags appended no longer has room for the footer.
+    const tags = ['vps', 'cloud', 'linux', 'server', 'hosting'].map((tag) => `${tag}${'x'.repeat(20)}`);
+    expect(renderPostText({ title: null, body: caption, hashtags: tags }, instagram).body).toBe(caption);
+    expect(publishedLength({ title: null, body: caption, hashtags: tags }, instagram)).toBeLessThanOrEqual(2200);
+  });
+
+  it('is never printed twice when the post already carries the hotline', () => {
+    const minds = platformContract('minds', { sourceText: VI });
+    for (const hotline of ['0328.812.674', '0328 812 674', '0328812674']) {
+      const body = `${VI}\nGọi ${hotline} để được tư vấn.`;
+      expect(renderPostText({ title: null, body, hashtags: [] }, minds).body).toBe(body);
+    }
+  });
+
+  it('is one HTML paragraph with real links for HTML fields, and keeps its lines in pasted rich text', () => {
+    const html = renderPostText({ title: 'Tiêu đề', body: `<p>${VI}</p>`, hashtags: [] }, platformContract('wordpress', { sourceText: VI })).body;
+    expect(html).toContain('<p>🏢 CÔNG TY CỔ PHẦN TẬP ĐOÀN VPSTTT<br>📍Datacenter: VNPT – Viettel – FPT – CMC<br>');
+    expect(html).toContain('🌎 Website: <a href="https://vpsttt.com">https://vpsttt.com</a><br>');
+    expect(html).toContain('📲 Zalo tư vấn nhanh: <a href="https://zalo.me/vpstttgroup">https://zalo.me/vpstttgroup</a></p>');
+    // Medium / Substack / Tumblr: the extension pastes HTML made from the Markdown rendering.
+    const markdown = renderPostText({ title: 'Tiêu đề', body: VI, hashtags: [] }, { ...platformContract('medium', { sourceText: VI }), format: 'markdown' }).body;
+    const pasted = markdownToHtml(markdown);
+    expect(pasted).toContain('</p><p>🏢 CÔNG TY CỔ PHẦN TẬP ĐOÀN VPSTTT<br>📍Datacenter: VNPT – Viettel – FPT – CMC<br>☎ Hotline: 0328.812.674<br>🌎 Website: <a href=');
+    expect(pasted).toMatch(/📲 Zalo tư vấn nhanh: <a href="https:\/\/zalo\.me\/vpstttgroup"[^>]*>https:\/\/zalo\.me\/vpstttgroup<\/a><\/p>$/);
+  });
+
+  it('is added by API connectors in the form their field takes, and leaves other bodies exactly as written', () => {
+    const linkedin = platformContract('linkedin', { sourceText: VI });
+    expect(apiPostBody({ title: null, body: `${VI}\n`, hashtags: [] }, linkedin, 'linkedin')).toBe(`${VI}\n\n${FOOTER}`);
+    // Blogger's contract follows its extension flow (Markdown), but its API content field is HTML.
+    const blogger = platformContract('blogger', { sourceText: VI });
+    expect(blogger.format).toBe('markdown');
+    expect(apiPostBody({ title: 'T', body: VI, hashtags: [] }, blogger, 'blogger')).toBe(`${VI}\n\n${brandFooter('html')}`);
+    const x = platformContract('x', { sourceText: VI });
+    expect(apiPostBody({ title: null, body: `${VI}\n`, hashtags: [] }, x, 'x')).toBe(`${VI}\n`);
+    expect(apiPostBody({ title: null, body: '  ', hashtags: [] }, linkedin, 'linkedin')).toBe('  ');
+  });
+
+  it('is handed to flows that place it themselves', () => {
+    expect(postFooter({ title: null, body: VI, hashtags: [] }, platformContract('medium', { sourceText: VI }), 'https://vpsttt.com/x')).toBe(FOOTER);
+    expect(postFooter({ title: 'T', body: VI, hashtags: [] }, platformContract('voz-forums'), null)).toBe('');
   });
 });

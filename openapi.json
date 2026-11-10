@@ -14353,6 +14353,11 @@
             "format": "uri",
             "nullable": true
           },
+          "footer": {
+            "type": "string",
+            "nullable": true,
+            "description": "Company contact footer to print last, after the source line; null on destinations without one"
+          },
           "media": {
             "type": "array",
             "items": {

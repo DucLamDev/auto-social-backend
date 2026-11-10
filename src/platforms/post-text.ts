@@ -1,5 +1,6 @@
 import { ExtensionEngine } from '../connectors/extension/extension-delivery';
-import { countChars, detectLanguage, PlatformContract, platformContract } from './platform-contract';
+import { brandFooter, footerApplies, hasBrandFooter } from './brand-footer';
+import { type AudienceLanguage, countChars, detectLanguage, PlatformContract, platformContract, type TextFormat } from './platform-contract';
 
 export interface PostTextInput {
   title: string | null;
@@ -74,22 +75,59 @@ export function sourceLine(language: 'vi' | 'en', canonicalUrl: string): string 
   return `${language === 'vi' ? 'Nguồn' : 'Source'}: ${canonicalUrl}`;
 }
 
+/** Hashtags a connector prints after the body itself (Instagram), as it prints them. */
+function appendedHashtags(input: PostTextInput, contract: PlatformContract): string {
+  return contract.hashtagMode === 'appended' && input.hashtags.length
+    ? `\n\n${input.hashtags.map((tag) => `#${tag.replace(/^#+/, '')}`).join(' ')}`
+    : '';
+}
+
+/**
+ * The company footer to print below `text`, or '' when the destination takes
+ * none (see `footerApplies`), the text carries it already, or the post would
+ * no longer fit the limit with it: the footer never pushes a post over.
+ */
+function footerFor(text: string, input: PostTextInput, contract: PlatformContract, language: AudienceLanguage, format: TextFormat): string {
+  if (!footerApplies(contract, language) || hasBrandFooter(text)) return '';
+  const footer = brandFooter(format);
+  if (contract.maxChars && countChars(`${text}\n\n${footer}${appendedHashtags(input, contract)}`, contract.counting) > contract.maxChars) return '';
+  return footer;
+}
+
+const withFooter = (text: string, footer: string) => (footer ? `${text}\n\n${footer}` : text);
+
+/** Language a post is read in: what its text is written in, else the destination's. */
+function postLanguage(text: string, contract: PlatformContract): AudienceLanguage {
+  const detected = detectLanguage(text);
+  return detected === 'unknown' ? contract.language : detected;
+}
+
 /**
  * The exact title/body a destination receives. Forums and articles keep tags
  * in their own fields; short-form social keeps hashtags inline and only adds
- * missing ones while the post still fits the character limit.
+ * missing ones while the post still fits the character limit. Posts on the
+ * brand's own channels end with the company footer when it fits.
  *
  * A destination without a title field gets an empty title unless one was
  * written: Quora's flow puts the title above the body, and a title taken from
  * the first line would print that line twice.
  */
 export function renderPostText(input: PostTextInput, contract: PlatformContract, canonicalUrl?: string | null): { title: string; body: string } {
+  const { title, text, footer } = renderParts(input, contract, canonicalUrl);
+  return { title, body: withFooter(text, footer) };
+}
+
+/** The company footer `renderPostText` ends this post with, or '' (for flows that place it themselves, like the manual copy). */
+export function postFooter(input: PostTextInput, contract: PlatformContract, canonicalUrl?: string | null): string {
+  return renderParts(input, contract, canonicalUrl).footer;
+}
+
+function renderParts(input: PostTextInput, contract: PlatformContract, canonicalUrl?: string | null): { title: string; text: string; footer: string } {
   const body = contract.format === 'plain' ? markdownToPlain(input.body) : input.body.trim();
   const rawTitle = input.title?.trim() || (contract.titleRequired ? firstLine(body) : '');
   const cleanTitle = contract.format === 'plain' ? markdownToPlain(rawTitle) : rawTitle;
   const title = contract.titleHardLimit ? truncate(cleanTitle, contract.titleHardLimit) : cleanTitle;
-  const detected = detectLanguage(body);
-  const language = detected === 'unknown' ? contract.language : detected;
+  const language = postLanguage(body, contract);
   // A post that already links to its source does not get the line again.
   const source = canonicalUrl && !mentionsUrl(body, canonicalUrl) ? sourceLine(language, canonicalUrl) : '';
   let text = [body, source].filter(Boolean).join('\n\n');
@@ -100,16 +138,30 @@ export function renderPostText(input: PostTextInput, contract: PlatformContract,
     const withTags = missing.length ? `${text}\n\n${missing.map((tag) => `#${tag}`).join(' ')}` : text;
     if (!contract.maxChars || countChars(withTags, contract.counting) <= contract.maxChars) text = withTags;
   }
-  return { title, body: text };
+  return { title, text, footer: footerFor(text, input, contract, language, contract.format) };
+}
+
+/** Connectors whose content field is HTML, whatever format the AI was asked to write. */
+const HTML_FIELD_CONNECTORS = new Set(['wordpress', 'blogger']);
+
+/**
+ * Body a connector sends: the variant body as written (API connectors place
+ * hashtags and links themselves) with the company footer below it where
+ * `renderPostText` puts one, in the form the connector's field takes.
+ */
+export function apiPostBody(input: PostTextInput, contract: PlatformContract, connectorKey: string): string {
+  const body = input.body.trim();
+  if (!body) return input.body;
+  const format: TextFormat = HTML_FIELD_CONNECTORS.has(connectorKey) ? 'html' : contract.format;
+  const footer = footerFor(body, input, contract, postLanguage(body, contract), format);
+  // Without a footer the connector gets the body exactly as before.
+  return footer ? withFooter(body, footer) : input.body;
 }
 
 /** Length the destination counts, including what a connector appends itself. */
 export function publishedLength(input: PostTextInput, contract: PlatformContract, canonicalUrl?: string | null): number {
   const { body } = renderPostText(input, contract, canonicalUrl);
-  const appended = contract.hashtagMode === 'appended' && input.hashtags.length
-    ? `\n\n${input.hashtags.map((tag) => `#${tag.replace(/^#+/, '')}`).join(' ')}`
-    : '';
-  return countChars(`${body}${appended}`, contract.counting);
+  return countChars(`${body}${appendedHashtags(input, contract)}`, contract.counting);
 }
 
 /** Final text for an extension task, using the engine the account actually posts with. */

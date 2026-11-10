@@ -332,6 +332,7 @@ export class ManualPayloadContractDto {
   @ApiProperty({ type: [String] }) hashtags!: string[];
   @ApiPropertyOptional({ type: String, nullable: true }) cta?: string | null;
   @ApiPropertyOptional({ type: String, format: 'uri', nullable: true }) canonicalUrl?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'Company contact footer to print last, after the source line; null on destinations without one' }) footer?: string | null;
   @ApiProperty({
     type: 'array',
     items: {

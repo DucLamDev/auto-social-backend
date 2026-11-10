@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { footerApplies } from '../platforms/brand-footer';
 import { countChars, detectLanguage, PlatformContract, peerAudience, socialFeed } from '../platforms/platform-contract';
 import { publishedLength } from '../platforms/post-text';
 import { BRAND_RISKS, BRAND_RISK_LABELS_VI, brandRiskAcceptable, MAX_APPROVAL_REASONS, normalizeBrandRisk, type AiApproval, type BrandRisk } from './content-approval';
@@ -210,7 +211,7 @@ export function reviewInstructions(contract: PlatformContract, publishedLength?:
     '- naturalness: reads like a knowledgeable human, no filler or AI cliches.',
     'Score anchors for every number: 9-10 excellent, nothing worth changing; 8 ready to publish, only optional polish left; 7 ready to publish with one clear weakness; 5-6 part of it needs rewriting; 1-4 off-topic, misleading or in the wrong language. Optional polish never lowers a score.',
     contract.maxChars
-      ? `Hard length limit: the published post has at most ${contract.maxChars} characters, counting hashtags, links and the source line the system adds${publishedLength !== undefined ? `; this draft has ${publishedLength}` : ''}. Judge it within that limit and never ask for additions that would not fit${room !== null && room < 0 ? `; it is ${-room} characters over, so one issue must ask to cut at least ${-room} characters` : room !== null ? `; only ${room} characters are left, so any fix that adds text must stay within them or say what to cut to make room` : ''}.`
+      ? `Hard length limit: the published post has at most ${contract.maxChars} characters, counting hashtags, links and the source line${footerApplies(contract, contract.language) ? ' and company contact footer' : ''} the system adds${publishedLength !== undefined ? `; this draft has ${publishedLength}` : ''}. Judge it within that limit and never ask for additions that would not fit${room !== null && room < 0 ? `; it is ${-room} characters over, so one issue must ask to cut at least ${-room} characters` : room !== null ? `; only ${room} characters are left, so any fix that adds text must stay within them or say what to cut to make room` : ''}.`
       : '',
     'score is the overall quality from 1 to 10.',
     `languageOk is true only when the draft is written in ${LANGUAGE_NAMES[contract.language]}.`,
