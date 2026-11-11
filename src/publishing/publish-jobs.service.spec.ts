@@ -22,7 +22,7 @@ describe('PublishJobsService', () => {
     const service = new PublishJobsService(prisma, {} as PublishQueueService, {} as CampaignStatusService, approverOff);
     const result = await service.list('owner-1', { page: 2, limit: 1, reviewState: 'MODERATION', search: 'launch' });
     const options = findMany.mock.calls[0][0];
-    expect(options).toMatchObject({ skip: 1, take: 1, where: { target: { campaign: { ownerId: 'owner-1' } }, AND: [{ status: 'NEEDS_ACTION' }, { OR: expect.arrayContaining([{ lastErrorCode: 'EXTENSION_MODERATION_PENDING' }]) as unknown }] } });
+    expect(options).toMatchObject({ skip: 1, take: 1, where: { target: { campaign: { ownerId: 'owner-1' } }, AND: [{ status: 'NEEDS_ACTION' }, { OR: expect.arrayContaining([{ lastErrorCode: { in: ['EXTENSION_MODERATION_PENDING', 'EXTENSION_SUBMIT_UNCONFIRMED'] } }]) as unknown }] } });
     expect(count).toHaveBeenCalledWith({ where: options.where });
     expect(result.items).toEqual([
       { id: 'pending', platformAccount: { id: 'account' }, reviewUrl: 'https://forum.example/community/my/activity/pending', reviewUrlKind: 'pending_queue' },
@@ -826,5 +826,22 @@ describe('PublishJobsService', () => {
     })).rejects.toThrow('no longer awaiting confirmation');
     expect(transaction.publishAttempt.findFirst).not.toHaveBeenCalled();
     expect(publishedPostCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses to mark published an extension post that never left Chrome', async () => {
+    const transaction = jest.fn();
+    const prisma = {
+      publishJob: {
+        findFirstOrThrow: jest.fn().mockResolvedValue({
+          id: 'job-1', status: PublishJobStatus.NEEDS_ACTION, platformAccountId: 'account-1', lastErrorCode: 'EXTENSION_AUTH_REQUIRED',
+          target: { campaignId: 'campaign-1' }, attempts: [{ responseMetadata: { extensionQueued: true } }],
+        }),
+      },
+      $transaction: transaction,
+    } as unknown as PrismaService;
+    const service = new PublishJobsService(prisma, {} as PublishQueueService, {} as CampaignStatusService, approverOff);
+
+    await expect(service.markPublished('owner-1', 'job-1', { externalPostId: 'x' })).rejects.toThrow('never sent to the platform');
+    expect(transaction).not.toHaveBeenCalled();
   });
 });
