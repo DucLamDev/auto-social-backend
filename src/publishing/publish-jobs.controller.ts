@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RoleName } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -7,6 +7,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { ApproveContentDto } from './dto/approve-content.dto';
 import { ManualPublishedDto } from './dto/manual-published.dto';
 import { PublishJobsService } from './publish-jobs.service';
+import { ModerationSyncService } from './moderation-sync.service';
 import { ApiCreatedEnvelope, ApiOkEnvelope, ManualPayloadContractDto, MutationResultContractDto, PublishJobContractDto } from '../common/swagger/api-contract.dto';
 import { ListPublishJobsQueryDto } from './dto/list-publish-jobs-query.dto';
 import { PublishJobMetricsQueryDto } from './dto/publish-job-metrics-query.dto';
@@ -17,12 +18,20 @@ import { ReconcileNotFoundDto } from './dto/reconcile-not-found.dto';
 @ApiBearerAuth()
 @Controller('publish-jobs')
 export class PublishJobsController {
-  constructor(private readonly jobs: PublishJobsService) {}
+  constructor(private readonly jobs: PublishJobsService, private readonly moderationSync: ModerationSyncService) {}
 
   @Get()
   @ApiOkEnvelope(PublishJobContractDto, true)
   list(@CurrentUser() user: AuthenticatedUser, @Query() query: ListPublishJobsQueryDto) {
     return this.jobs.list(user.id, query);
+  }
+
+  @Post('moderation-sync')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Look up now whether posts waiting for platform approval are published (also runs every 10 minutes)' })
+  @Roles(RoleName.ADMIN, RoleName.EDITOR)
+  syncModeration(@CurrentUser() user: AuthenticatedUser) {
+    return this.moderationSync.syncPending(user.id);
   }
 
   @Get('metrics')
