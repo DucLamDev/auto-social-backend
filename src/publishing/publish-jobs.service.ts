@@ -20,6 +20,8 @@ import { PublishJobMetricsQueryDto } from './dto/publish-job-metrics-query.dto';
 import { CONTENT_REVIEW_REQUIRED_CODE, SUBMITTED_EXTENSION_CODES, WORKER_CRASH_UNCERTAIN_RESULT_CODE } from './publishing.constants';
 import { collectPublishMedia } from './publishing.service';
 import { reviewDestination } from './review-destination';
+import { contractFor, deliveryEngine } from '../platforms/post-length';
+import { postFooter } from '../platforms/post-text';
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -474,6 +476,12 @@ export class PublishJobsService {
       hashtags: job.target.contentVariant.hashtags,
       cta: job.target.contentVariant.cta,
       canonicalUrl: job.target.contentVariant.content.canonicalUrl,
+      // The company footer the post ends with on this destination ('' → null), printed last by the copy.
+      footer: postFooter(
+        job.target.contentVariant,
+        contractFor({ platformSlug: job.platformAccount.platform.slug, engine: deliveryEngine(settings), body: job.target.contentVariant.body }),
+        job.target.contentVariant.content.canonicalUrl,
+      ) || null,
       media: collectPublishMedia(
         job.target.contentVariant.content.media,
         job.target.contentVariant.media,

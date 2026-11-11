@@ -1,7 +1,7 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
-## 1.32.0 · 08/11/2026
+## 1.33.0 · 11/11/2026
 ### Tính năng
 - Tự đồng bộ bài chờ duyệt: bài được diễn đàn duyệt thì tự chuyển sang "Đã đăng"; nút "Đã đăng" chỉ còn cho bài đã gửi
   - **Sửa lỗi:** bài tiện ích dừng giữa chừng (chưa đăng nhập, sai tài khoản, CAPTCHA…) vẫn cho bấm "Đã đăng", dù bài
@@ -16,6 +16,22 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
     thống vẫn đang theo dõi.
   - Chỉ đọc trang công khai (không đăng nhập, không gửi gì), qua bộ gọi HTTP chặn địa chỉ nội bộ; tối đa 40 bài mỗi lượt.
     Diễn đàn ẩn hồ sơ người dùng hoặc chặn truy cập tự động thì vẫn phải bấm "Đã được duyệt" bằng tay.
+
+## 1.32.0 · 10/11/2026
+### Tính năng
+- Bài tiếng Việt trên kênh của công ty tự có footer liên hệ ở cuối bài
+  - Khối 6 dòng: tên công ty, datacenter, hotline, website, email, Zalo tư vấn. Nằm dưới cùng, sau dòng "Nguồn" và
+    hashtag (Instagram: trước hashtag, vì Instagram tự nối hashtag vào cuối).
+  - **Có footer:** LinkedIn, Instagram, MeWe, Minds, WordPress, Blogger, Medium, Substack, Tumblr, Differ, TikTok,
+    Dailymotion, SlideShare, Flipboard, Scoop.it, Eventbrite.
+  - **Không có footer:** diễn đàn, cộng đồng, trang lập trình viên, Product Hunt / Gumroad (luật các trang này coi chữ ký
+    công ty là quảng cáo, dễ bị khoá tài khoản); X, Bluesky, Threads, Mastodon, Pixelfed (280–500 ký tự, footer chiếm gần
+    nửa bài); bài viết bằng tiếng Anh.
+  - Có ở mọi đường đăng: tiện ích Chrome, đăng qua API (WordPress / Blogger nhận đoạn HTML có link), bản xem trước, AI
+    duyệt cuối. "Copy & mở" nhận thêm trường `footer` (cần frontend bản kèm theo để chép vào cuối nội dung).
+  - AI được trừ chỗ cho footer khi tính số ký tự và được dặn không tự viết hotline / email / website vào bài; AI chấm và
+    AI duyệt cuối không chấm phần footer.
+  - Không bao giờ làm bài vượt giới hạn: không còn chỗ thì bỏ footer. Bài đã có số hotline thì không thêm lần nữa.
 
 ## 1.31.0 · 07/11/2026
 ### Tính năng

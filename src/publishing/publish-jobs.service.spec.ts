@@ -5,6 +5,7 @@ import { PublishQueueService } from '../queue/publish-queue.service';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
 import type { AiContentService } from '../ai/ai-content.service';
 import { PublishJobsService } from './publish-jobs.service';
+import { BRAND_FOOTER_LINES } from '../platforms/brand-footer';
 
 /** Final AI approver off unless a test turns it on. */
 const approverOff = { approvalEnabled: () => false } as unknown as AiContentService;
@@ -87,6 +88,8 @@ describe('PublishJobsService', () => {
       hashtags: ['launch'],
       cta: 'Try it today',
       canonicalUrl: 'https://example.com/launch',
+      // Medium is the brand's own blog, and a text too short to tell its language follows the destination (Vietnamese).
+      footer: BRAND_FOOTER_LINES.join('\n'),
       media: [{
         type: 'image',
         url: 'https://cdn.example.com/launch.png',
@@ -120,6 +123,8 @@ describe('PublishJobsService', () => {
     expect(payload).toMatchObject({
       title: 'Stored title', body: 'First line\n\nSecond line', moderationPending: true,
       reviewUrl: 'https://community.nginx.org/my/activity/pending', reviewUrlKind: 'pending_queue', contentUpdatedAt: record.target.contentVariant.updatedAt,
+      // A community forum: the company signature would read as advertising there.
+      footer: null,
     });
     expect(JSON.stringify(payload)).not.toContain('private-secret');
     expect(findFirstOrThrow).toHaveBeenCalledWith(expect.objectContaining({ where: { id: record.id, target: { campaign: { ownerId: 'owner-1' } } } }));

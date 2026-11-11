@@ -6,7 +6,8 @@ import { AiProvider } from './ai-provider';
 import { failedPlatformOf, AiContentService, contractInstructions, extractJsonObject } from './ai-content.service';
 import { approvalHash, approvalJsonSchema, ApprovalSchema } from './content-approval';
 import { scoreFromReason } from './content-quality';
-import { platformContract } from '../platforms/platform-contract';
+import { brandFooter } from '../platforms/brand-footer';
+import { countChars, platformContract } from '../platforms/platform-contract';
 import { checkPostLength } from '../platforms/post-length';
 import { BrandProfileService } from './brand-profile.service';
 import { GeminiKeyPoolService } from './gemini-key-pool.service';
@@ -1580,5 +1581,23 @@ describe('contractInstructions tag format', () => {
     expect(x).toContain('The system adds the line "Source: https://vpsttt.vn/a" below the body (33 characters with the blank line before it), so the body with its hashtags gets at most 247 characters');
     expect(x).toContain('every link, also a bare domain such as example.com, counts as 23');
     expect(contractInstructions(platformContract('bluesky'))).toMatch(/must be at most 300 characters\. Aim for about 255 characters in the body\.$/m);
+  });
+
+  it('leaves room for the company footer and tells the writer and approver it is the system\'s', () => {
+    const footer = countChars(`\n\n${brandFooter('plain')}`, 'graphemes');
+    const linkedin = contractInstructions(platformContract('linkedin', { defaultLanguage: 'vi' }), 'https://vpsttt.vn/a');
+    const source = countChars('\n\nNguồn: https://vpsttt.vn/a', 'graphemes');
+    expect(linkedin).toContain(`and the company footer below that (${footer} characters), so the body with its hashtags gets at most ${3000 - source - footer} characters`);
+    expect(linkedin).toContain('Do not write any of those contact details or a closing contact block in the body');
+    expect(linkedin).toContain('never judge it, count it as a link or call to action');
+    expect(contractInstructions(platformContract('instagram', { defaultLanguage: 'vi' })))
+      .toContain(`The system adds the company footer below the body (${footer} characters), so the body with its hashtags gets at most ${2200 - footer} characters.`);
+    // No limit: only the rule; English posts, forums and short feeds: nothing about it.
+    const medium = contractInstructions(platformContract('medium', { defaultLanguage: 'vi' }));
+    expect(medium).toContain('The system adds the company contact footer');
+    expect(medium).not.toContain('only added when the post still fits');
+    for (const contract of [platformContract('linkedin', { defaultLanguage: 'en' }), platformContract('voz-forums'), platformContract('x', { defaultLanguage: 'vi' })]) {
+      expect(contractInstructions(contract)).not.toContain('footer');
+    }
   });
 });

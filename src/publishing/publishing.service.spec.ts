@@ -13,6 +13,7 @@ import { ConnectorError } from '../connectors/core/connector-error';
 import { POST_MEDIA_MANAGED_STORAGE, PostPayload } from '../connectors/core/connector.types';
 import { SocialPublisher } from '../connectors/core/social-publisher.interface';
 import { ErrorCode } from '../common/exceptions/application.exception';
+import { BRAND_FOOTER_LINES, brandFooter } from '../platforms/brand-footer';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
 import { PrismaService } from '../database/prisma.service';
 import { RedisService } from '../queue/redis.service';
@@ -1207,5 +1208,54 @@ describe('final AI approver backstop in the publishing worker', () => {
     const off = worker(verdict('rejected'), false);
     await off.service.process('job-1');
     expect(off.publish).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('company footer on API destinations', () => {
+  const VI_POST = 'Mình vừa chuyển website sang máy chủ mới và thời gian tải trang giảm hẳn, chia sẻ lại các bước đã làm.';
+
+  async function publishedBody(slug: string, body: string): Promise<string | undefined> {
+    const job = publishJobFixture();
+    job.platformAccount.platform = { slug, enabled: true };
+    job.target.contentVariant = { ...job.target.contentVariant, body };
+    const transactionClient = {
+      publishJob: { update: jest.fn().mockResolvedValue({}) },
+      publishAttempt: { create: jest.fn().mockResolvedValue({ id: 'attempt-1' }), update: jest.fn().mockResolvedValue({}) },
+      publishedPost: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      publishJob: { findUniqueOrThrow: jest.fn().mockResolvedValue(job), update: jest.fn().mockResolvedValue({}) },
+      publishAttempt: { update: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn((input: unknown) => typeof input === 'function'
+        ? (input as (client: typeof transactionClient) => Promise<unknown>)(transactionClient)
+        : Promise.all(input as Promise<unknown>[])),
+    } as unknown as PrismaService;
+    const publish = jest.fn<Promise<{ externalId: string; status: 'PUBLISHED' }>, [account: unknown, payload: PostPayload]>()
+      .mockResolvedValue({ externalId: 'post-1', status: 'PUBLISHED' });
+    const service = new PublishingService(
+      prisma,
+      {
+        acquireLock: jest.fn().mockResolvedValue('token'),
+        extendLock: jest.fn().mockResolvedValue(true),
+        releaseLock: jest.fn().mockResolvedValue(true),
+        consumeRateLimit: jest.fn().mockResolvedValue({ allowed: true, remaining: 9 }),
+      } as unknown as RedisService,
+      { load: jest.fn().mockResolvedValue(loadedAccountFixture({ platform: slug, connectorKey: slug })) } as unknown as ConnectorAccountsService,
+      { get: jest.fn().mockReturnValue({ validate: jest.fn(), publish }) } as unknown as ConnectorRegistryService,
+      { refresh: jest.fn().mockResolvedValue(undefined) } as unknown as CampaignStatusService,
+    );
+    await service.process('job-1');
+    return publish.mock.calls[0]?.[1].body;
+  }
+
+  it('sends the footer below a Vietnamese LinkedIn post, and X posts exactly as written', async () => {
+    await expect(publishedBody('linkedin', VI_POST)).resolves.toBe(`${VI_POST}\n\n${BRAND_FOOTER_LINES.join('\n')}`);
+    await expect(publishedBody('x', VI_POST)).resolves.toBe(VI_POST);
+  });
+
+  it('sends WordPress an HTML footer with links', async () => {
+    const body = await publishedBody('wordpress', `<p>${VI_POST}</p>`);
+    expect(body).toBe(`<p>${VI_POST}</p>\n\n${brandFooter('html')}`);
+    expect(body).toContain('<a href="https://zalo.me/vpstttgroup">');
   });
 });

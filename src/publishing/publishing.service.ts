@@ -30,6 +30,8 @@ import { RedisLockLease } from '../queue/redis-lock-lease';
 import { DeadLetterDeliveryError } from '../queue/queue.types';
 import { sha256 } from '../common/utils/crypto.utils';
 import { repairEscapedNewlines } from '../common/utils/escaped-text';
+import { contractFor, deliveryEngine } from '../platforms/post-length';
+import { apiPostBody } from '../platforms/post-text';
 import {
   STALE_DELIVERY_AFTER_MS,
   WORKER_CRASH_UNCERTAIN_RESULT_CODE,
@@ -480,9 +482,12 @@ export class PublishingService {
           capability,
           connector.mode,
         );
+        const body = repairEscapedNewlines(variant.body);
+        // The company footer the preview shows, on the destinations that take it.
+        const contract = contractFor({ platformSlug: platform, engine: deliveryEngine(job.platformAccount.settings), body });
         const payload: PostPayload = {
           title: variant.title ?? undefined,
-          body: repairEscapedNewlines(variant.body),
+          body: apiPostBody({ title: variant.title, body, hashtags: variant.hashtags }, contract, connectorKey),
           summary: variant.summary ?? undefined,
           hashtags: variant.hashtags,
           canonicalUrl: variant.content.canonicalUrl ?? undefined,
