@@ -1,6 +1,19 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.33.0 · 11/11/2026
+### Tính năng
+- Đăng WordPress và Mastodon.social bằng tiện ích Chrome, không cần API (tiện ích 1.19.0)
+  - **WordPress:** trang đăng là `https://<blog>/wp-admin/post-new.php` (blog tự cài, hoặc blog WordPress.com đã chọn
+    giao diện quản trị Classic). Tiện ích dùng chính trình soạn bài của WordPress: điền tiêu đề, nội dung có định dạng
+    (đề mục, danh sách, đoạn mã), tải ảnh của bài lên thư viện làm ảnh đại diện và khối đầu bài, rồi bấm Publish và
+    lấy link bài. Tài khoản Contributor (không được tự đăng) thì bài được gửi duyệt và nằm ở Bài chờ duyệt. Trang soạn
+    đang có bài khác thì không ghi đè. Tiện ích nhận đúng tài khoản qua thanh quản trị của WordPress.
+  - **Mastodon.social:** danh mục có hai mục cho cùng mastodon.social; mục "Mastodon.social" nay dùng luồng Mastodon
+    có sẵn của tiện ích.
+  - Instagram, Threads, X, Discord vẫn không có luồng tiện ích: điều khoản của các nền tảng này cấm tự động hoá tài
+    khoản người dùng qua trình duyệt (có thể khoá tài khoản).
+
 ## 1.32.0 · 10/11/2026
 ### Tính năng
 - Bài tiếng Việt trên kênh của công ty tự có footer liên hệ ở cuối bài

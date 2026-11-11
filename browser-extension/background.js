@@ -5,6 +5,7 @@
 // State lives in chrome.storage because MV3 service workers stop when idle.
 import { canFillPage, fillAndSubmit, readErrors, readModeration, readPublishedPost } from './page-actions.js';
 import { fillSocialAndSubmit, readSocialPublishedPost } from './social-actions.js';
+import { fillWordPress } from './wordpress-actions.js';
 import { accountAuthStep } from './auth-actions.js';
 import { submitDiscoursePost } from './discourse-session.js';
 import { showPublishNotice } from './publish-notice.js';
@@ -74,7 +75,7 @@ const PROFILE_CHECK_AFTER_MS = 2_000;
 // One page probe during sign-in. A page still loading (slow site, proxy) gets more probes within the sign-in deadline.
 const AUTH_PROBE_TIMEOUT_MS = 8_000;
 const LOG_LIMIT = 20;
-const SUPPORTED_ENGINES = ['producthunt', 'discourse', 'xenforo', 'phpbb', 'vanilla', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'disqus', 'mewe', 'ubiquiti', 'huggingface', 'blogger', 'invision', 'flarum', 'zendesk'];
+const SUPPORTED_ENGINES = ['producthunt', 'discourse', 'xenforo', 'phpbb', 'vanilla', 'medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'disqus', 'mewe', 'ubiquiti', 'huggingface', 'blogger', 'invision', 'flarum', 'zendesk', 'wordpress'];
 
 // Chrome fires several tab updates for one navigation; these guard against
 // filling or reporting the same job twice while the worker is alive.
@@ -641,6 +642,10 @@ async function fill(task) {
     if (!result && task.job.recipe.engine === 'discourse' && task.job.autoSubmit && !task.uiOverride) {
       [{ result }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: submitDiscoursePost, args: [task.job], injectImmediately: true });
       if (result?.status === 'fallback') result = null;
+    }
+    // WordPress publishes through its editor's data API, which only the page's own world sees.
+    if (!result && task.job.recipe.engine === 'wordpress') {
+      [{ result }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: fillWordPress, args: [runnerJob(task, attachments)], world: 'MAIN' });
     }
     if (!result) [{ result }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: task.job.recipe.workflow === 'social' ? fillSocialAndSubmit : fillAndSubmit,
       args: [runnerJob(task, attachments)], injectImmediately: true });

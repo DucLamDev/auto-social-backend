@@ -2,7 +2,7 @@ import { EXTENSION_FLOWS, extensionFlowDefaults, validateExtensionFlow } from '.
 
 describe('per-platform Chrome flows', () => {
   it.each(EXTENSION_FLOWS)('binds $name to its own engine and forum', (flow) => {
-    const targetUrl = flow.targetUrl || ({ substack: 'https://example.substack.com/publish/post', quora: 'https://example.quora.com/', reddit: 'https://www.reddit.com/r/example/submit', tinhte: 'https://tinhte.vn/editorv2/create/293/' } as Record<string, string>)[flow.id] || `${flow.forumUrl}/forums/example.1/post-thread`;
+    const targetUrl = flow.targetUrl || ({ substack: 'https://example.substack.com/publish/post', quora: 'https://example.quora.com/', reddit: 'https://www.reddit.com/r/example/submit', tinhte: 'https://tinhte.vn/editorv2/create/293/', wordpress: 'https://blog.example.com/wp-admin/post-new.php' } as Record<string, string>)[flow.id] || `${flow.forumUrl}/forums/example.1/post-thread`;
     expect(validateExtensionFlow(flow.id, { engine: flow.engine, targetUrl, autoSubmit: true })).toBe(flow);
     expect(extensionFlowDefaults(flow.id)).toMatchObject({ extensionFlowId: flow.id, extensionEngine: flow.engine });
     expect(() => validateExtensionFlow(flow.id, { engine: flow.engine, targetUrl: 'https://wrong-forum.example/new-topic', autoSubmit: true })).toThrow();
@@ -81,5 +81,15 @@ describe('per-platform Chrome flows', () => {
     ] as const) {
       expect(() => validateExtensionFlow(id, { engine, targetUrl, autoSubmit: true })).toThrow();
     }
+  });
+
+  it('posts to WordPress only from the new-post page of a blog over HTTPS, and maps Mastodon.social to the Mastodon flow', () => {
+    const wordpress = (targetUrl: string) => validateExtensionFlow('wordpress', { engine: 'wordpress', targetUrl, autoSubmit: true });
+    expect(wordpress('https://blog.vpsttt.com/wp-admin/post-new.php')?.id).toBe('wordpress');
+    expect(wordpress('https://vpsttt.com/blog/wp-admin/post-new.php?post_type=post')?.id).toBe('wordpress');
+    for (const targetUrl of ['http://blog.vpsttt.com/wp-admin/post-new.php', 'https://blog.vpsttt.com/wp-admin/edit.php', 'https://blog.vpsttt.com/wp-admin/post-new.php?post_type=page', 'https://wordpress.com/post/vpsttt.wordpress.com']) {
+      expect(() => wordpress(targetUrl)).toThrow();
+    }
+    expect(validateExtensionFlow('mastodon-social', { engine: 'mastodon', targetUrl: 'https://mastodon.social/publish', autoSubmit: true })?.engine).toBe('mastodon');
   });
 });

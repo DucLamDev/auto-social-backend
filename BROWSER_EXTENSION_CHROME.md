@@ -1,5 +1,16 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.33.0 / tiện ích 1.19.0: WordPress và Mastodon.social
+
+- **WordPress** (luồng `wordpress`): Trang tạo bài là `https://<blog>/wp-admin/post-new.php` (blog tự cài, cả cài trong
+  thư mục con; blog WordPress.com phải chọn Admin interface style: Classic, vì trình soạn của WordPress.com chạy trong
+  khung của tên miền khác). `browser-extension/wordpress-actions.js` chạy trong MAIN world của trang và dùng `wp.data`:
+  `editPost({ title })`, `resetBlocks(rawHandler(bodyHtml))`, ảnh qua `wp.apiFetch` `/wp/v2/media` (ảnh đại diện +
+  khối `core/image` đầu bài), rồi `editPost({ status: 'publish' | 'pending' })` + `savePost()`. Có quyền đăng (link
+  `wp:action-publish`) thì Publish và báo link bài; không có (Contributor) thì gửi duyệt và báo chờ duyệt. Chỉ ghi vào
+  bài mới (`auto-draft`, trống). Tài khoản: tên đăng nhập trên thanh quản trị (`#wp-admin-bar-user-info .username`).
+- **Mastodon.social:** mục `mastodon-social` của danh mục dùng luồng `mastodon` (mastodon.social/publish).
+
 ## Backend 1.31.0 / tiện ích 1.18.0: AI ở bước đăng nhập
 
 Cần backend 1.31.0 (migration `20261107090000_extension_ui_hints_login_checks`), `EXTENSION_UI_RECOVERY_ENABLED=true`,
