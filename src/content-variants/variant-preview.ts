@@ -1,8 +1,7 @@
 import { EXTENSION_RECIPES, isExtensionDelivery, parseExtensionDeliverySettings, type ExtensionEngine } from '../connectors/extension/extension-delivery';
-import { extensionFlowForPlatform } from '../connectors/extension/extension-flows';
 import { destinationTags } from '../connectors/extension/extension-tags';
 import { PLATFORM_CATALOG, type PlatformGroupKey } from '../platforms/platform-catalog';
-import type { AudienceLanguage, TextFormat } from '../platforms/platform-contract';
+import { defaultEngineFor, type AudienceLanguage, type TextFormat } from '../platforms/platform-contract';
 import { checkPostLength, contractFor } from '../platforms/post-length';
 import { renderPostText, type PostTextInput } from '../platforms/post-text';
 
@@ -84,7 +83,7 @@ export function variantPreview(
   route?: PreviewRoute,
 ): VariantPreview {
   const extension = route?.delivery === 'extension' ? route : undefined;
-  const resolvedEngine = extension?.engine ?? engine ?? extensionFlowForPlatform(platformSlug)?.engine;
+  const resolvedEngine = extension?.engine ?? engine ?? defaultEngineFor(platformSlug);
   const contract = contractFor({ platformSlug, engine: resolvedEngine, body: input.body });
   const rendered = renderPostText(input, contract, canonicalUrl);
   const hashtags = [...new Set(input.hashtags.map((tag) => tag.trim().replace(/^#+/, '')).filter(Boolean))];

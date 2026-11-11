@@ -1,6 +1,6 @@
 import type { ExtensionRecipe } from './extension-delivery';
 
-export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'producthunt', 'disqus', 'mewe', 'ubiquiti', 'huggingface', 'blogger', 'invision', 'flarum', 'zendesk'] as const;
+export const SOCIAL_EXTENSION_ENGINES = ['medium', 'substack', 'quora', 'reddit', 'slideshare', 'aws-builder', 'tinhte', 'pixelfed', 'mastodon', 'bluesky', 'tumblr', 'devto', 'minds', 'stackexchange', 'lemmy', 'discuit', 'linkedin', 'differ', 'dzone', 'dailydev', 'producthunt', 'disqus', 'mewe', 'ubiquiti', 'huggingface', 'blogger', 'invision', 'flarum', 'zendesk', 'wordpress'] as const;
 export type SocialExtensionEngine = (typeof SOCIAL_EXTENSION_ENGINES)[number];
 
 function recipe(engine: SocialExtensionEngine, fields: Partial<ExtensionRecipe>): ExtensionRecipe {
@@ -127,6 +127,20 @@ export const SOCIAL_EXTENSION_RECIPES: Record<SocialExtensionEngine, ExtensionRe
     errorSelectors: ['form .notification-error', 'form .error', '.notification-error'],
     publishedTitleSelectors: ['h1.post-title', '.post-title h1', '.post-header h1'],
     publishedBodySelectors: ['.post-body', '.post-content', 'article.post'],
+  }),
+  // WordPress block editor (<site>/wp-admin/post-new.php, self-hosted or WordPress.com with
+  // the classic admin): browser-extension/wordpress-actions.js runs in the page's own world and
+  // uses the editor's data API (wp.data): title, blocks from the post HTML, an optional image
+  // (featured + first block), then Publish, or Submit for Review for a Contributor.
+  wordpress: recipe('wordpress', {
+    readySelectors: ['.block-editor', '.edit-post-layout', '.editor-editor-interface'],
+    // Not used by the runner (wordpress-actions.js writes through wp.data); they mark the post as titled.
+    titleSelectors: ['.editor-post-title__input', 'h1.wp-block-post-title'], bodySelectors: ['.block-editor-writing-flow'], inputMode: 'pasteHtml', submitSelectors: [],
+    optionalMedia: 'image',
+    // A post permalink on the site (pretty or ?p=<id>), never an admin or login page.
+    successUrlPattern: '^https?://[^/?#]+/(?!wp-admin/|wp-login\\.php).*$',
+    loginSelectors: ['#loginform', 'input[type="password"]'],
+    errorSelectors: ['.components-notice.is-error', '.notice-error'],
   }),
   // daily.dev /squads/create opens its composer dialog (form#smart_composer) with the
   // signed-in user's own profile as audience; a new post opens /posts/<slug>.

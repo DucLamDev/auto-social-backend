@@ -74,7 +74,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     } },
   };
   const source = fs.readFileSync(path.join(__dirname, '../../browser-extension/background.js'), 'utf8')
-    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery|form-fill|proxy)\.js';\r?\n/gm, '')
+    .replace(/^import .* from '\.\/(?:page-actions|social-actions|auth-actions|discourse-session|publish-notice|ui-recovery|form-fill|proxy|wordpress-actions)\.js';\r?\n/gm, '')
     .replace(/const NEXT_JOB_DELAY_MS = [\d_]+;/, `const NEXT_JOB_DELAY_MS = ${nextJobDelay};`)
     .replace(/const NO_GOOGLE_GRACE_MS = [\d_]+;/, 'const NO_GOOGLE_GRACE_MS = 0;')
     .replace(/const AUTH_PROBE_TIMEOUT_MS = [\d_]+;/, 'const AUTH_PROBE_TIMEOUT_MS = 20;')
@@ -84,6 +84,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     chrome, URL, Date, AbortSignal, setTimeout, clearTimeout,
     canFillPage: function canFillPage() {}, fillAndSubmit: function fillAndSubmit() {}, readErrors: function readErrors() {}, readModeration: function readModeration() {}, readPublishedPost: function readPublishedPost() {},
     fillSocialAndSubmit: function fillSocialAndSubmit() {}, readSocialPublishedPost: function readSocialPublishedPost() {},
+    fillWordPress: function fillWordPress() {},
     accountAuthStep: function accountAuthStep() {},
     submitDiscoursePost: function submitDiscoursePost() {},
     showPublishNotice: function showPublishNotice() {},

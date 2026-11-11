@@ -583,6 +583,16 @@ test('an element an AI hint pointed at is read and compared by the extension its
   } finally { await page.close(); }
 });
 
+test('WordPress reads the signed-in user from the wp-admin toolbar, even hidden by the fullscreen editor', async () => {
+  const page = await pageAt('https://blog.vpsttt.test/wp-admin/post-new.php', '<div id="wpadminbar" style="display:none"><ul><li id="wp-admin-bar-user-info"><span class="display-name">VPSTTT Team</span><span class="username">vpsttt</span></li></ul></div><div class="block-editor">Editor</div>');
+  const scoped = expectedUsername => ({ ...job, targetOrigin: 'https://blog.vpsttt.test', recipe: { engine: 'wordpress' }, auth: { ...job.auth, expectedUsername, profileUrl: '' } });
+  try {
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped('vpsttt') })).state, 'authenticated');
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped('VPSTTT Team') })).state, 'authenticated');
+    assert.equal((await page.evaluate(accountAuthStep, { job: scoped('editor2') })).state, 'mismatch');
+  } finally { await page.close(); }
+});
+
 test('a site without a known marker is identified by its own profile link in the navigation', async () => {
   const page = await pageAt('https://daily.dev/', '<aside><a href="/vpsttt"><img alt="" style="width:20px;height:20px" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E"></a></aside><main><a href="/someone">someone</a></main>');
   const scoped = { ...job, targetOrigin: 'https://daily.dev', recipe: { engine: 'generic' }, auth: { ...job.auth, provider: 'google', expectedUsername: 'vpsttt', profileUrl: 'https://daily.dev/vpsttt' } };

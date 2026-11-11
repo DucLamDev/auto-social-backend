@@ -10,7 +10,7 @@ export interface ExtensionFlow {
   targetUrl: string;
   revision: number;
   setupHint: string;
-  targetScope?: 'substack-publication' | 'quora-post';
+  targetScope?: 'substack-publication' | 'quora-post' | 'wordpress-admin';
 }
 
 const definitions: Array<[string, string, ExtensionEngine, string]> = [
@@ -72,6 +72,10 @@ export const EXTENSION_FLOWS: readonly ExtensionFlow[] = [...forumFlows,
   { id: 'linkedin', name: 'LinkedIn', engine: 'linkedin', forumUrl: 'https://www.linkedin.com', targetUrl: 'https://www.linkedin.com/feed/', revision: 1, setupHint: 'Start a post → điền nội dung → Post trên hồ sơ cá nhân đã xác minh. Tối đa 3.000 ký tự.' },
   { id: 'minds', name: 'Minds', engine: 'minds', forumUrl: 'https://www.minds.com', targetUrl: 'https://www.minds.com/newsfeed/subscriptions', revision: 1, setupHint: 'Create → Compose → My Channel → Post. Đăng nội dung lên kênh đang xác minh; không bật Boost hoặc đăng vào nhóm khác.' },
   { id: 'mastodon', name: 'Mastodon.social', engine: 'mastodon', forumUrl: 'https://mastodon.social', targetUrl: 'https://mastodon.social/publish', revision: 1, setupHint: 'Đăng nội dung lên hồ sơ Mastodon trong Chrome.' },
+  // The catalogue lists mastodon.social twice (Mastodon, Mastodon.social): the same Chrome flow.
+  { id: 'mastodon-social', name: 'Mastodon.social', engine: 'mastodon', forumUrl: 'https://mastodon.social', targetUrl: 'https://mastodon.social/publish', revision: 1, setupHint: 'Đăng nội dung lên hồ sơ Mastodon trong Chrome.' },
+  { id: 'wordpress', name: 'WordPress', engine: 'wordpress', forumUrl: 'https://wordpress.org', targetUrl: '', revision: 1, targetScope: 'wordpress-admin',
+    setupHint: 'Nhập trang viết bài mới của blog: https://TEN-BLOG/wp-admin/post-new.php (blog tự cài, hoặc blog WordPress.com đã chọn giao diện quản trị Classic). Đăng nhập WordPress trong Chrome bằng tài khoản có quyền đăng bài; tài khoản Contributor thì bài được gửi duyệt. Tiện ích điền tiêu đề, nội dung có định dạng, ảnh (ảnh đại diện) rồi bấm Publish.' },
   { id: 'vivaldi-social', name: 'Vivaldi Social', engine: 'mastodon', forumUrl: 'https://social.vivaldi.net', targetUrl: 'https://social.vivaldi.net/publish', revision: 1, setupHint: 'Đăng nội dung lên hồ sơ Vivaldi Social trong Chrome.' },
   { id: 'bluesky', name: 'Bluesky', engine: 'bluesky', forumUrl: 'https://bsky.app', targetUrl: 'https://bsky.app/intent/compose', revision: 1, setupHint: 'Viết bài ngắn trên hồ sơ Bluesky đang đăng nhập.' },
   { id: 'tumblr', name: 'Tumblr', engine: 'tumblr', forumUrl: 'https://www.tumblr.com', targetUrl: 'https://www.tumblr.com/new/text', revision: 1, setupHint: 'Đăng Text post trên blog Tumblr đang chọn trong Chrome.' },
@@ -140,6 +144,14 @@ export function validateExtensionFlow(slug: string, settings: ExtensionDeliveryS
   }
   const target = new URL(settings.targetUrl);
   const forum = new URL(flow.forumUrl);
+  // WordPress: the new-post page of the account's own blog, on any HTTPS domain (sub-folder installs too).
+  if (flow.targetScope === 'wordpress-admin') {
+    if (settings.engine !== flow.engine || target.protocol !== 'https:' || target.username || target.password || target.port || target.hash
+      || !/^(?:\/[\w.-]+)*\/wp-admin\/post-new\.php$/.test(target.pathname) || (target.search && target.search !== '?post_type=post')) {
+      throw new BadRequestException(flow.setupHint);
+    }
+    return flow;
+  }
   if (flow.targetScope) {
     const hostPattern = flow.targetScope === 'substack-publication' ? /^[a-z0-9-]+\.substack\.com$/ : /^[a-z0-9-]+\.quora\.com$/;
     if (settings.engine !== flow.engine || target.protocol !== 'https:' || !hostPattern.test(target.hostname)

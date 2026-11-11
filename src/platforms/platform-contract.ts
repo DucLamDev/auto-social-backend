@@ -34,7 +34,7 @@ export interface PlatformContract {
   titleHardLimit?: number;
 }
 
-const MARKDOWN_ENGINES = new Set<ExtensionEngine>(['discourse', 'devto', 'lemmy', 'discuit', 'stackexchange', 'differ', 'producthunt', 'ubiquiti', 'vanilla', 'blogger', 'invision', 'flarum', 'zendesk']);
+const MARKDOWN_ENGINES = new Set<ExtensionEngine>(['discourse', 'devto', 'lemmy', 'discuit', 'stackexchange', 'differ', 'producthunt', 'ubiquiti', 'vanilla', 'blogger', 'invision', 'flarum', 'zendesk', 'wordpress']);
 
 const PLATFORM_FORMAT: Record<string, TextFormat> = {
   wordpress: 'html',
@@ -109,10 +109,22 @@ export interface ContractOptions {
   platformLanguages?: Record<string, AudienceLanguage>;
 }
 
+/** Platforms whose catalogue default is the API connector even though an extension flow exists. */
+const API_FIRST_PLATFORMS = new Set(['wordpress']);
+
+/**
+ * The posting flow assumed when the caller knows no account route. WordPress also has an
+ * API connector that takes HTML: only an account posting through the extension (whose
+ * engine the caller passes) uses the extension flow.
+ */
+export function defaultEngineFor(slug: string): ExtensionEngine | undefined {
+  return API_FIRST_PLATFORMS.has(slug) ? undefined : extensionFlowForPlatform(slug)?.engine;
+}
+
 export function platformContract(slug: string, options: ContractOptions = {}): PlatformContract {
   const entry = PLATFORM_CATALOG.find((platform) => platform.slug === slug);
   const group: PlatformGroupKey = entry?.groupKey ?? 'SOCIAL';
-  const engine = options.engine ?? extensionFlowForPlatform(slug)?.engine;
+  const engine = options.engine ?? defaultEngineFor(slug);
   const format = engine
     ? (MARKDOWN_ENGINES.has(engine) ? 'markdown' : 'plain')
     : PLATFORM_FORMAT[slug] ?? GROUP_DEFAULT_FORMAT[group];

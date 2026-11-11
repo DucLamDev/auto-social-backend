@@ -197,6 +197,12 @@ export async function accountAuthStep({ job, action, payload, expectedPageUrl })
         if (userId > 0 && name) identity = JSON.parse(name);
       } catch { /* Profile page fallback */ }
     }
+    if (job.recipe.engine === 'wordpress' && !identity) {
+      // wp-admin's toolbar names the signed-in user (hidden by the editor's fullscreen mode, still in the page).
+      const login = document.querySelector('#wp-admin-bar-user-info .username')?.textContent?.trim();
+      const display = document.querySelector('#wp-admin-bar-user-info .display-name, #wp-admin-bar-my-account .display-name')?.textContent?.trim();
+      identity = [login, display].find(name => name && sameIdentity(name)) ?? (login || display || undefined);
+    }
     if (job.recipe.engine === 'flarum' && !identity) {
       // Flarum boots from a JSON payload that names the session user: read only its username.
       try {
