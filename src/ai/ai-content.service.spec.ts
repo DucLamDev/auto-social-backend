@@ -6,7 +6,7 @@ import { AiProvider } from './ai-provider';
 import { failedPlatformOf, AiContentService, contractInstructions, extractJsonObject } from './ai-content.service';
 import { approvalHash, approvalJsonSchema, ApprovalSchema } from './content-approval';
 import { scoreFromReason } from './content-quality';
-import { brandFooter } from '../platforms/brand-footer';
+import { BRAND_SHORT_LINE, brandFooter } from '../platforms/brand-footer';
 import { countChars, platformContract } from '../platforms/platform-contract';
 import { checkPostLength } from '../platforms/post-length';
 import { BrandProfileService } from './brand-profile.service';
@@ -876,12 +876,13 @@ describe('AiContentService quality-checked generation', () => {
 
       const writer = request(create, 0);
       expect(writer.instructions).toContain('must be at most 500 characters');
-      expect(writer.instructions).toContain(`The system adds the line "Nguồn: ${source}" below the body (32 characters with the blank line before it), so the body with its hashtags gets at most 468 characters`);
+      // The website line "🌐 https://vpsttt.com" costs 4 + 23 on Mastodon.
+      expect(writer.instructions).toContain(`The system adds the line "Nguồn: ${source}" below the body (32 characters with the blank line before it) and the company footer below that (27 characters), so the body with its hashtags gets at most 441 characters`);
       expect(writer.instructions).toContain('On Mastodon every link counts as 23 characters');
       expect(request(create, 1).instructions).toContain('this draft has 545');
       expect(request(create, 2).input).toContain('Dài 545/500 ký tự, cần bớt ít nhất 45 ký tự');
       expect(request(create, 6).input).toContain('As published it has 545 characters; the limit is 500. Cut at least 45 characters');
-      expect(request(create, 6).input).toContain('the body with its hashtags must stay within 468 characters');
+      expect(request(create, 6).input).toContain('and the company footer (27 characters) below that, so the body with its hashtags must stay within 441 characters');
       expect(create).toHaveBeenCalledTimes(7);
 
       const stored = created[0] as { title: string | null; body: string; hashtags: string[]; recommended: boolean; reason: string };
@@ -1183,7 +1184,8 @@ describe('AiContentService quality-checked generation', () => {
       expect(reviewer.messages[0]!.content).toContain('clumsy seeding (astroturfing)');
       const approver = chatRequest(vpsttt, 1);
       expect(approver.messages[0]!.content).toContain('final approver for posts published on behalf of VPSTTT');
-      expect(approver.messages[1]!.content).toContain(`<body>\n${shortBody}\n</body>`);
+      // The approver reads the post as published, with the website line the system adds.
+      expect(approver.messages[1]!.content).toContain(`<body>\n${shortBody}\n\n${BRAND_SHORT_LINE}\n</body>`);
       expect(approver.messages[1]!.content).toContain('<brand_facts>');
       expect(approver.messages[1]!.content).toContain('Editor score 8/10');
       expect(approver.messages[1]!.content).toContain('Image: none, the post is text only.');
@@ -1576,11 +1578,13 @@ describe('contractInstructions tag format', () => {
     expect(contractInstructions(platformContract('bluesky'))).not.toContain('Tag format');
   });
 
-  it('gives the body budget left by the source line and how links count', () => {
+  it('gives the body budget left by the source line, the company line and how links count', () => {
     const x = contractInstructions(platformContract('x', { defaultLanguage: 'en' }), 'https://vpsttt.vn/a');
-    expect(x).toContain('The system adds the line "Source: https://vpsttt.vn/a" below the body (33 characters with the blank line before it), so the body with its hashtags gets at most 247 characters');
+    // X weighs "\n\n🌐 " as 5 and the website link as 23.
+    expect(x).toContain('The system adds the line "Source: https://vpsttt.vn/a" below the body (33 characters with the blank line before it) and the company footer below that (28 characters), so the body with its hashtags gets at most 219 characters');
     expect(x).toContain('every link, also a bare domain such as example.com, counts as 23');
-    expect(contractInstructions(platformContract('bluesky'))).toMatch(/must be at most 300 characters\. Aim for about 255 characters in the body\.$/m);
+    expect(contractInstructions(platformContract('bluesky')))
+      .toMatch(/must be at most 300 characters\. The system adds the company footer below the body \(22 characters\), so the body with its hashtags gets at most 278 characters\. Aim for about 236 characters in the body\.$/m);
   });
 
   it('leaves room for the company footer and tells the writer and approver it is the system\'s', () => {
@@ -1592,12 +1596,17 @@ describe('contractInstructions tag format', () => {
     expect(linkedin).toContain('never judge it, count it as a link or call to action');
     expect(contractInstructions(platformContract('instagram', { defaultLanguage: 'vi' })))
       .toContain(`The system adds the company footer below the body (${footer} characters), so the body with its hashtags gets at most ${2200 - footer} characters.`);
-    // No limit: only the rule; English posts, forums and short feeds: nothing about it.
+    // No limit: only the rule.
     const medium = contractInstructions(platformContract('medium', { defaultLanguage: 'vi' }));
     expect(medium).toContain('The system adds the company contact footer');
     expect(medium).not.toContain('only added when the post still fits');
-    for (const contract of [platformContract('linkedin', { defaultLanguage: 'en' }), platformContract('voz-forums'), platformContract('x', { defaultLanguage: 'vi' })]) {
-      expect(contractInstructions(contract)).not.toContain('footer');
-    }
+    // English posts get the English block, short feeds the website line, forums nothing.
+    const english = countChars(`\n\n${brandFooter('plain', 'en')}`, 'graphemes');
+    expect(contractInstructions(platformContract('linkedin', { defaultLanguage: 'en' })))
+      .toContain(`The system adds the company contact footer (company name, website, email, phone; ${english} characters with the blank line before it)`);
+    const x = contractInstructions(platformContract('x', { defaultLanguage: 'vi' }));
+    expect(x).toContain(`The system adds the company website line "${BRAND_SHORT_LINE}"`);
+    expect(x).toContain('Do not repeat the company website address in the body.');
+    expect(contractInstructions(platformContract('voz-forums'))).not.toContain('footer');
   });
 });
