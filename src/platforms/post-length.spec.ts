@@ -24,8 +24,8 @@ describe('checkPostLength and the connector check', () => {
   it('counts what the destination counts: the source line, Mastodon links as 23 and X weights', () => {
     const body = `Xem hướng dẫn tại ${SOURCE}/chi-tiet-tung-buoc-cai-dat`;
     const mastodon = checkPostLength({ title: null, body, hashtags: [], platformSlug: 'mastodon', canonicalUrl: SOURCE });
-    // "Xem hướng dẫn tại " (18) + link (23) + "\n\nNguồn: " (9) + link (23).
-    expect(mastodon).toEqual({ length: 18 + 23 + 9 + 23, maxChars: 500, over: false, counting: 'mastodon' });
+    // "Xem hướng dẫn tại " (18) + link (23) + "\n\nNguồn: " (9) + link (23) + the company line "\n\n🌐 " (4) + link (23).
+    expect(mastodon).toEqual({ length: 18 + 23 + 9 + 23 + 4 + 23, maxChars: 500, over: false, counting: 'mastodon' });
     expect(checkPostLength({ title: null, body: 'ạ'.repeat(141), hashtags: [], platformSlug: 'x' })).toMatchObject({ length: 282, maxChars: 280, over: true });
     expect(checkTextLength('bluesky', '👍🏽'.repeat(300))).toMatchObject({ length: 300, over: false });
     expect(checkTextLength('mastodon', `${'a'.repeat(480)} ${SOURCE}`)).toMatchObject({ length: 504, maxChars: 500, over: true, counting: 'mastodon' });

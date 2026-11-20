@@ -3377,6 +3377,206 @@
         ]
       }
     },
+    "/api/v1/ai/brand-profile": {
+      "get": {
+        "operationId": "BrandProfile_get",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/BrandProfileViewDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "operationId": "BrandProfile_update",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBrandProfileDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/BrandProfileViewDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "settings"
+        ]
+      }
+    },
     "/api/v1/ai/gemini-keys": {
       "get": {
         "operationId": "GeminiKeys_get",
@@ -13191,6 +13391,186 @@
         "required": [
           "configured",
           "model"
+        ]
+      },
+      "BrandProfileLinkDto": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "http(s) only"
+          }
+        },
+        "required": [
+          "label",
+          "url"
+        ]
+      },
+      "BrandProfileDto": {
+        "type": "object",
+        "properties": {
+          "brandName": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "oneLiner": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "audience": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "voice": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "facts": {
+            "maxItems": 30,
+            "description": "Each at most 300 characters",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "links": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrandProfileLinkDto"
+            }
+          },
+          "disclosure": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "avoid": {
+            "maxItems": 20,
+            "description": "Each at most 200 characters",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "defaultLanguage": {
+            "type": "string",
+            "enum": [
+              "vi",
+              "en"
+            ]
+          },
+          "platformLanguages": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "vi",
+                "en"
+              ]
+            }
+          }
+        }
+      },
+      "BrandProfileContentDto": {
+        "type": "object",
+        "properties": {
+          "brandName": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "oneLiner": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "audience": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "voice": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "facts": {
+            "maxItems": 30,
+            "description": "Each at most 300 characters",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "links": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BrandProfileLinkDto"
+            }
+          },
+          "disclosure": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "avoid": {
+            "maxItems": 20,
+            "description": "Each at most 200 characters",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BrandProfileViewDto": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "nullable": true,
+            "description": "The profile the AI writes with; null when none is saved or it is ignored",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BrandProfileDto"
+              }
+            ]
+          },
+          "invalid": {
+            "type": "boolean",
+            "description": "A profile is saved but the AI ignores it (invalid, over 8 KB or stored as a secret)"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "suggested": {
+            "description": "Where the form starts when nothing is saved",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BrandProfileContentDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "profile",
+          "invalid",
+          "updatedAt",
+          "suggested"
+        ]
+      },
+      "UpdateBrandProfileDto": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/BrandProfileContentDto"
+          }
+        },
+        "required": [
+          "profile"
         ]
       },
       "GeminiKeyChangeDto": {

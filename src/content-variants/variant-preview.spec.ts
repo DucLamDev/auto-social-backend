@@ -1,5 +1,6 @@
 import { EXTENSION_RECIPES } from '../connectors/extension/extension-delivery';
 import { PrismaService } from '../database/prisma.service';
+import { BRAND_FOOTER_LINES_EN, BRAND_SHORT_LINE, BRAND_WEBSITE } from '../platforms/brand-footer';
 import { ContentVariantsService } from './content-variants.service';
 import type { VariantApprovalService } from './variant-approval.service';
 import { previewRoute, variantPreview, type PreviewRoute } from './variant-preview';
@@ -10,8 +11,9 @@ describe('post preview shown during review', () => {
   it('shows a short-form post as plain text with its hashtags inline and the character limit', () => {
     const preview = variantPreview({ title: 'Ignored title', body: markdown, hashtags: ['VPS', '#Linux'] }, 'mastodon', undefined, null);
     expect(preview).toMatchObject({ title: '', format: 'plain', tags: [], group: 'SOCIAL', engine: 'mastodon', maxChars: 500, overLimit: false });
-    expect(preview.body).toBe('Why\n\nA fast VPS with nvme disks.\n\n• 2 vCPU\n• 4 GB RAM\n\n#VPS #Linux');
-    expect(preview.length).toBe([...preview.body].length);
+    expect(preview.body).toBe(`Why\n\nA fast VPS with nvme disks.\n\n• 2 vCPU\n• 4 GB RAM\n\n#VPS #Linux\n\n${BRAND_SHORT_LINE}`);
+    // Mastodon counts the website link as 23 characters.
+    expect(preview.length).toBe([...preview.body].length - BRAND_WEBSITE.length + 23);
     expect(variantPreview({ title: null, body: 'x'.repeat(600), hashtags: [] }, 'mastodon', undefined, null).overLimit).toBe(true);
   });
 
@@ -45,7 +47,8 @@ describe('preview of the destination: appearance, tags really sent, where it goe
     const rich = variantPreview({ title: 'NVMe', body: markdown, hashtags: [] }, 'medium', undefined, 'https://vpsttt.vn/a', extension('medium', 'https://medium.com/new-story'));
     // The Markdown is kept for the page to render as the editor will show it.
     expect(rich).toMatchObject({ appearance: 'rich', engine: 'medium' });
-    expect(rich.body).toBe(`${markdown}\n\nSource: https://vpsttt.vn/a`);
+    // An English post on the brand's blog ends with the English contact block.
+    expect(rich.body).toBe(`${markdown}\n\nSource: https://vpsttt.vn/a\n\n${BRAND_FOOTER_LINES_EN.join('\n')}`);
     // The same platform through its API never goes through the rich editor.
     expect(variantPreview({ title: 'NVMe', body: markdown, hashtags: [] }, 'medium', undefined, null, { delivery: 'api' }).appearance).toBe('plain');
   });

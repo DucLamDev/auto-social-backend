@@ -81,7 +81,7 @@ describe('content quality checks', () => {
 
   it('tells the editor the limit, the draft length and the room left, and nothing about length where there is none', () => {
     const bluesky = platformContract('bluesky');
-    expect(reviewInstructions(bluesky, 280)).toContain('the published post has at most 300 characters, counting hashtags, links and the source line the system adds; this draft has 280. Judge it within that limit and never ask for additions that would not fit; only 20 characters are left, so any fix that adds text must stay within them or say what to cut to make room.');
+    expect(reviewInstructions(bluesky, 280)).toContain('the published post has at most 300 characters, counting hashtags, links, the source line and the company footer the system adds; this draft has 280. Judge it within that limit and never ask for additions that would not fit; only 20 characters are left, so any fix that adds text must stay within them or say what to cut to make room.');
     expect(reviewInstructions(bluesky, 320)).toContain('it is 20 characters over, so one issue must ask to cut at least 20 characters');
     expect(reviewInstructions(platformContract('nginx-community'))).not.toContain('length limit');
   });

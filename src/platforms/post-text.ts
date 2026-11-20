@@ -1,5 +1,5 @@
 import { ExtensionEngine } from '../connectors/extension/extension-delivery';
-import { brandFooter, footerApplies, hasBrandFooter } from './brand-footer';
+import { brandFooter, footerKind, hasBrandFooter } from './brand-footer';
 import { type AudienceLanguage, countChars, detectLanguage, PlatformContract, platformContract, type TextFormat } from './platform-contract';
 
 export interface PostTextInput {
@@ -84,12 +84,13 @@ function appendedHashtags(input: PostTextInput, contract: PlatformContract): str
 
 /**
  * The company footer to print below `text`, or '' when the destination takes
- * none (see `footerApplies`), the text carries it already, or the post would
+ * none (see `footerKind`), the text carries it already, or the post would
  * no longer fit the limit with it: the footer never pushes a post over.
  */
 function footerFor(text: string, input: PostTextInput, contract: PlatformContract, language: AudienceLanguage, format: TextFormat): string {
-  if (!footerApplies(contract, language) || hasBrandFooter(text)) return '';
-  const footer = brandFooter(format);
+  const kind = footerKind(contract, language);
+  if (!kind || hasBrandFooter(text, kind)) return '';
+  const footer = brandFooter(format, kind);
   if (contract.maxChars && countChars(`${text}\n\n${footer}${appendedHashtags(input, contract)}`, contract.counting) > contract.maxChars) return '';
   return footer;
 }

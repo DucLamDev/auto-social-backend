@@ -113,17 +113,22 @@ khi AI viết, khi duyệt, khi sửa, khi giao bài cho tiện ích và trong c
 - Tiện ích không bao giờ nhận bài quá dài: job chuyển "Tiện ích cần bạn" (`EXTENSION_CONTENT_TOO_LONG`), các bài sau vẫn
   chạy. Rút gọn rồi bấm **Giao lại cho tiện ích**.
 
-**Footer công ty (từ backend 1.32.0).** Bài tiếng Việt trên kênh của chính công ty tự có khối liên hệ (tên công ty,
-datacenter, hotline, website, email, Zalo) ở cuối, nội dung trong `src/platforms/brand-footer.ts`:
-- Có footer: nhóm SOCIAL / BLOGGING / MEDIA / EVENT có giới hạn từ 1.000 ký tự trở lên hoặc không giới hạn (LinkedIn,
-  Instagram, MeWe, Minds, WordPress, Blogger, Medium, Substack, Tumblr, Differ, TikTok, Dailymotion, SlideShare,
-  Flipboard, Scoop.it, Eventbrite).
-- Không có footer: diễn đàn, cộng đồng, trang lập trình viên, Product Hunt / Gumroad (đăng dưới tên thành viên, luật
-  trang coi chữ ký công ty là quảng cáo); X, Bluesky, Threads, Mastodon, Pixelfed (giới hạn 280–500 ký tự); bài tiếng Anh.
+**Footer công ty (từ backend 1.32.0; bản tiếng Anh và dòng web ngắn từ 1.35.0).** Bài trên kênh của chính công ty
+(nhóm SOCIAL / BLOGGING / MEDIA / EVENT) tự có thông tin công ty ở cuối, nội dung trong `src/platforms/brand-footer.ts`:
+- Bài tiếng Việt, nơi giới hạn từ 1.000 ký tự hoặc không giới hạn (LinkedIn, Instagram, MeWe, Minds, WordPress, Blogger,
+  Medium, Substack, Tumblr, Differ, TikTok, Dailymotion, SlideShare, Flipboard, Scoop.it, Eventbrite…): khối liên hệ
+  đầy đủ (tên công ty, datacenter, hotline, website, email, Zalo).
+- Bài tiếng Anh ở các nơi đó: khối tiếng Anh (VPSTTT là gì, datacenter, website, email, số điện thoại dạng +84; không
+  có Zalo).
+- X, Bluesky, Threads, Mastodon, Mastodon.social, social.vivaldi.net, Pixelfed (giới hạn 280–500 ký tự): chỉ một dòng
+  `🌐 https://vpsttt.com`, mọi ngôn ngữ.
+- Không có gì: diễn đàn, cộng đồng, trang lập trình viên, Product Hunt / Gumroad (đăng dưới tên thành viên, luật trang
+  coi chữ ký công ty là quảng cáo).
 - Footer nằm dưới dòng "Nguồn" và hashtag, có ở mọi đường đăng (tiện ích, API, xem trước, AI duyệt, Copy & mở qua trường
   `footer` của `manual-payload`). WordPress / Blogger qua API nhận một đoạn HTML có link.
-- Ngân sách ký tự trong lời nhắc AI đã trừ footer; AI được dặn không tự viết thông tin liên hệ vào bài. Bài đã có số
-  hotline thì không thêm lần nữa. Bài không còn chỗ thì bỏ footer chứ không cắt chữ hay vượt giới hạn.
+- Ngân sách ký tự trong lời nhắc AI đã trừ footer; AI được dặn không tự viết thông tin liên hệ (hay link website, với
+  dòng ngắn) vào bài. Bài đã có hotline hoặc email (khối đầy đủ), hay đã có link vpsttt.com (dòng ngắn) thì không thêm
+  lần nữa. Bài không còn chỗ thì bỏ footer chứ không cắt chữ hay vượt giới hạn.
 
 **Quy trình 3 vai AI (từ backend 1.24.0).** Mỗi bài qua ba vai AI, đều có thể là model của key VPSTTT AI
 (`gpt:`, `claude:haiku`, `claude:sonnet`, `claude:opus`):
@@ -236,16 +241,20 @@ Mỗi bài AI viết đi qua bốn lớp kiểm soát:
    - Định dạng: Markdown, văn bản thường, hoặc HTML cho WordPress / Blogger.
    - Giới hạn ký tự, tính cả hashtag và link. X tính chữ có dấu tiếng Việt là 2 ký tự.
    - Cách dùng hashtag và việc có cần tiêu đề hay không.
-2. **Hồ sơ thương hiệu.** ADMIN lưu một lần bằng `PUT /api/v1/settings/ai.brand-profile`, body `{ "value": { … } }`. Các trường:
+2. **Hồ sơ thương hiệu.** ADMIN sửa ở **Cài đặt → Hồ sơ thương hiệu** (từ backend 1.35.0; API `GET` / `PUT /api/v1/ai/brand-profile`, body `{ "profile": { … } }`). Các trường:
    - `brandName`, `oneLiner`, `audience`, `voice`
    - `facts[]`: sản phẩm, số liệu, bằng chứng có thật
-   - `links[]`: mỗi mục gồm `label` và `url`
+   - `links[]`: mỗi mục gồm `label` và `url` (chỉ `http` / `https`)
    - `disclosure`: câu tự giới thiệu khi đăng diễn đàn
    - `avoid[]`: điều cấm nói
    - `defaultLanguage`: `vi` hoặc `en`
    - `platformLanguages`: ngôn ngữ riêng theo nền tảng, ví dụ `{ "quora": "vi" }`
 
-   Thông tin về thương hiệu (giá, số liệu, khách hàng, ưu đãi) chỉ được lấy từ mô tả hoặc hồ sơ này. Hồ sơ thiếu hay sai thì bị bỏ qua và ghi cảnh báo, không chặn việc tạo bài.
+   - Chưa lưu hồ sơ thì `GET` trả `suggested` để form điền sẵn: chỉ lấy từ thông tin công ty đã in ở footer và các điều AI chấm đã coi là rủi ro (rẻ nhất, uptime 100%…); không có giá, ưu đãi, số liên hệ.
+   - Form không sửa `defaultLanguage` / `platformLanguages`: lưu form vẫn giữ nguyên hai trường này. Muốn đổi thì dùng `PUT /api/v1/settings/ai.brand-profile` như trước.
+   - Máy chủ kiểm bằng đúng bộ luật AI dùng khi đọc hồ sơ (tối đa 8 KB), báo lỗi tiếng Việt theo từng dòng, và ghi nhật ký `BRAND_PROFILE_UPDATED` (ai sửa, trước / sau).
+
+   Thông tin về thương hiệu (giá, số liệu, khách hàng, ưu đãi) chỉ được lấy từ mô tả hoặc hồ sơ này. Hồ sơ thiếu hay sai thì bị bỏ qua và ghi cảnh báo, không chặn việc tạo bài; trang Cài đặt báo khi hồ sơ đang lưu bị AI bỏ qua.
 3. **Kiểm tra máy.** Kiểm độ dài sau khi dựng văn bản cuối, đúng ngôn ngữ, đủ tiêu đề, không còn Markdown ở nơi cần HTML, số hashtag và câu sáo.
 4. **AI chấm điểm.** AI chấm từ 1 đến 10 cho câu mở đầu, độ cụ thể, độ hợp nền tảng và độ tự nhiên, rồi liệt kê các thông tin chưa có căn cứ.
    - Thang điểm: 9–10 xuất sắc; 8 đăng được, chỉ còn chỗ trau chuốt tuỳ ý; 7 đăng được nhưng còn một điểm yếu rõ; 5–6 phải viết lại một phần. Chỗ trau chuốt tuỳ ý không làm trừ điểm.
