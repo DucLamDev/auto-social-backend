@@ -1,5 +1,17 @@
 # Tự đăng bài từ web bằng tiện ích Chrome
 
+## Backend 1.36.0 / tiện ích 1.20.0: ảnh trong bài Discourse
+
+- Công thức `discourse` có `optionalMedia: 'image'`: bài cho diễn đàn Discourse được lên kế hoạch ảnh (khổ ngang, kiểu
+  minh hoạ kỹ thuật của cách làm trong bài) và máy chủ gửi ảnh cho tiện ích như các luồng mạng xã hội.
+- Trước khi đăng, `uploadDiscourseImage` (`browser-extension/discourse-session.js`) chạy trong tab đã đăng nhập: đọc
+  `/session/csrf.json`, gửi `POST <forum-base>/uploads.json` (`upload_type=composer`, ảnh trên 1,5 MB đổi sang JPEG), rồi
+  trả `![alt|rộngxcao](upload://…)` như Discourse tự viết. `background.js` chèn dòng đó sau đoạn mở bài (không vào giữa
+  khối mã, không chèn lần hai) rồi mới gửi qua `/posts.json` hoặc ô soạn, nên cả hai đường đều có ảnh.
+- Diễn đàn từ chối ảnh (thành viên mới không được tải ảnh, ảnh quá lớn…): không đăng bài, job `FAILED` lý do
+  `MEDIA_REQUIRED` kèm lời của diễn đàn. Tab đã gửi bài rồi (còn biên nhận) thì không tải ảnh lại.
+- Bước xác nhận bài đã đăng và bước kiểm nội dung ô soạn bỏ qua ảnh khi so chữ.
+
 ## Backend 1.34.0 / tiện ích 1.19.0: WordPress và Mastodon.social
 
 - **WordPress** (luồng `wordpress`): Trang tạo bài là `https://<blog>/wp-admin/post-new.php` (blog tự cài, cả cài trong

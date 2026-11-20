@@ -53,6 +53,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
         return [{ result: state.result }];
       }
       if (injection.func.name === 'submitDiscoursePost') return [{ result: state.directResult ?? { status: 'fallback' } }];
+      if (injection.func.name === 'uploadDiscourseImage') return [{ result: state.upload ?? { status: 'skipped' } }];
       if (injection.func.name === 'collectUiCandidates') return [{ result: state.candidates ?? null }];
       if (injection.func.name === 'clickAuthElement') { (state.authClicks ??= []).push(injection.args[0]); return [{ result: state.authClickResult ?? true }]; }
       if (injection.func.name === 'verifyUiSelectors') return [{ result: state.verified ?? injection.args[0].selectors }];
@@ -86,7 +87,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
     fillSocialAndSubmit: function fillSocialAndSubmit() {}, readSocialPublishedPost: function readSocialPublishedPost() {},
     fillWordPress: function fillWordPress() {},
     accountAuthStep: function accountAuthStep() {},
-    submitDiscoursePost: function submitDiscoursePost() {},
+    submitDiscoursePost: function submitDiscoursePost() {}, uploadDiscourseImage: function uploadDiscourseImage() {},
     showPublishNotice: function showPublishNotice() {},
     collectUiCandidates: function collectUiCandidates() {}, verifyUiSelectors: function verifyUiSelectors() {}, clickAuthElement: function clickAuthElement() {},
     collectFormControls: function collectFormControls() {}, applyFormActions: function applyFormActions() {},
@@ -118,6 +119,7 @@ function setup({ nextJobDelay = 60_000, cloudflareWait = 5_000 } = {}) {
         if (answer instanceof Error) return { ok: false, status: 404, json: async () => ({ success: false, error: { message: answer.message } }) };
         return { ok: true, json: async () => ({ success: true, data: answer }) };
       }
+      if (url.includes('/media/')) data = state.mediaAsset ?? { base64: 'AA==', name: 'image.png', mimeType: 'image/png', altText: 'Sơ đồ proxy' };
       if (url.endsWith('/heartbeat')) {
         data = { waiting: state.jobs ? state.jobs.length : state.waiting ? 1 : 0 };
         state.onHeartbeat?.();
@@ -550,6 +552,37 @@ test('retains a verified permalink during a backend outage and retries only repo
   assert.equal(state.reports[0].url, state.directResult.url);
   assert.equal(Object.keys(await worker.getTasks()).length, 0);
   assert.equal(state.injections.filter(i => i.func.name === 'submitDiscoursePost').length, 1);
+});
+
+test('a Discourse post planned with an image uploads it first and sends it after the opening paragraph; a refused image sends nothing', async () => {
+  const body = 'A fresh VM has no route out.\n\n## 1. The layout\n\n```\nacl CONNECT method CONNECT\n\nhttp_access deny all\n```';
+  const withImage = { ...job, autoSubmit: true, recipe: { ...job.recipe, optionalMedia: 'image' }, media: [{ id: 'img-1', mimeType: 'image/png', sizeBytes: 1_000 }], post: { title: 'Controlled egress', body } };
+  const markdown = '![Sơ đồ proxy|690x460](upload://a1B2c3.png)';
+
+  const sent = setup();
+  sent.state.upload = { status: 'uploaded', markdown };
+  sent.state.directResult = { status: 'published', url: 'http://forum.test/t/controlled-egress/42' };
+  await sent.worker.start(withImage);
+  const uploadCall = sent.state.injections.find(i => i.func.name === 'uploadDiscourseImage');
+  assert.equal(uploadCall.args[1].altText, 'Sơ đồ proxy');
+  const posted = sent.state.injections.find(i => i.func.name === 'submitDiscoursePost').args[0];
+  assert.equal(posted.post.body, `A fresh VM has no route out.\n\n${markdown}\n\n## 1. The layout\n\n\`\`\`\nacl CONNECT method CONNECT\n\nhttp_access deny all\n\`\`\``);
+  assert.equal(sent.state.reports.at(-1).outcome, 'PUBLISHED');
+
+  const refused = setup();
+  refused.state.upload = { status: 'failed', message: 'Diễn đàn không nhận ảnh của bài (Sorry, new users can not upload images.); chưa đăng bài.' };
+  await refused.worker.start(withImage);
+  assert.equal(refused.state.injections.filter(i => i.func.name === 'submitDiscoursePost').length, 0);
+  assert.equal(refused.state.fills, 0);
+  assert.deepEqual([refused.state.reports.at(-1).outcome, refused.state.reports.at(-1).reason], ['FAILED', 'MEDIA_REQUIRED']);
+  assert.match(refused.state.reports.at(-1).message, /không nhận ảnh của bài/);
+
+  // A text-only Discourse post never touches uploads.
+  const textOnly = setup();
+  textOnly.state.directResult = { status: 'published', url: 'http://forum.test/t/controlled-egress/42' };
+  await textOnly.worker.start({ ...withImage, media: [] });
+  assert.equal(textOnly.state.injections.filter(i => i.func.name === 'uploadDiscourseImage').length, 0);
+  assert.equal(textOnly.state.injections.find(i => i.func.name === 'submitDiscoursePost').args[0].post.body, body);
 });
 
 // ---- queue never blocked by waiting tabs; confirmation after submit -----------

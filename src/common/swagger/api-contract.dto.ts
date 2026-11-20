@@ -328,6 +328,7 @@ export class ManualPayloadContractDto {
   @ApiPropertyOptional({ enum: ['pending_queue', 'platform'] }) reviewUrlKind?: 'pending_queue' | 'platform';
   @ApiPropertyOptional({ type: String, nullable: true }) title?: string | null;
   @ApiProperty() body!: string;
+  @ApiProperty({ enum: ['markdown', 'plain', 'html'], description: 'How the destination shows the body: Markdown rendered (Discourse…), text as typed, or HTML' }) format!: 'markdown' | 'plain' | 'html';
   @ApiPropertyOptional({ type: String, nullable: true }) summary?: string | null;
   @ApiProperty({ type: [String] }) hashtags!: string[];
   @ApiPropertyOptional({ type: String, nullable: true }) cta?: string | null;

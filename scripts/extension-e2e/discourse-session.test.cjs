@@ -3,23 +3,27 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { chromium } = require('playwright');
-let browser, submit, showNotice, readNotice;
+let browser, submit, upload, showNotice, readNotice;
 const job = { jobId: 'test-job', targetOrigin: 'https://forum.test', openUrl: 'https://forum.test/community/new-topic', autoSubmit: true,
   recipe: { engine: 'discourse', captchaSelectors: ['.captcha'], successUrlPattern: '/t/[^/]+/\\d+$' },
   auth: { expectedUsername: 'alice' }, post: { title: 'A technical question', body: '## Context\n\nExact Markdown with `code`.' } };
 before(async () => {
   const source = fs.readFileSync('browser-extension/discourse-session.js', 'utf8');
-  submit = (await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)).submitDiscoursePost;
+  ({ submitDiscoursePost: submit, uploadDiscourseImage: upload } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`));
   const notice = await import(`data:text/javascript;base64,${Buffer.from(fs.readFileSync('browser-extension/publish-notice.js', 'utf8')).toString('base64')}`);
   showNotice = notice.showPublishNotice; readNotice = notice.readDiscourseReceiptNotice;
   browser = await chromium.launch();
 });
 after(async () => browser?.close());
 async function fixture(overrides = {}) {
-  const page = await browser.newPage(); const posts = []; const searches = [];
+  const page = await browser.newPage(); const posts = []; const searches = []; const uploads = [];
   const current = { id: 7, username: 'alice', can_create_topic: true, ...overrides.user };
   await page.route('**/*', async route => {
     const url = new URL(route.request().url()); const path = url.pathname;
+    if (path.endsWith('/uploads.json')) {
+      uploads.push({ path, csrf: route.request().headers()['x-csrf-token'], body: route.request().postDataBuffer()?.toString('latin1') ?? '' });
+      return route.fulfill(overrides.upload ?? { json: { id: 9, short_url: 'upload://a1B2c3.png', original_filename: 'image.png', width: 1536, height: 1024, thumbnail_width: 690, thumbnail_height: 460 } });
+    }
     if (path.endsWith('/tags/filter/search')) {
       searches.push(Object.fromEntries(url.searchParams));
       const q = url.searchParams.get('q');
@@ -38,8 +42,41 @@ async function fixture(overrides = {}) {
     await route.fulfill({ contentType: 'text/html', body: overrides.html || '<main>No composer required</main>' });
   });
   await page.goto(job.openUrl);
-  return { page, posts, searches };
+  return { page, posts, searches, uploads };
 }
+
+// A 1×1 PNG: what the extension receives from the backend for the post's image.
+const image = { base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', name: 'image.png', mimeType: 'image/png', altText: 'Proxy VM [gateway] | allowlist' };
+const uploadImage = (page, asset = image, task = job) => page.evaluate(`(${upload.toString()})(${JSON.stringify(task)}, ${JSON.stringify(asset)})`);
+
+test('uploads the post image as the forum\'s own upload with the session CSRF, and gives the Markdown Discourse writes', async () => {
+  const { page, uploads, posts } = await fixture();
+  try {
+    assert.deepEqual(await uploadImage(page), { status: 'uploaded', markdown: '![Proxy VM gateway allowlist|690x460](upload://a1B2c3.png)' });
+    assert.equal(uploads.length, 1);
+    assert.equal(uploads[0].path, '/community/uploads.json');
+    assert.equal(uploads[0].csrf, 'test-only-token');
+    assert.match(uploads[0].body, /name="upload_type"\r\n\r\ncomposer\r\n/);
+    assert.match(uploads[0].body, /name="file"; filename="image\.png"\r\nContent-Type: image\/png/);
+    assert.equal(posts.length, 0);
+  } finally { await page.close(); }
+});
+
+test('a refused image stops the post with the forum\'s reason; a tab that already sent the post uploads nothing', async () => {
+  const refused = await fixture({ upload: { status: 422, json: { errors: ['Sorry, new users can not upload images.'] } } });
+  try {
+    const result = await uploadImage(refused.page);
+    assert.equal(result.status, 'failed');
+    assert.match(result.message, /^Diễn đàn không nhận ảnh của bài \(Sorry, new users can not upload images\.\); chưa đăng bài\./);
+    assert.equal(refused.posts.length, 0);
+  } finally { await refused.page.close(); }
+  const sent = await fixture();
+  try {
+    await sent.page.evaluate(key => sessionStorage.setItem(key, JSON.stringify({ status: 'published', url: 'https://forum.test/t/x/42' })), `vpsttt:discourse-submit:${job.jobId}`);
+    assert.deepEqual(await uploadImage(sent.page), { status: 'skipped' });
+    assert.equal(sent.uploads.length, 0);
+  } finally { await sent.page.close(); }
+});
 
 test('accepted receipt displays a dismissible result without changing the draft, clicking Post or sending network writes', async () => {
   const { page, posts } = await fixture({ html: '<input id="title" value="My unsent draft"><button id="post">Post</button>' });

@@ -205,7 +205,12 @@ và đánh dấu `recommended`; chấm lỗi thì `scored: false`.
 **Ảnh AI cho chiến dịch** (từ backend 1.7.0) dùng cùng địa chỉ và key VPSTTT AI, gọi `POST /images/generations` với
 model `vpsttt-image`; key phải được quản trị cấp thêm quyền **image**. Chỉ kênh mà đường đăng gửi được ảnh mới có ảnh,
 mỗi kênh một ảnh riêng: Pixelfed (bắt buộc), Bluesky, Mastodon / Vivaldi, Tumblr, LinkedIn qua tiện ích Chrome; X, Discord,
-dev.to (ảnh bìa), Threads, Instagram qua API. Diễn đàn và các kênh khác chỉ đăng chữ, và AI được dặn không nhắc tới ảnh
+dev.to (ảnh bìa), Threads, Instagram qua API. Từ backend 1.36.0 (tiện ích 1.20.0), diễn đàn Discourse (HestiaCP, OpenNebula,
+NGINX…) cũng có ảnh: tiện ích tải ảnh lên `uploads.json` của diễn đàn bằng phiên đang đăng nhập, rồi chèn
+`![alt|rộngxcao](upload://…)` sau đoạn mở bài (không bao giờ vào giữa khối mã), nên ảnh cũng là ảnh xem trước khi chia sẻ link.
+Ảnh diễn đàn theo kiểu minh hoạ kỹ thuật của chính cách làm trong bài, không như quảng cáo. Diễn đàn không nhận ảnh thì bài
+không được đăng, job báo rõ lý do của diễn đàn (bỏ ảnh của bài trên web rồi giao lại, hoặc đăng tay). Các diễn đàn khác
+(XenForo, Vanilla, Flarum…) và các kênh còn lại vẫn chỉ đăng chữ, và AI được dặn không nhắc tới ảnh
 trong bài chữ. AI viết bài viết luôn mô tả ảnh (tiếng Anh, không chữ, không logo, không người thật) theo khổ và phong cách
 của kênh (vuông cho Pixelfed, Instagram, Threads; ngang cho các kênh còn lại), rồi backend tạo ảnh và gắn vào biến thể
 trước khi chờ duyệt. Ảnh lỗi không làm mất bài chữ; riêng kênh bắt buộc ảnh thì bài chờ duyệt tay. Bạn tự tải ảnh lên thì
