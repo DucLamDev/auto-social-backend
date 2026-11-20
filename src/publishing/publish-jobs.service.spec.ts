@@ -84,6 +84,7 @@ describe('PublishJobsService', () => {
       moderationPending: false,
       title: 'Launch title',
       body: 'Launch body',
+      format: 'plain',
       summary: 'Short summary',
       hashtags: ['launch'],
       cta: 'Try it today',
@@ -130,6 +131,10 @@ describe('PublishJobsService', () => {
     expect(findFirstOrThrow).toHaveBeenCalledWith(expect.objectContaining({ where: { id: record.id, target: { campaign: { ownerId: 'owner-1' } } } }));
     findFirstOrThrow.mockResolvedValueOnce({ ...record, status: PublishJobStatus.PUBLISHED });
     expect((await service.manualPayload('owner-1', record.id)).moderationPending).toBe(false);
+    // A Discourse account posting through the extension: the review page renders the Markdown (no "##" or "-").
+    const discourse = { delivery: 'extension', extensionEngine: 'discourse', extensionTargetUrl: 'https://community.nginx.org/new-topic' };
+    findFirstOrThrow.mockResolvedValueOnce({ ...record, platformAccount: { ...record.platformAccount, settings: discourse } });
+    expect((await service.manualPayload('owner-1', record.id)).format).toBe('markdown');
   });
 
   it('calculates exact dashboard counters without truncating the job list', async () => {

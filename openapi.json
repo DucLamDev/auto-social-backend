@@ -14407,6 +14407,15 @@
           "body": {
             "type": "string"
           },
+          "format": {
+            "type": "string",
+            "enum": [
+              "markdown",
+              "plain",
+              "html"
+            ],
+            "description": "How the destination shows the body: Markdown rendered (Discourse…), text as typed, or HTML"
+          },
           "summary": {
             "type": "string",
             "nullable": true
@@ -14476,6 +14485,7 @@
           "accountName",
           "moderationPending",
           "body",
+          "format",
           "hashtags",
           "media"
         ]
