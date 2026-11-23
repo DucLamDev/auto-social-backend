@@ -13,7 +13,7 @@ import { ConnectorError } from '../connectors/core/connector-error';
 import { POST_MEDIA_MANAGED_STORAGE, PostPayload } from '../connectors/core/connector.types';
 import { SocialPublisher } from '../connectors/core/social-publisher.interface';
 import { ErrorCode } from '../common/exceptions/application.exception';
-import { BRAND_FOOTER_LINES, brandFooter } from '../platforms/brand-footer';
+import { BRAND_FOOTER_LINES, BRAND_SHORT_LINE, brandFooter } from '../platforms/brand-footer';
 import { CampaignStatusService } from '../campaigns/campaign-status.service';
 import { PrismaService } from '../database/prisma.service';
 import { RedisService } from '../queue/redis.service';
@@ -1248,9 +1248,9 @@ describe('company footer on API destinations', () => {
     return publish.mock.calls[0]?.[1].body;
   }
 
-  it('sends the footer below a Vietnamese LinkedIn post, and X posts exactly as written', async () => {
+  it('sends the footer below a Vietnamese LinkedIn post, and only the website line below an X post', async () => {
     await expect(publishedBody('linkedin', VI_POST)).resolves.toBe(`${VI_POST}\n\n${BRAND_FOOTER_LINES.join('\n')}`);
-    await expect(publishedBody('x', VI_POST)).resolves.toBe(VI_POST);
+    await expect(publishedBody('x', VI_POST)).resolves.toBe(`${VI_POST}\n\n${BRAND_SHORT_LINE}`);
   });
 
   it('sends WordPress an HTML footer with links', async () => {

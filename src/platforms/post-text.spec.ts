@@ -1,4 +1,4 @@
-import { BRAND_FOOTER_LINES, brandFooter, footerApplies } from './brand-footer';
+import { BRAND_FOOTER_LINES, BRAND_FOOTER_LINES_EN, BRAND_SHORT_LINE, brandFooter, footerApplies, footerKind } from './brand-footer';
 import { markdownToHtml } from './markdown-html';
 import { countChars, detectLanguage, platformContract } from './platform-contract';
 import { checkPostLength } from './post-length';
@@ -97,8 +97,9 @@ describe('post text rendering', () => {
 
   it('adds only missing inline hashtags and never pushes a post over its limit', () => {
     const bluesky = platformContract('bluesky', { sourceText: VI });
+    // The brand's website line follows the hashtags while the post still fits (company footer tests below).
     expect(renderPostText({ title: null, body: `${VI} #vps`, hashtags: ['VPS', 'linux', 'cloud'] }, bluesky).body)
-      .toBe(`${VI} #vps\n\n#linux`);
+      .toBe(`${VI} #vps\n\n#linux\n\n${BRAND_SHORT_LINE}`);
     const full = 'a'.repeat(295);
     expect(renderPostText({ title: null, body: full, hashtags: ['linux'] }, bluesky).body).toBe(full);
   });
@@ -106,11 +107,11 @@ describe('post text rendering', () => {
   it('does not repeat the source line when the post already links to its source', () => {
     const mastodon = platformContract('mastodon', { sourceText: VI });
     for (const body of [`${VI} Chi tiết: https://vpsttt.vn/x`, `${VI} Chi tiết: https://www.vpsttt.vn/x/.`, `${VI} (vpsttt.vn/x)`]) {
-      expect(renderPostText({ title: null, body, hashtags: [] }, mastodon, 'https://vpsttt.vn/x').body).toBe(body);
+      expect(renderPostText({ title: null, body, hashtags: [] }, mastodon, 'https://vpsttt.vn/x').body).toBe(`${body}\n\n${BRAND_SHORT_LINE}`);
     }
     // Another page of the same site is not the source.
     expect(renderPostText({ title: null, body: `${VI} https://vpsttt.vn/x-2`, hashtags: [] }, mastodon, 'https://vpsttt.vn/x').body)
-      .toBe(`${VI} https://vpsttt.vn/x-2\n\nNguồn: https://vpsttt.vn/x`);
+      .toBe(`${VI} https://vpsttt.vn/x-2\n\nNguồn: https://vpsttt.vn/x\n\n${BRAND_SHORT_LINE}`);
   });
 
   it('gives no title to a destination without a title field unless one was written (Quora prints it above the body)', () => {
@@ -131,9 +132,9 @@ describe('post text rendering', () => {
   });
 
   it('counts hashtags a connector appends after the body', () => {
-    // An English caption: no company footer (that one is counted in the footer tests below).
+    // Instagram prints them after the caption, which ends with the English company footer here.
     const instagram = platformContract('instagram', { sourceText: EN });
-    expect(publishedLength({ title: null, body: 'abc', hashtags: ['a', '#b'] }, instagram)).toBe('abc\n\n#a #b'.length);
+    expect(publishedLength({ title: null, body: 'abc', hashtags: ['a', '#b'] }, instagram)).toBe(countChars(`abc\n\n${brandFooter('plain', 'en')}\n\n#a #b`, instagram.counting));
   });
 });
 
@@ -149,14 +150,47 @@ describe('company footer', () => {
     }
   });
 
-  it('never puts it on forums, communities, developer sites, short feeds or English posts', () => {
-    for (const slug of ['voz-forums', 'tinhte', 'reddit', 'discourse', 'devto', 'stack-overflow', 'quora', 'discord', 'product-hunt', 'x', 'bluesky', 'threads', 'mastodon', 'pixelfed-social']) {
-      const contract = platformContract(slug, { sourceText: VI, defaultLanguage: 'vi' });
-      expect(footerApplies(contract, 'vi')).toBe(false);
-      expect(renderPostText({ title: 'Tiêu đề', body: VI, hashtags: [] }, contract).body).not.toContain('Hotline');
+  it('never puts anything on forums, communities, developer sites or maker communities', () => {
+    for (const slug of ['voz-forums', 'tinhte', 'reddit', 'discourse', 'devto', 'stack-overflow', 'quora', 'discord', 'product-hunt']) {
+      for (const [language, text] of [['vi', VI], ['en', EN]] as const) {
+        const contract = platformContract(slug, { sourceText: text, defaultLanguage: language });
+        expect(footerApplies(contract, language)).toBe(false);
+        expect(renderPostText({ title: 'Tiêu đề', body: text, hashtags: [] }, contract).body).not.toMatch(/Hotline|Phone|vpsttt\.com/);
+      }
     }
-    expect(renderPostText({ title: null, body: EN, hashtags: [] }, platformContract('linkedin', { sourceText: EN })).body).toBe(EN);
     expect(footerApplies({ slug: 'not-in-catalog' }, 'vi')).toBe(false);
+  });
+
+  it('ends English posts on the brand\'s own channels with the English block, and short feeds with the website line', () => {
+    const FOOTER_EN = BRAND_FOOTER_LINES_EN.join('\n');
+    for (const slug of ['linkedin', 'medium', 'tumblr', 'mewe', 'instagram']) {
+      expect(renderPostText({ title: 'Title', body: EN, hashtags: [] }, platformContract(slug, { sourceText: EN })).body).toBe(`${EN}\n\n${FOOTER_EN}`);
+    }
+    expect(FOOTER_EN).toContain('https://vpsttt.com');
+    expect(FOOTER_EN).not.toContain('Zalo');
+    // X, Bluesky, Threads, Mastodon, Pixelfed: the website alone, in either language.
+    for (const slug of ['x', 'bluesky', 'threads', 'mastodon', 'pixelfed-social']) {
+      for (const text of [VI, EN]) {
+        const contract = platformContract(slug, { sourceText: text });
+        expect(footerKind(contract, contract.language)).toBe('short');
+        expect(renderPostText({ title: null, body: text, hashtags: [] }, contract).body).toBe(`${text}\n\n${BRAND_SHORT_LINE}`);
+      }
+    }
+  });
+
+  it('never adds the website line to a short post that already links the website, nor the English block twice', () => {
+    const bluesky = platformContract('bluesky', { sourceText: EN });
+    for (const body of [`${EN} https://vpsttt.com/vps`, `${EN} See vpsttt.com.`, `${EN} Ask lienhe@vpsttt.com`]) {
+      expect(renderPostText({ title: null, body, hashtags: [] }, bluesky).body).toBe(body);
+    }
+    const medium = platformContract('medium', { sourceText: EN });
+    for (const contact of ['+84 328 812 674', 'lienhe@vpsttt.com']) {
+      const body = `${EN}\nContact: ${contact}`;
+      expect(renderPostText({ title: null, body, hashtags: [] }, medium).body).toBe(body);
+    }
+    // A post with no room for the line stays as written.
+    const full = 'a'.repeat(295);
+    expect(renderPostText({ title: null, body: full, hashtags: [] }, bluesky).body).toBe(full);
   });
 
   it('is left out rather than pushing a post over its limit, counting the hashtags Instagram appends', () => {
@@ -204,7 +238,9 @@ describe('company footer', () => {
     expect(blogger.format).toBe('markdown');
     expect(apiPostBody({ title: 'T', body: VI, hashtags: [] }, blogger, 'blogger')).toBe(`${VI}\n\n${brandFooter('html')}`);
     const x = platformContract('x', { sourceText: VI });
-    expect(apiPostBody({ title: null, body: `${VI}\n`, hashtags: [] }, x, 'x')).toBe(`${VI}\n`);
+    expect(apiPostBody({ title: null, body: `${VI}\n`, hashtags: [] }, x, 'x')).toBe(`${VI}\n\n${BRAND_SHORT_LINE}`);
+    const nginx = platformContract('nginx-community', { sourceText: VI });
+    expect(apiPostBody({ title: 'T', body: `${VI}\n`, hashtags: [] }, nginx, 'discourse')).toBe(`${VI}\n`);
     expect(apiPostBody({ title: null, body: '  ', hashtags: [] }, linkedin, 'linkedin')).toBe('  ');
   });
 

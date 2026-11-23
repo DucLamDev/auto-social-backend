@@ -15,6 +15,22 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
     trang "Nội dung bài viết" của ứng dụng in Markdown thô. API `GET /publish-jobs/:id/manual-payload` nay trả thêm
     `format` (`markdown` / `plain` / `html`) để trang đó hiển thị bài giống diễn đàn (frontend 1.39.1).
   - Cần nạp lại tiện ích Chrome 1.20.0 trên máy Windows; bài đã tạo trước đây không tự có ảnh, chỉ các lần tạo sau.
+## 1.35.0 · 20/11/2026
+### Tính năng
+- Thông tin VPSTTT có trên nhiều kênh hơn, và hồ sơ thương hiệu cho AI sửa được trên trang Cài đặt
+  - **Bài tiếng Anh** trên kênh của công ty (LinkedIn, Medium, Tumblr, MeWe, Instagram…) nay cũng có khối liên hệ ở cuối,
+    bằng tiếng Anh: VPSTTT là gì, datacenter, website, email, số điện thoại dạng +84 (không có Zalo). Trước đây chỉ
+    bài tiếng Việt có.
+  - **X, Bluesky, Threads, Mastodon, Pixelfed** (giới hạn 280–500 ký tự) nay có một dòng `🌐 https://vpsttt.com` ở cuối,
+    thay vì không có gì. Bài đã có link vpsttt.com thì không thêm; bài không còn chỗ thì bỏ dòng này, không cắt chữ.
+  - Diễn đàn, cộng đồng, trang lập trình viên vẫn không có gì (luật các trang này coi chữ ký công ty là quảng cáo).
+  - AI viết bài được báo trước số ký tự dành cho phần này, và được dặn không tự viết lại thông tin liên hệ hay link
+    website vào bài.
+  - **Hồ sơ thương hiệu:** API mới `GET` / `PUT /api/v1/ai/brand-profile` (chỉ ADMIN) cho form "Hồ sơ thương hiệu" ở
+    trang Cài đặt (frontend 1.39.0). Máy chủ kiểm bằng đúng bộ luật AI dùng khi đọc hồ sơ, báo lỗi tiếng Việt theo từng
+    dòng, giữ nguyên ngôn ngữ đăng đã đặt, ghi nhật ký ai sửa (trước / sau). Chưa có hồ sơ thì trả bản gợi ý lấy từ
+    thông tin công ty đã in ở footer (datacenter, VPS và proxy) và các điều cấm nói (rẻ nhất, uptime 100%…), không có
+    giá hay ưu đãi tự đặt ra. Liên kết trong hồ sơ nay chỉ nhận `http` / `https`.
 
 ## 1.34.0 · 11/11/2026
 ### Tính năng
