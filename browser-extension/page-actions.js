@@ -70,7 +70,8 @@ export async function fillAndSubmit(task) {
   const words = (text) => String(text ?? '').normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
   const plainMarkdown = (text) => String(text ?? '')
     .replace(/^\s*(?:```|~~~).*$/gm, ' ')
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^\s{0,3}\[[^\]]+\]:\s+\S.*$/gm, ' ')
     .replace(/<((?:https?|mailto):[^>\s]+)>/gi, '$1')
     .replace(/<\/?[a-z][^>]*>/gi, ' ')
@@ -325,8 +326,10 @@ export function readPublishedPost(task) {
   const words = value => (String(value).normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(' ');
   const expectedTitle = words(task.job.post?.title ?? '');
   if (!expectedTitle || words(title.innerText) !== expectedTitle) return null;
+  // An image shows no words on the page (Discourse posts carry `![alt|WxH](upload://…)`).
   const markdown = String(task.job.post?.body ?? '')
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1');
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
   const expectedBody = words(markdown).split(' ').slice(0, 40).join(' ');
   if (!expectedBody || !words(body.innerText).includes(expectedBody)) return null;
   return location.href;

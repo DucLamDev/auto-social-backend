@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { ApplicationException, ErrorCode } from '../common/exceptions/application.exception';
 import { PrismaService } from '../database/prisma.service';
 import { repairEscapedNewlines } from '../common/utils/escaped-text';
-import { brandFooter, footerApplies } from '../platforms/brand-footer';
+import { BRAND_SHORT_LINE, brandFooter, footerKind, type FooterKind } from '../platforms/brand-footer';
 import { countChars, PlatformContract, platformContract } from '../platforms/platform-contract';
 import { markdownToPlain, publishedLength, renderPostText, sourceLine } from '../platforms/post-text';
 import { checkPostLength, contractFor, fitToLimit } from '../platforms/post-length';
@@ -320,8 +320,8 @@ export function shortenBrief(draft: DraftForCheck, contract: PlatformContract, l
   const budget = maxChars - (source?.length ?? 0) - footer;
   return [
     `Shorten your draft for ${contract.name}. As published it has ${length} characters; the limit is ${maxChars}. Cut at least ${length - maxChars} characters, aiming for about ${Math.floor(maxChars * 0.9)} in total.`,
-    source ? `The source line "${source.line}" (${source.length} characters) is added below the body automatically${footer ? `, and the company contact footer (${footer} characters) below that` : ''}, so the body with its hashtags must stay within ${budget} characters; do not repeat that link in the body.` : '',
-    !source && footer ? `The company contact footer (${footer} characters) is added below the body automatically, so the body with its hashtags must stay within ${budget} characters; do not write contact details in the body.` : '',
+    source ? `The source line "${source.line}" (${source.length} characters) is added below the body automatically${footer ? `, and the company footer (${footer} characters) below that` : ''}, so the body with its hashtags must stay within ${budget} characters; do not repeat that link in the body.` : '',
+    !source && footer ? `The company footer (${footer} characters) is added below the body automatically, so the body with its hashtags must stay within ${budget} characters; do not write the company's contact details or website in the body.` : '',
     `Hashtags and links count toward the limit.${COUNTING_RULES[contract.counting]}${contract.hashtagMode === 'inline' ? ` Keep at most ${contract.maxHashtags} hashtags, fewer if needed.` : ''}`,
     'Only shorten: keep the meaning, the key facts, the language and the tone. Remove filler, repetition and secondary details first; add nothing new. Return the complete shortened post.',
     `Draft:\n${JSON.stringify({ title: draft.title, body: draft.body, hashtags: draft.hashtags })}`,
@@ -363,13 +363,23 @@ function sourceLineCost(contract: PlatformContract, canonicalUrl?: string | null
 
 /** What the company footer the system adds at the end costs (with the blank line before it), when this destination gets one. */
 function footerCost(contract: PlatformContract): number {
-  return footerApplies(contract, contract.language) ? countChars(`\n\n${brandFooter(contract.format)}`, contract.counting) : 0;
+  const kind = footerKind(contract, contract.language);
+  return kind ? countChars(`\n\n${brandFooter(contract.format, kind)}`, contract.counting) : 0;
 }
+
+/** What the footer of this destination holds, as the writer is told. */
+const FOOTER_CONTENTS: Record<FooterKind, string> = {
+  vi: 'the company contact footer (company name, hotline, website, email, Zalo; ',
+  en: 'the company contact footer (company name, website, email, phone; ',
+  short: `the company website line "${BRAND_SHORT_LINE}" (`,
+};
 
 /** Tells the writer (and the approver, who reads the rendered post) that the footer is the system's, not the draft's. */
 function footerRule(contract: PlatformContract, cost: number): string {
-  if (!cost) return '';
-  return `- The system adds the company contact footer (company name, hotline, website, email, Zalo; ${cost} characters with the blank line before it) at the very end of the post. Do not write any of those contact details or a closing contact block in the body. The footer is not part of the draft: never judge it, count it as a link or call to action, or ask to change it.${contract.maxChars ? ' It is only added when the post still fits the limit with it.' : ''}`;
+  const kind = footerKind(contract, contract.language);
+  if (!cost || !kind) return '';
+  const avoid = kind === 'short' ? 'Do not repeat the company website address in the body.' : 'Do not write any of those contact details or a closing contact block in the body.';
+  return `- The system adds ${FOOTER_CONTENTS[kind]}${cost} characters with the blank line before it) at the very end of the post. ${avoid} The footer is not part of the draft: never judge it, count it as a link or call to action, or ask to change it.${contract.maxChars ? ' It is only added when the post still fits the limit with it.' : ''}`;
 }
 
 /** Rules derived from the destination; appended to the stored prompt so they always apply. */

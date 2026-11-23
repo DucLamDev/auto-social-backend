@@ -7,6 +7,7 @@ import { StorageService } from '../storage/storage.service';
 import { createHash } from 'node:crypto';
 import { EXTENSION_CONTENT_TOO_LONG, EXTENSION_RESULT_UNKNOWN, ExtensionAgentService, forumPost, threadIdFromUrl } from './extension-agent.service';
 import { EXTENSION_RECIPES } from '../connectors/extension/extension-delivery';
+import { BRAND_SHORT_LINE } from '../platforms/brand-footer';
 import { ExtensionSelectorSuggestionService } from './ui-recovery/selector-suggestion.service';
 
 const device = { id: 'dev-1', ownerId: 'owner-1', name: 'Chrome' };
@@ -345,7 +346,8 @@ describe('ExtensionAgentService', () => {
     prisma.publishJob.findUniqueOrThrow.mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(jobs[where.id]));
     const task = await service.claim(device, [], ['bluesky']);
     expect(task?.jobId).toBe('fits');
-    expect(task?.post).toMatchObject({ maxChars: 300, length: 23, body: 'A short post that fits.' });
+    // The website line the system adds to short feeds: "\n\n🌐 https://vpsttt.com", 22 characters.
+    expect(task?.post).toMatchObject({ maxChars: 300, length: 23 + 22, body: `A short post that fits.\n\n${BRAND_SHORT_LINE}` });
     const parked = (prisma.publishJob.updateMany.mock.calls as Array<[{ where: Record<string, unknown>; data: Record<string, unknown> }]>)
       .map(([call]) => call).find((call) => call.data.lastErrorCode === EXTENSION_CONTENT_TOO_LONG)!;
     expect(parked.where).toMatchObject({ id: 'too-long', extensionClaimDeviceId: device.id, lastErrorCode: null });
@@ -384,7 +386,10 @@ describe('ExtensionAgentService', () => {
     expect(medium?.post.body).not.toContain('**');
     expect(medium?.post.bodyHtml).toBe('<h2>Why it matters</h2><p>This guide explains <strong>three</strong> settings:</p>'
       + '<ul><li>cache</li><li>workers &lt;script&gt;alert(1)&lt;/script&gt;</li></ul>'
-      + '<p>Source: <a href="https://vpsttt.com/blog/x">https://vpsttt.com/blog/x</a></p>');
+      + '<p>Source: <a href="https://vpsttt.com/blog/x">https://vpsttt.com/blog/x</a></p>'
+      // An English post on the brand's blog ends with the English contact block, one line each.
+      + '<p>🏢 VPSTTT – VPS and proxy services, datacenters in Vietnam (VNPT, Viettel, FPT, CMC)<br>🌎 Website: <a href="https://vpsttt.com/">https://vpsttt.com</a>'
+      + '<br>📧 Email: lienhe@vpsttt.com<br>☎ Phone: +84 328 812 674</p>');
 
     prisma.publishJob.findUniqueOrThrow.mockResolvedValue({ id: 'job-1', platformAccount: account('devto', 'devto', 'https://dev.to/new'), target: { campaign: { name: 'C' }, contentVariant: variant } });
     const devto = await service.claim(device, [], ['devto']);

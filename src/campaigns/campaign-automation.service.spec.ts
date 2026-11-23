@@ -680,13 +680,17 @@ describe('CampaignAutomationService', () => {
       return { service, prisma, ai, images, media, variantUpdate };
     }
 
-    it('creates one square image for Pixelfed and none for a forum, from the description the writer produced', async () => {
+    it('creates a square image for Pixelfed and a landscape one for a Discourse forum, from the writer\'s description or the forum style', async () => {
       const { service, ai, images, media, variantUpdate } = setup();
       await service.automate(ownerId, imageDto, 'request-key-images-1');
       const plan = (ai.generate.mock.calls[0] as unknown[])[5] as Map<string, unknown>;
-      expect([...plan.keys()]).toEqual(['pixelfed-social']);
-      expect(images.generate).toHaveBeenCalledTimes(1);
+      // A Discourse forum takes the post's image as an upload (optional, landscape).
+      expect([...plan.keys()]).toEqual(['pixelfed-social', 'hestiacp-forum']);
+      expect(plan.get('hestiacp-forum')).toMatchObject({ need: 'optional', size: '1536x1024' });
+      expect(images.generate).toHaveBeenCalledTimes(2);
       expect(images.generate).toHaveBeenCalledWith('A calm server room photo', '1024x1024');
+      // The forum writer described no image this time: the forum style is drawn instead.
+      expect(images.generate).toHaveBeenCalledWith(expect.stringMatching(/setup the post explains/), '1536x1024');
       expect(media.storeGeneratedImage).toHaveBeenCalledWith(ownerId, variantId, png, { altText: 'Máy chủ VPS', prompt: 'A calm server room photo' });
       expect(variantUpdate).toHaveBeenCalledWith({ where: { id: variantId }, data: { mediaRecommendation: expect.objectContaining({ status: 'generated', size: '1024x1024' }) as unknown } });
     });

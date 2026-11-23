@@ -460,6 +460,7 @@ export class PublishJobsService {
     const result = responseMetadata && typeof responseMetadata === 'object' && !Array.isArray(responseMetadata)
       ? responseMetadata as Record<string, unknown>
       : {};
+    const contract = contractFor({ platformSlug: job.platformAccount.platform.slug, engine: deliveryEngine(settings), body: job.target.contentVariant.body });
     return {
       jobId: job.id,
       status: job.status,
@@ -472,16 +473,14 @@ export class PublishJobsService {
       ...reviewDestination(settings),
       title: job.target.contentVariant.title,
       body: job.target.contentVariant.body,
+      // How the destination shows the body, so the review page renders it the same way (Markdown on Discourse).
+      format: contract.format,
       summary: job.target.contentVariant.summary,
       hashtags: job.target.contentVariant.hashtags,
       cta: job.target.contentVariant.cta,
       canonicalUrl: job.target.contentVariant.content.canonicalUrl,
       // The company footer the post ends with on this destination ('' → null), printed last by the copy.
-      footer: postFooter(
-        job.target.contentVariant,
-        contractFor({ platformSlug: job.platformAccount.platform.slug, engine: deliveryEngine(settings), body: job.target.contentVariant.body }),
-        job.target.contentVariant.content.canonicalUrl,
-      ) || null,
+      footer: postFooter(job.target.contentVariant, contract, job.target.contentVariant.content.canonicalUrl) || null,
       media: collectPublishMedia(
         job.target.contentVariant.content.media,
         job.target.contentVariant.media,

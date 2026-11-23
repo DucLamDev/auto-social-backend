@@ -124,6 +124,9 @@ export const EXTENSION_RECIPES: Record<ExtensionEngine, ExtensionRecipe> = {
     errorSelectors: ['.dialog-container .dialog-body', '#reply-control .popup-tip.bad:not(.hide)', '.bootbox.modal .modal-body'],
     captchaSelectors: CAPTCHA_SELECTORS,
     bodyFormat: 'paragraphs',
+    // The post's image is uploaded to the forum first and placed after the opening paragraph
+    // (`![alt|WxH](upload://…)`); it also becomes the topic's link-preview picture.
+    optionalMedia: 'image',
   },
   // Vanilla Forums, classic form (forum.linuxfoundation.org): target is /post/discussion/<category
   // code>, so the category is preset. Body is a Markdown textarea; Post Discussion is briefly

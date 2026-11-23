@@ -23,6 +23,37 @@ danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số k�
   - gửi đi có hàng chờ, tự thử lại.
 - Migration `20261123090000_chat_integration`: thêm 2 bảng mới, không đổi bảng cũ. Hướng dẫn cấu hình hai bên ở
   `CHAT_INTEGRATION.md`.
+## 1.36.0 · 20/11/2026
+### Tính năng
+- Bài đăng diễn đàn Discourse có ảnh, và trang Bài chờ duyệt hiển thị bài như trên diễn đàn (tiện ích 1.20.0)
+  - **Vì sao:** bài HestiaCP Forum đăng không có ảnh (link chia sẻ chỉ hiện logo diễn đàn), vì trước đây diễn đàn luôn
+    được coi là "chỉ đăng chữ" nên AI không tạo ảnh.
+  - Nay bài cho diễn đàn Discourse (HestiaCP, OpenNebula, NGINX, MikroTik…) có ảnh AI khổ ngang, kiểu minh hoạ kỹ thuật
+    của chính cách làm trong bài (không như quảng cáo). Tiện ích tải ảnh lên diễn đàn bằng phiên đang đăng nhập rồi
+    chèn ảnh sau đoạn mở bài, nên ảnh hiện trong bài và là ảnh xem trước khi chia sẻ link.
+  - Diễn đàn không nhận ảnh (thành viên mới bị cấm tải ảnh…) thì bài không được đăng và job báo rõ lý do của diễn đàn:
+    bỏ ảnh của bài trên web rồi giao lại, hoặc đăng tay. Các diễn đàn khác (XenForo, Vanilla, Flarum…) vẫn chỉ đăng chữ.
+  - **Dấu `##` trong Bài chờ duyệt:** bài OpenNebula trên diễn đàn vẫn hiển thị đúng (tiêu đề, danh sách, khối mã), chỉ
+    trang "Nội dung bài viết" của ứng dụng in Markdown thô. API `GET /publish-jobs/:id/manual-payload` nay trả thêm
+    `format` (`markdown` / `plain` / `html`) để trang đó hiển thị bài giống diễn đàn (frontend 1.39.1).
+  - Cần nạp lại tiện ích Chrome 1.20.0 trên máy Windows; bài đã tạo trước đây không tự có ảnh, chỉ các lần tạo sau.
+## 1.35.0 · 20/11/2026
+### Tính năng
+- Thông tin VPSTTT có trên nhiều kênh hơn, và hồ sơ thương hiệu cho AI sửa được trên trang Cài đặt
+  - **Bài tiếng Anh** trên kênh của công ty (LinkedIn, Medium, Tumblr, MeWe, Instagram…) nay cũng có khối liên hệ ở cuối,
+    bằng tiếng Anh: VPSTTT là gì, datacenter, website, email, số điện thoại dạng +84 (không có Zalo). Trước đây chỉ
+    bài tiếng Việt có.
+  - **X, Bluesky, Threads, Mastodon, Pixelfed** (giới hạn 280–500 ký tự) nay có một dòng `🌐 https://vpsttt.com` ở cuối,
+    thay vì không có gì. Bài đã có link vpsttt.com thì không thêm; bài không còn chỗ thì bỏ dòng này, không cắt chữ.
+  - Diễn đàn, cộng đồng, trang lập trình viên vẫn không có gì (luật các trang này coi chữ ký công ty là quảng cáo).
+  - AI viết bài được báo trước số ký tự dành cho phần này, và được dặn không tự viết lại thông tin liên hệ hay link
+    website vào bài.
+  - **Hồ sơ thương hiệu:** API mới `GET` / `PUT /api/v1/ai/brand-profile` (chỉ ADMIN) cho form "Hồ sơ thương hiệu" ở
+    trang Cài đặt (frontend 1.39.0). Máy chủ kiểm bằng đúng bộ luật AI dùng khi đọc hồ sơ, báo lỗi tiếng Việt theo từng
+    dòng, giữ nguyên ngôn ngữ đăng đã đặt, ghi nhật ký ai sửa (trước / sau). Chưa có hồ sơ thì trả bản gợi ý lấy từ
+    thông tin công ty đã in ở footer (datacenter, VPS và proxy) và các điều cấm nói (rẻ nhất, uptime 100%…), không có
+    giá hay ưu đãi tự đặt ra. Liên kết trong hồ sơ nay chỉ nhận `http` / `https`.
+
 ## 1.34.0 · 11/11/2026
 ### Tính năng
 - Đăng WordPress và Mastodon.social bằng tiện ích Chrome, không cần API (tiện ích 1.19.0)

@@ -1,4 +1,52 @@
 // Runs inside the authenticated tab. Session cookies and CSRF never leave it.
+// The post's image becomes the forum's own upload before the post is sent, so either
+// route (the JSON API below or the composer) sends `![alt|WxH](upload://…)` in the text.
+// Nothing is posted here; an upload the post never uses is cleaned up by the forum.
+export async function uploadDiscourseImage(job, asset) {
+  if (job.recipe?.engine !== 'discourse' || location.origin !== job.targetOrigin || job.kind === 'LOGIN_CHECK') return { status: 'skipped' };
+  // This tab already sent the post: its receipt decides, not a new upload.
+  try { if (sessionStorage.getItem(`vpsttt:discourse-submit:${job.jobId}`)) return { status: 'skipped' }; } catch { return { status: 'skipped' }; }
+  const open = new URL(job.openUrl);
+  if (open.origin !== location.origin) return { status: 'skipped' };
+  const base = open.pathname.replace(/\/(?:new-topic|categories|latest)\/?$/, '').replace(/\/$/, '');
+  const headers = { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' };
+  const failed = detail => ({ status: 'failed', message: `Diễn đàn không nhận ảnh của bài (${detail}); chưa đăng bài. Bỏ ảnh của bài trên web rồi giao lại, hoặc đăng tay kèm ảnh.` });
+  let csrf;
+  try {
+    const response = await fetch(`${base}/session/csrf.json`, { credentials: 'same-origin', headers, redirect: 'error', signal: AbortSignal.timeout(8000) });
+    csrf = response.ok ? (await response.json()).csrf : null;
+  } catch { csrf = null; }
+  if (!csrf) return failed('không đọc được phiên đăng nhập của diễn đàn');
+  let file = new File([Uint8Array.from(atob(asset.base64), char => char.charCodeAt(0))], asset.name || 'image.png', { type: asset.mimeType });
+  // Forums cap images at a few MB (Discourse: 4 MB by default); a large PNG goes as a JPEG.
+  if (file.size > 1_500_000) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      canvas.getContext('2d').drawImage(bitmap, 0, 0);
+      file = new File([await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.88 })], `${String(asset.name || 'image').replace(/\.[^.]*$/, '') || 'image'}.jpg`, { type: 'image/jpeg' });
+    } catch { /* the original file is tried */ }
+  }
+  const form = new FormData();
+  form.append('upload_type', 'composer');
+  form.append('file', file);
+  let response, upload;
+  try {
+    response = await fetch(`${base}/uploads.json`, { method: 'POST', credentials: 'same-origin', redirect: 'error',
+      headers: { ...headers, 'X-CSRF-Token': csrf }, body: form, signal: AbortSignal.timeout(60000) });
+    upload = await response.json().catch(() => ({}));
+  } catch { return failed('lỗi mạng khi tải ảnh lên'); }
+  if (!response.ok || typeof upload?.short_url !== 'string' || !/^upload:\/\/[\w.-]+$/.test(upload.short_url)) {
+    const reason = Array.isArray(upload?.errors) ? upload.errors.filter(item => typeof item === 'string').join('; ') : typeof upload?.message === 'string' ? upload.message : '';
+    return failed((reason || `HTTP ${response.status}`).slice(0, 200));
+  }
+  // Discourse's own form: the alt text, then the size it shows the image at.
+  const alt = String(asset.altText || job.post?.title || 'image').replace(/[[\]|\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'image';
+  const width = Number(upload.thumbnail_width || upload.width), height = Number(upload.thumbnail_height || upload.height);
+  const size = Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0 ? `|${width}x${height}` : '';
+  return { status: 'uploaded', markdown: `![${alt}${size}](${upload.short_url})` };
+}
+
 // One POST only: a missing response is uncertain, never a reason to click again.
 export async function submitDiscoursePost(job) {
   if (job.recipe.engine !== 'discourse' || !job.autoSubmit) return { status: 'fallback' };
