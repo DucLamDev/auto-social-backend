@@ -1,6 +1,20 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.36.0 · 20/11/2026
+### Tính năng
+- Bài đăng diễn đàn Discourse có ảnh, và trang Bài chờ duyệt hiển thị bài như trên diễn đàn (tiện ích 1.20.0)
+  - **Vì sao:** bài HestiaCP Forum đăng không có ảnh (link chia sẻ chỉ hiện logo diễn đàn), vì trước đây diễn đàn luôn
+    được coi là "chỉ đăng chữ" nên AI không tạo ảnh.
+  - Nay bài cho diễn đàn Discourse (HestiaCP, OpenNebula, NGINX, MikroTik…) có ảnh AI khổ ngang, kiểu minh hoạ kỹ thuật
+    của chính cách làm trong bài (không như quảng cáo). Tiện ích tải ảnh lên diễn đàn bằng phiên đang đăng nhập rồi
+    chèn ảnh sau đoạn mở bài, nên ảnh hiện trong bài và là ảnh xem trước khi chia sẻ link.
+  - Diễn đàn không nhận ảnh (thành viên mới bị cấm tải ảnh…) thì bài không được đăng và job báo rõ lý do của diễn đàn:
+    bỏ ảnh của bài trên web rồi giao lại, hoặc đăng tay. Các diễn đàn khác (XenForo, Vanilla, Flarum…) vẫn chỉ đăng chữ.
+  - **Dấu `##` trong Bài chờ duyệt:** bài OpenNebula trên diễn đàn vẫn hiển thị đúng (tiêu đề, danh sách, khối mã), chỉ
+    trang "Nội dung bài viết" của ứng dụng in Markdown thô. API `GET /publish-jobs/:id/manual-payload` nay trả thêm
+    `format` (`markdown` / `plain` / `html`) để trang đó hiển thị bài giống diễn đàn (frontend 1.39.1).
+  - Cần nạp lại tiện ích Chrome 1.20.0 trên máy Windows; bài đã tạo trước đây không tự có ảnh, chỉ các lần tạo sau.
 ## 1.35.0 · 20/11/2026
 ### Tính năng
 - Thông tin VPSTTT có trên nhiều kênh hơn, và hồ sơ thương hiệu cho AI sửa được trên trang Cài đặt

@@ -16,6 +16,7 @@ const pixelfed = { settings: extension('pixelfed', 'https://pixelfed.social/i/we
 const blueskyChrome = { settings: extension('bluesky', 'https://bsky.app/intent/compose'), platform: { slug: 'bluesky', connectorKey: 'bluesky', capability: social } };
 const blueskyApi = { settings: {}, platform: { slug: 'bluesky', connectorKey: 'bluesky', capability: social } };
 const forum = { settings: extension('discourse', 'https://forum.hestiacp.com/new-topic'), platform: { slug: 'hestiacp-forum', capability: { text: true, image: false } } };
+const xenforo = { settings: extension('xenforo', 'https://voz.vn/f/a.17/post-thread'), platform: { slug: 'voz-forums', capability: { text: true, image: false } } };
 const instagram = { settings: {}, platform: { slug: 'instagram', connectorKey: 'instagram', capability: { text: false, image: true } } };
 const discord = { settings: {}, platform: { slug: 'discord', connectorKey: 'discord', capability: social } };
 const differ = { settings: extension('differ', 'https://differ.blog/new-story'), platform: { slug: 'differ', capability: social } };
@@ -25,7 +26,9 @@ describe('which destinations get an AI image', () => {
     expect(accountImageNeed(pixelfed, connectors)).toBe('required');
     expect(accountImageNeed(blueskyChrome, connectors)).toBe('optional');
     expect(accountImageNeed(blueskyApi, connectors)).toBe('none');
-    expect(accountImageNeed(forum, connectors)).toBe('none');
+    // Discourse forums take the post's image as an upload; other forum flows stay text only.
+    expect(accountImageNeed(forum, connectors)).toBe('optional');
+    expect(accountImageNeed(xenforo, connectors)).toBe('none');
     expect(accountImageNeed(instagram, connectors)).toBe('required');
     expect(accountImageNeed(discord, connectors)).toBe('optional');
     // Differ's publish dialog takes an optional featured image.
@@ -33,12 +36,15 @@ describe('which destinations get an AI image', () => {
     expect(accountImageNeed({ ...discord, platform: { ...discord.platform, capability: { text: true, image: false } } }, connectors)).toBe('none');
   });
 
-  it('plans one image per destination with a fitting size, none for forums', () => {
-    const plan = planImages([pixelfed, blueskyChrome, blueskyApi, forum, discord], { enabled: true, userImage: false }, connectors);
-    expect([...plan.keys()].sort()).toEqual(['bluesky', 'discord', 'pixelfed-social']);
+  it('plans one image per destination with a fitting size and style, none for text-only forum flows', () => {
+    const plan = planImages([pixelfed, blueskyChrome, blueskyApi, forum, xenforo, discord], { enabled: true, userImage: false }, connectors);
+    expect([...plan.keys()].sort()).toEqual(['bluesky', 'discord', 'hestiacp-forum', 'pixelfed-social']);
     expect(plan.get('pixelfed-social')).toMatchObject({ need: 'required', size: '1024x1024' });
     expect(plan.get('bluesky')).toMatchObject({ need: 'optional', size: '1536x1024' });
     expect(plan.get('bluesky')!.style).toMatch(/editorial/);
+    // A technical forum gets a picture of the setup, not an advert.
+    expect(plan.get('hestiacp-forum')).toMatchObject({ need: 'optional', size: '1536x1024' });
+    expect(plan.get('hestiacp-forum')!.style).toMatch(/setup the post explains.*dislike ad-like visuals/);
     expect(imageSizeFor('instagram')).toBe('1024x1024');
   });
 

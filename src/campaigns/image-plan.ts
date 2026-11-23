@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type { AiImageSize } from '../ai/ai-image.service';
 import type { ConnectorCapability } from '../connectors/core/connector-capability';
 import { EXTENSION_RECIPES, effectiveConnectorKey, isExtensionDelivery, parseExtensionDeliverySettings } from '../connectors/extension/extension-delivery';
+import { PLATFORM_CATALOG, type PlatformGroupKey } from '../platforms/platform-catalog';
 
 /** required: the post cannot go out without an image; optional: the route can attach one. */
 export type ImageNeed = 'required' | 'optional' | 'none';
@@ -44,13 +45,22 @@ const STYLE: Record<string, string> = {
   devto: 'a developer-friendly flat tech illustration used as a wide article cover',
 };
 
+// Technical forums and communities (Discourse): the setup the post explains, never an advert.
+const FORUM_STYLE = 'a clean technical illustration in landscape of the setup the post explains (servers, network paths, a control panel or terminal drawn as abstract shapes) in calm colours; forum members dislike ad-like visuals';
+const FORUM_GROUPS: ReadonlySet<PlatformGroupKey> = new Set(['FORUM', 'COMMUNITY', 'DEVELOPER']);
+
 export function imageSizeFor(slug: string): AiImageSize {
   return SQUARE.has(slug) ? '1024x1024' : '1536x1024';
 }
 
+function defaultStyle(slug: string): string {
+  const group = PLATFORM_CATALOG.find((platform) => platform.slug === slug)?.groupKey;
+  return group && FORUM_GROUPS.has(group) ? FORUM_STYLE : 'a clear, on-topic landscape illustration';
+}
+
 /** Image plan for one destination when no account decides it (an image added to an existing post). */
 export function imagePlanFor(slug: string, need: Exclude<ImageNeed, 'none'> = 'optional'): PlatformImagePlan {
-  return { need, size: imageSizeFor(slug), style: STYLE[slug] ?? 'a clear, on-topic landscape illustration' };
+  return { need, size: imageSizeFor(slug), style: STYLE[slug] ?? defaultStyle(slug) };
 }
 
 function record(value: unknown): Record<string, unknown> {

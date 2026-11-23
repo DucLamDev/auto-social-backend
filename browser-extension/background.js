@@ -7,7 +7,7 @@ import { canFillPage, fillAndSubmit, readErrors, readModeration, readPublishedPo
 import { fillSocialAndSubmit, readSocialPublishedPost } from './social-actions.js';
 import { fillWordPress } from './wordpress-actions.js';
 import { accountAuthStep } from './auth-actions.js';
-import { submitDiscoursePost } from './discourse-session.js';
+import { submitDiscoursePost, uploadDiscourseImage } from './discourse-session.js';
 import { showPublishNotice } from './publish-notice.js';
 import { clickAuthElement, collectUiCandidates, verifyUiSelectors } from './ui-recovery.js';
 import { applyFormActions, collectFormControls } from './form-fill.js';
@@ -639,6 +639,14 @@ async function fill(task) {
         catch (error) { result = { status: 'mediaRequired', message: `Không tải được ảnh của bài: ${error.message}` }; }
       }
     }
+    // A Discourse post planned with an image: the forum's own upload goes into the text first,
+    // so the API route and the composer both send it. A refused image stops the post.
+    if (!result && task.job.recipe.engine === 'discourse' && attachments?.length && !task.discourseImage) {
+      const [{ result: upload }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: uploadDiscourseImage, args: [task.job, attachments[0]], injectImmediately: true });
+      if (upload?.status === 'uploaded') {
+        task = { ...task, discourseImage: upload.markdown, job: { ...task.job, post: { ...task.job.post, body: withDiscourseImage(task.job.post.body, upload.markdown) } } };
+      } else if (upload?.status === 'failed') result = { status: 'mediaRequired', message: upload.message };
+    }
     if (!result && task.job.recipe.engine === 'discourse' && task.job.autoSubmit && !task.uiOverride) {
       [{ result }] = await chrome.scripting.executeScript({ target: { tabId: task.tabId }, func: submitDiscoursePost, args: [task.job], injectImmediately: true });
       if (result?.status === 'fallback') result = null;
@@ -719,6 +727,24 @@ async function fill(task) {
       tickSoon();
     }
   }
+}
+
+/**
+ * The post with its uploaded image after the opening paragraph, never inside a code
+ * block; a text that already shows that upload is left as it is.
+ */
+function withDiscourseImage(body, image) {
+  const text = String(body ?? '');
+  const upload = /\((upload:\/\/[^)\s]+)\)$/.exec(image)?.[1];
+  if (upload && text.includes(upload)) return text;
+  const lines = text.split('\n');
+  let fenced = false, seen = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^\s*(?:```|~~~)/.test(lines[index])) fenced = !fenced;
+    if (lines[index].trim()) { seen = true; continue; }
+    if (!fenced && seen) return [...lines.slice(0, index), '', image, ...lines.slice(index)].join('\n');
+  }
+  return text ? `${text}\n\n${image}` : image;
 }
 
 /** The job handed to the page runner, with this tab's AI selectors and form-fill round count. */
