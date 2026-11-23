@@ -1,6 +1,28 @@
 # Nhật ký thay đổi
 Mỗi lần sửa (mỗi Pull Request): tăng VERSION (sửa lỗi → số cuối, tính năng → số giữa) và thêm đúng một mục mới ở đầu
 danh sách, theo mẫu bên dưới. Hàng chờ gộp tự đổi sang số kế tiếp khi hai nhánh cùng lấy một số.
+## 1.37.0 · 23/11/2026
+### Tính năng: kết nối chat VPSTTT (thông báo + duyệt bài trong chat)
+- Mô-đun mới `src/chat-integration`, mặc định **tắt**. Quản trị bật và nhập cấu hình ở Cài đặt → Kết nối chat. Cấu hình
+  gồm địa chỉ chat, khoá bot, khoá webhook, kênh "Auto Social", lưu mã hoá.
+- **Duyệt bài trong chat:**
+  - mỗi bài AI viết xong thành một yêu cầu duyệt gửi riêng cho chủ chiến dịch (khớp theo email), có nội dung, ảnh, kênh,
+    tài khoản, giờ đăng;
+  - duyệt / từ chối trong chat gọi đúng hàm duyệt / từ chối như trên web, ghi nhật ký nguồn "chat";
+  - chỉ chủ chiến dịch (ADMIN / EDITOR, tài khoản còn bật) duyệt được;
+  - bài bị sửa, đổi ảnh hay đổi tài khoản / giờ đăng sau khi gửi thì lần duyệt bị chặn và yêu cầu mới được gửi lại;
+  - duyệt / từ chối / khôi phục trên web hay xoá chiến dịch thì yêu cầu trong chat tự huỷ;
+  - đăng xong báo về chat "Đã đăng" / "Đăng lỗi".
+- **Thông báo vào kênh chung**, mỗi sự việc một lần:
+  - đăng lỗi / cần thao tác tay;
+  - tài khoản cần kết nối lại hoặc token sắp hết hạn;
+  - chiến dịch xong.
+- **Nhận kết quả từ chat** qua `POST /api/v1/integrations/chat/events`:
+  - kiểm chữ ký HMAC, giờ gửi, chống gửi lặp;
+  - khoá cũ chỉ nhận trong 24 giờ sau khi đổi;
+  - gửi đi có hàng chờ, tự thử lại.
+- Migration `20261123090000_chat_integration`: thêm 2 bảng mới, không đổi bảng cũ. Hướng dẫn cấu hình hai bên ở
+  `CHAT_INTEGRATION.md`.
 ## 1.34.0 · 11/11/2026
 ### Tính năng
 - Đăng WordPress và Mastodon.social bằng tiện ích Chrome, không cần API (tiện ích 1.19.0)

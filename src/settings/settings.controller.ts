@@ -7,6 +7,7 @@ import { PrismaService } from '../database/prisma.service';
 import { CredentialEncryptionService } from '../credentials/credential-encryption.service';
 import { BadRequestException } from '@nestjs/common';
 import { ApiOkEnvelope, SystemSettingContractDto } from '../common/swagger/api-contract.dto';
+import { CHAT_SETTING_KEY } from '../chat-integration/chat-integration.constants';
 
 class UpdateSettingDto {
   @ApiProperty({ type: 'object', additionalProperties: true })
@@ -34,6 +35,7 @@ export class SettingsController {
   @ApiOkEnvelope(SystemSettingContractDto)
   async upsert(@Param('key') key: string, @Body() dto: UpdateSettingDto) {
     if (key === 'ai.gemini.keys') throw new BadRequestException('Use the Gemini API key settings form.');
+    if (key === CHAT_SETTING_KEY || key === 'chat-integration') throw new BadRequestException('Use the chat integration settings form.');
     if (!/^[a-zA-Z0-9_.-]{1,100}$/.test(key)) throw new BadRequestException('Invalid setting key');
     const existing = await this.prisma.systemSetting.findUnique({ where: { key }, select: { secret: true } });
     const effectiveSecret = dto.secret ?? existing?.secret ?? false;

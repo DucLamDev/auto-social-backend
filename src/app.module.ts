@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 import { CampaignsModule } from './campaigns/campaigns.module';
+import { ChatIntegrationModule } from './chat-integration/chat-integration.module';
 import { ApplicationConfigModule } from './config/config.module';
 import { ConnectorsModule } from './connectors/connectors.module';
 import { ContentSourcesModule } from './content-sources/content-sources.module';
@@ -53,6 +54,8 @@ import { McpModule } from './mcp/mcp.module';
     SchedulerModule,
     MediaModule,
     LogsModule,
+    // Before SettingsModule: its routes must win over the generic PUT settings/:key.
+    ChatIntegrationModule,
     SettingsModule,
     OAuthModule,
     HealthModule,

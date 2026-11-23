@@ -8,9 +8,10 @@ import { ConnectorsModule } from '../connectors/connectors.module';
 import { MediaModule } from '../media/media.module';
 import { CampaignAutomationService } from './campaign-automation.service';
 import { CampaignAutomationWorkerService } from './campaign-automation-worker.service';
+import { ChatOutboxModule } from '../chat-integration/chat-outbox.module';
 
 @Module({
-  imports: [AiModule, AuditModule, ConnectorsModule, MediaModule],
+  imports: [AiModule, AuditModule, ConnectorsModule, MediaModule, ChatOutboxModule],
   controllers: [CampaignsController],
   providers: [CampaignsService, CampaignStatusService, CampaignAutomationService, CampaignAutomationWorkerService],
   exports: [CampaignStatusService, CampaignsService, CampaignAutomationService],

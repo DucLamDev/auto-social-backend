@@ -8289,6 +8289,428 @@
         ]
       }
     },
+    "/api/v1/settings/chat-integration": {
+      "get": {
+        "operationId": "ChatIntegrationSettings_get",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ChatIntegrationContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "operationId": "ChatIntegrationSettings_update",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateChatIntegrationDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ChatIntegrationContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/v1/settings/chat-integration/test": {
+      "post": {
+        "operationId": "ChatIntegrationSettings_test",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ChatTestResultContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Send one test message to the \"Auto Social\" channel",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/v1/integrations/chat/events": {
+      "post": {
+        "operationId": "ChatEvents_receive",
+        "parameters": [
+          {
+            "name": "X-WebTui-Event-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-WebTui-Signature-Previous",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-WebTui-Signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-WebTui-Timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/ChatEventAckContractDto"
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/ApiMetaContractDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Standard application error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "error",
+                    "meta"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {}
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "required": [
+                        "requestId",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "requestId": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": "Approval events from the VPSTTT chat (signed webhook, see CHAT_INTEGRATION.md)",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
     "/api/v1/settings": {
       "get": {
         "operationId": "Settings_list",
@@ -14672,6 +15094,185 @@
           "action",
           "entityType",
           "createdAt"
+        ]
+      },
+      "ChatLastDeliveryContractDto": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "at",
+          "ok",
+          "kind"
+        ]
+      },
+      "ChatIntegrationContractDto": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "baseUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "channelId": {
+            "type": "string",
+            "nullable": true
+          },
+          "botTokenConfigured": {
+            "type": "boolean"
+          },
+          "botTokenHint": {
+            "type": "string",
+            "nullable": true,
+            "description": "Masked bot key, for example wtb_…a1b2."
+          },
+          "webhookSecretConfigured": {
+            "type": "boolean"
+          },
+          "previousWebhookSecretConfigured": {
+            "type": "boolean",
+            "description": "An old webhook secret is still accepted (24 h after the rotation)."
+          },
+          "previousWebhookSecretExpiresAt": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time",
+            "description": "When the old webhook secret stops being accepted."
+          },
+          "webhookPath": {
+            "type": "string",
+            "description": "Path chat must call, under the API origin."
+          },
+          "pendingCount": {
+            "type": "number",
+            "description": "Events still waiting to be sent."
+          },
+          "failedCount": {
+            "type": "number",
+            "description": "Events that gave up after all retries."
+          },
+          "lastDelivery": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ChatLastDeliveryContractDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "revision",
+          "configured",
+          "enabled",
+          "baseUrl",
+          "channelId",
+          "botTokenConfigured",
+          "botTokenHint",
+          "webhookSecretConfigured",
+          "previousWebhookSecretConfigured",
+          "previousWebhookSecretExpiresAt",
+          "webhookPath",
+          "pendingCount",
+          "failedCount",
+          "lastDelivery"
+        ]
+      },
+      "UpdateChatIntegrationDto": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string",
+            "description": "Revision returned by GET; a stale value is refused with 409."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "Chat server origin, https only (for example https://chat.example.com)."
+          },
+          "channelId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Id of the \"Auto Social\" channel the bot is installed in."
+          },
+          "botToken": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "New bot key (wtb_…). Omit to keep the saved one."
+          },
+          "webhookSecret": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "New outgoing-webhook secret. The previous one is kept as the old key."
+          },
+          "previousWebhookSecret": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "Old webhook secret, accepted for 24 hours from now while chat rotates keys."
+          },
+          "clearPreviousWebhookSecret": {
+            "type": "boolean",
+            "description": "Forget the old webhook secret."
+          }
+        },
+        "required": [
+          "revision"
+        ]
+      },
+      "ChatTestResultContractDto": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "ChatEventAckContractDto": {
+        "type": "object",
+        "properties": {
+          "received": {
+            "type": "boolean"
+          },
+          "duplicate": {
+            "type": "boolean"
+          },
+          "ignored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "received"
         ]
       },
       "SystemSettingContractDto": {

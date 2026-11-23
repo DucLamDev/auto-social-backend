@@ -697,3 +697,53 @@ model ExtensionLoginCheck {
   @@index([platformAccountId, createdAt])
   @@map("extension_login_checks")
 }
+
+/// Outbox of calls auto-social owes the VPSTTT chat (approval requests, cancels,
+/// results, channel notices). Hooks only insert rows; a Redis-locked cron sends
+/// them. `dedupeKey` makes every event happen at most once.
+model ChatOutboxEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+  dedupeKey     String    @unique
+  /// APPROVAL_CREATE | APPROVAL_CANCEL | APPROVAL_RESULT | NOTICE | TEST
+  kind          String
+  payload       Json      @default("{}")
+  /// PENDING | SENT | FAILED | SKIPPED
+  status        String    @default("PENDING")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lastError     String?
+  lastAttemptAt DateTime?
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([lastAttemptAt])
+  @@map("chat_outbox_events")
+}
+
+/// One chat approval request for one draft in one review round (`cycle`; a
+/// restored draft starts a new round). Ids are plain columns: the link outlives
+/// a deleted campaign so its chat request can still be cancelled.
+model ChatApprovalLink {
+  id               String    @id @default(uuid()) @db.Uuid
+  campaignId       String    @db.Uuid
+  variantId        String    @db.Uuid
+  cycle            Int
+  externalKey      String    @unique
+  approvalId       String?   @unique
+  /// sha256 of what the approver is shown (text, images, accounts, schedule), fixed before the first send.
+  contentHash      String?
+  /// Exact approval request sent to chat; retries resend it unchanged.
+  requestBody      Json?
+  /// QUEUED | PENDING | APPROVED | REJECTED | EXPIRED | CANCELLED | FAILED | UNMATCHED | SKIPPED
+  status           String    @default("QUEUED")
+  resultRecordedAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([variantId, cycle])
+  @@index([campaignId, status])
+  @@index([status, updatedAt])
+  @@map("chat_approval_links")
+}

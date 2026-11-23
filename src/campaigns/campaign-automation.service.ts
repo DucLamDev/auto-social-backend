@@ -28,6 +28,8 @@ import { rewriteRunning } from '../content-variants/rewrite-state';
 import { CampaignsService } from './campaigns.service';
 import { PlatformImagePlan, planImages } from './image-plan';
 import { AutomateCampaignDto } from './dto/automate-campaign.dto';
+import { ChatOutboxService } from '../chat-integration/chat-outbox.service';
+import { ApprovalContentChangedError, loadApprovalSnapshot, snapshotHash } from '../chat-integration/chat-snapshot';
 import { ApproveAiCampaignDto } from './dto/approve-ai-campaign.dto';
 import { ReviewExistingContentDto } from './dto/review-existing-content.dto';
 
@@ -78,6 +80,13 @@ type OverLimitVariant = { id: string; platform: string; length: number; maxChars
 
 /** A draft kept waiting because the final AI approver has not said yes to its current text. */
 type UnapprovedVariant = { id: string; platform: string; message: string };
+
+/** A decision made in the VPSTTT chat on the owner's behalf (audit source "chat"). */
+export type ChatDecisionOrigin = {
+  source: 'chat'; approvalId: string; note?: string;
+  /** Hash of what the approver saw; checked under the decision lock before approving. */
+  expectedHash?: string;
+};
 
 type ReviewOutcome = {
   skippedAccounts: SkippedAccount[];
@@ -188,6 +197,7 @@ export class CampaignAutomationService {
     @Optional() private readonly images?: AiImageService,
     @Optional() private readonly media?: MediaService,
     @Optional() private readonly connectors?: ConnectorRegistryService,
+    @Optional() private readonly chatOutbox?: ChatOutboxService,
   ) {}
 
   async automate(
@@ -364,6 +374,8 @@ export class CampaignAutomationService {
               const [ready] = await this.attachGeneratedImages(ownerId, [variant], slugByPlatform, imagePlan, background.assertOwnership);
               if (ready) handled.set(ready.id, ready);
               if (dto.autoPublish && ready?.recommended) await this.autoApprove(ownerId, campaignId, ready.id, dto);
+              // Still waiting after auto-publish: ask the owner in chat (outbox only, never blocks the run).
+              if (ready) await this.chatOutbox?.reviewReady(campaignId, [ready.id]);
             } : undefined)
           : await this.ai.generate(ownerId, reservation.campaign.contentId, missing, aiProvider, undefined, imagePlan);
       const drafts: DraftVariant[] = [...kept, ...generated];
@@ -386,6 +398,7 @@ export class CampaignAutomationService {
         }
         await background.assertOwnership?.();
         await this.finishReview(campaignId, variants.map((variant) => variant.id));
+        await this.chatOutbox?.reviewReady(campaignId, variants.map((variant) => variant.id));
         return this.result(ownerId, reservation.campaign.id);
       }
 
@@ -570,18 +583,19 @@ export class CampaignAutomationService {
       await tx.content.update({ where: { id: campaign.contentId }, data: { status: ContentStatus.APPROVED } });
     });
     await this.audit.recordBestEffort({ actorId: ownerId, action: 'CAMPAIGN_AI_APPROVED', entityType: 'campaigns', entityId: id });
+    await this.chatOutbox?.reviewClosed(id, campaign.automationVariantIds);
     await this.campaigns.publish(ownerId, id);
     return this.result(ownerId, id);
   }
 
   /** Approves one platform's draft: its accounts get publish jobs, the other platforms keep waiting. */
-  approveVariant(ownerId: string, id: string, variantId: string, dto: ApproveAiCampaignDto = {}) {
-    return this.decideVariants(ownerId, id, 'approve', dto, variantId);
+  approveVariant(ownerId: string, id: string, variantId: string, dto: ApproveAiCampaignDto = {}, origin?: ChatDecisionOrigin) {
+    return this.decideVariants(ownerId, id, 'approve', dto, variantId, origin ? 'chat' : 'review', origin);
   }
 
   /** Rejects one platform's draft: it is never published; the other platforms keep waiting. */
-  rejectVariant(ownerId: string, id: string, variantId: string) {
-    return this.decideVariants(ownerId, id, 'reject', {}, variantId);
+  rejectVariant(ownerId: string, id: string, variantId: string, origin?: ChatDecisionOrigin) {
+    return this.decideVariants(ownerId, id, 'reject', {}, variantId, origin ? 'chat' : 'review', origin);
   }
 
   private async hasDecidedVariants(campaign: { automationVariantIds: string[] }): Promise<boolean> {
@@ -599,7 +613,10 @@ export class CampaignAutomationService {
    * the others. A platform with no ready account keeps its draft waiting
    * ("approve all"), or fails with the accounts and reasons (one platform).
    */
-  private async decideVariants(ownerId: string, id: string, action: 'approve' | 'reject', dto: ApproveAiCampaignDto = {}, variantId?: string, trigger: 'review' | 'auto' = 'review') {
+  private async decideVariants(
+    ownerId: string, id: string, action: 'approve' | 'reject', dto: ApproveAiCampaignDto = {}, variantId?: string,
+    trigger: 'review' | 'auto' | 'chat' = 'review', origin?: ChatDecisionOrigin,
+  ) {
     const scheduledAt = action === 'approve' ? reviewSchedule(dto) : new Date();
     const campaign = await this.prisma.campaign.findFirstOrThrow({ where: { id, ownerId } });
     if (!REVIEWABLE_STATES.includes(campaign.automationState ?? '')) throw new ConflictException('Campaign is not waiting for review');
@@ -609,6 +626,7 @@ export class CampaignAutomationService {
     const outcome: ReviewOutcome = { skippedAccounts: [], waitingVariantIds: [] };
     const approverOn = action === 'approve' && this.ai.approvalEnabled();
     let publishDraft = false;
+    let decidedIds: string[] = [];
     await this.prisma.$transaction(async (tx) => {
       // Serializes decisions on one campaign so a draft never gets two sets of jobs.
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 7311))::text`;
@@ -619,6 +637,11 @@ export class CampaignAutomationService {
         where: { id: { in: variantId ? [variantId] : current.automationVariantIds }, contentId: current.contentId, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
       });
       if (!undecidedDrafts.length) throw new ConflictException(variantId ? 'This draft was already approved or rejected' : 'No draft is waiting for review');
+      // Approved from chat: the post must still be exactly what the approver was shown.
+      if (action === 'approve' && origin && variantId) {
+        const snapshot = await loadApprovalSnapshot(tx, id, variantId);
+        if (!origin.expectedHash || !snapshot || snapshotHash(snapshot) !== origin.expectedHash) throw new ApprovalContentChangedError();
+      }
       // A post whose planned image is still being created, or whose text the AI
       // is rewriting, cannot go out yet: approving now would send the old text.
       const busy = (variant: { mediaRecommendation: Prisma.JsonValue; aiRevision: Prisma.JsonValue }) => imagePending(variant.mediaRecommendation) || rewriteRunning(variant.aiRevision);
@@ -638,11 +661,11 @@ export class CampaignAutomationService {
           if (!variant.body.trim()) throw new ConflictException('A draft is empty. Edit it before approving.');
         }
         // The final AI approver must have said yes to exactly this text: approving
-        // one such draft by hand is refused with the approver's reason; "approve
-        // all" and auto-publish leave it waiting and post the others.
+        // one such draft by hand (or from chat) is refused with the approver's reason;
+        // "approve all" and auto-publish leave it waiting and post the others.
         const unapproved = unapprovedDrafts(approvable, accounts, approverOn);
         if (unapproved.length) {
-          if ((variantId && trigger === 'review') || unapproved.length === approvable.length) throw new BadRequestException(unapprovedMessage(unapproved));
+          if ((variantId && trigger !== 'auto') || unapproved.length === approvable.length) throw new BadRequestException(unapprovedMessage(unapproved));
           const unapprovedIds = new Set(unapproved.map((variant) => variant.id));
           held.push(...approvable.filter((variant) => unapprovedIds.has(variant.id)));
           approvable = approvable.filter((variant) => !unapprovedIds.has(variant.id));
@@ -679,6 +702,7 @@ export class CampaignAutomationService {
       } else {
         await tx.contentVariant.updateMany({ where: { id: { in: pending.map((variant) => variant.id) }, targets: { none: {} } }, data: { status: VariantStatus.REJECTED } });
       }
+      decidedIds = pending.map((variant) => variant.id);
       const undecided = await tx.contentVariant.count({
         where: { id: { in: current.automationVariantIds }, status: { in: [VariantStatus.GENERATED, VariantStatus.APPROVED] }, targets: { none: {} } },
       });
@@ -702,12 +726,15 @@ export class CampaignAutomationService {
       actorId: ownerId, action: action === 'approve' ? 'CAMPAIGN_AI_APPROVED' : 'CAMPAIGN_AI_REJECTED', entityType: 'campaigns', entityId: id,
       after: {
         variantId: variantId ?? null, scope: variantId ? 'platform' : 'remaining', trigger,
+        ...(origin ? { source: origin.source, approvalId: origin.approvalId, ...(origin.note ? { note: origin.note } : {}) } : {}),
         ...(outcome.skippedAccounts.length ? { skippedAccountIds: outcome.skippedAccounts.map((account) => account.id) } : {}),
         ...(outcome.waitingVariantIds.length ? { waitingVariantIds: outcome.waitingVariantIds } : {}),
         ...(outcome.overLimitVariants?.length ? { overLimitVariantIds: outcome.overLimitVariants.map((variant) => variant.id) } : {}),
         ...(outcome.unapprovedVariants?.length ? { unapprovedVariantIds: outcome.unapprovedVariants.map((variant) => variant.id) } : {}),
       },
     });
+    // Decided here: close the chat requests still open for these drafts (a chat decision has claimed its own already).
+    await this.chatOutbox?.reviewClosed(id, decidedIds);
     if (publishDraft) {
       try { await this.campaigns.publish(ownerId, id); }
       catch (error) {
@@ -754,6 +781,7 @@ export class CampaignAutomationService {
       actorId: ownerId, action: 'CAMPAIGN_AI_RESTORED', entityType: 'campaigns', entityId: id,
       after: { variantId: variantId ?? null, scope: variantId ? 'platform' : 'rejected' },
     });
+    await this.chatOutbox?.reviewRestored(id, variantId ? [variantId] : undefined);
     return this.result(ownerId, id);
   }
 
@@ -798,6 +826,7 @@ export class CampaignAutomationService {
       actorId: ownerId, action: 'CAMPAIGN_AUTOMATION_DELETED', entityType: 'campaigns', entityId: id,
       after: { name: outcome.name, contentId: outcome.contentId, contentRemoved: outcome.contentRemoved },
     });
+    await this.chatOutbox?.reviewClosed(id);
     return { deleted: true, contentRemoved: outcome.contentRemoved };
   }
 
@@ -822,6 +851,7 @@ export class CampaignAutomationService {
     });
     if (!updated.count) throw new ConflictException('Only content waiting for review can be rejected');
     await this.audit.recordBestEffort({ actorId: ownerId, action: 'CAMPAIGN_AI_REJECTED', entityType: 'campaigns', entityId: id });
+    await this.chatOutbox?.reviewClosed(id);
     return this.result(ownerId, id);
   }
 
