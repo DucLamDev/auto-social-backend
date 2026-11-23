@@ -16,6 +16,12 @@ PostgreSQL là nguồn sự thật. Prisma schema ở `prisma/schema.prisma`; mi
 - Operations: `AuditLog`, `SystemSetting`.
 - Agents: `ExtensionDevice` (tiện ích Chrome đã ghép nối), `McpToken` (token MCP cho Codex: chỉ lưu SHA-256, `scopes`
   `read`/`write`, `expiresAt`, `revokedAt`; migration `20261103100000_mcp_tokens`).
+- Kết nối chat VPSTTT: `ChatOutboxEvent` (sổ gửi sang chat: `dedupeKey` unique, `kind`, `payload`, `status`
+  PENDING/SENT/FAILED/SKIPPED, `attempts`, `nextAttemptAt`, `lastError`, `lastAttemptAt`, `sentAt`) và `ChatApprovalLink`
+  (bài ↔ yêu cầu duyệt bên chat: `campaignId`, `variantId`, lượt `cycle`, `externalKey` và `approvalId` unique, unique
+  `(variantId, cycle)`, `contentHash` (băm chữ, ảnh, tài khoản, giờ hẹn đã gửi duyệt) và `requestBody` (thân yêu cầu gửi chat, dùng lại khi gửi lại), `status`, `resultRecordedAt`). Mã chiến dịch / bài là cột thường,
+  không khoá ngoại, để vẫn huỷ được yêu cầu bên chat sau khi chiến dịch bị xoá; migration `20261123090000_chat_integration`.
+  Xem [CHAT_INTEGRATION.md](CHAT_INTEGRATION.md).
 - Gợi ý giao diện: `ExtensionUiHint` (mỗi lần tiện ích hỏi AI: phần tử đã che dữ liệu, trạng thái RUNNING/READY/FAILED,
   kết quả) và `ExtensionSelectorSuggestion` (selector theo chủ sở hữu + engine + origin + ô, PENDING/APPROVED/REJECTED,
   unique `(ownerId, engine, origin, field, selector)`); migration `20261103110000_extension_ui_recovery`.

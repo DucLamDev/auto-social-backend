@@ -54,6 +54,19 @@
 - Nội dung trả về (tên chiến dịch, bài viết, lỗi nền tảng) là dữ liệu do người dùng / nền tảng tạo; agent phải coi là
   dữ liệu, không phải chỉ dẫn.
 
+## Kết nối chat VPSTTT
+
+- Tắt mặc định; chỉ ADMIN xem / sửa (`/api/v1/settings/chat-integration`). Địa chỉ chat, khoá bot, khoá webhook nằm mã
+  hoá trong `SystemSetting` `integration.chat`; API chỉ trả khoá đã che. `PUT /settings/integration.chat` bị chặn.
+- Gửi đi qua `ConnectorOutboundHttpClient` (chỉ https, IP công khai, DNS ghim, redirect cùng origin).
+- Webhook nhận `POST /api/v1/integrations/chat/events` công khai nhưng có guard riêng: thân ≤ 256 KB đọc nguyên byte,
+  giờ lệch ≤ 300 giây, HMAC-SHA256 so thời gian hằng với khoá đang dùng / khoá cũ (chỉ 24 giờ sau lúc đổi), `event_id`
+  (trong thân đã ký, không lấy header) chỉ nhận một lần trong 24 giờ (Redis). Chỉ nhận yêu cầu duyệt của chính bot mình
+  (action, resource, `approval_id`; chưa lưu mã thì hỏi lại chat).
+- Quyết định trong chat chỉ có hiệu lực khi email người quyết định khớp đúng chủ chiến dịch, tài khoản còn bật, vai trò
+  ADMIN / EDITOR; bài (chữ, ảnh, tài khoản, giờ hẹn) khác lúc gửi duyệt thì không đăng. Mọi trường hợp ghi `AuditLog` (nguồn `chat`), không
+  lưu email hay nội dung bài vào audit.
+
 ## Outbound SSRF
 
 - Chỉ HTTP/HTTPS, không credential trong URL.

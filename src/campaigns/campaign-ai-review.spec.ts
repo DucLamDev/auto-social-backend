@@ -8,6 +8,8 @@ import { RedisService } from '../queue/redis.service';
 import { CampaignAutomationService } from './campaign-automation.service';
 import { CampaignAutomationWorkerService } from './campaign-automation-worker.service';
 import { CampaignsService } from './campaigns.service';
+import { ChatOutboxService } from '../chat-integration/chat-outbox.service';
+import { ApprovalContentChangedError, loadApprovalSnapshot, snapshotHash } from '../chat-integration/chat-snapshot';
 
 /** A connected, enabled account as the account queries return it. */
 function readyAccount(id: string, platformId: string, slug: string, patch: Record<string, unknown> = {}) {
@@ -225,6 +227,41 @@ describe('Per-platform review', () => {
     prisma.contentVariant.findMany.mockResolvedValue([]);
     await expect(service.approveVariant('owner-1', 'campaign-1', 'variant-2')).rejects.toThrow('already approved or rejected');
     await expect(service.approveVariant('owner-1', 'campaign-1', 'variant-9')).rejects.toThrow('not part of the campaign');
+  });
+
+  it('records a chat decision with chat as the audit source and closes open chat requests for drafts decided on the web', async () => {
+    const { prisma, ai, campaigns, variant, other, waiting } = perPlatform();
+    const audit = { recordBestEffort: jest.fn() };
+    const chatOutbox = { reviewClosed: jest.fn(), reviewReady: jest.fn(), reviewRestored: jest.fn() };
+    const service = new CampaignAutomationService(prisma as unknown as PrismaService, ai as unknown as AiContentService, campaigns as unknown as CampaignsService,
+      audit as unknown as AuditService, undefined, undefined, undefined, undefined, chatOutbox as unknown as ChatOutboxService);
+    const images = [{ id: 'image-1', publicUrl: 'https://cdn.example.com/a.jpg', createdAt: new Date() }];
+    Object.assign(prisma, {
+      mediaAsset: { findMany: jest.fn(() => Promise.resolve(images)) },
+      contentVariant: { ...prisma.contentVariant, findUnique: jest.fn().mockResolvedValue({ ...variant, title: null, hashtags: [] }) },
+    });
+    Object.assign(prisma.campaign, { findUnique: jest.fn().mockResolvedValue({ ...waiting, scheduledAt: null }) });
+    const shown = snapshotHash((await loadApprovalSnapshot(prisma as unknown as PrismaService, 'campaign-1', 'variant-1'))!);
+    prisma.contentVariant.findMany.mockResolvedValue([variant]);
+    prisma.contentVariant.count.mockResolvedValue(1);
+
+    // The image was regenerated after the request went to chat: nothing is approved.
+    images[0] = { id: 'image-2', publicUrl: 'https://cdn.example.com/b.jpg', createdAt: new Date() };
+    await expect(service.approveVariant('owner-1', 'campaign-1', 'variant-1', {}, { source: 'chat', approvalId: 'approval-1', expectedHash: shown }))
+      .rejects.toBeInstanceOf(ApprovalContentChangedError);
+    await expect(service.approveVariant('owner-1', 'campaign-1', 'variant-1', {}, { source: 'chat', approvalId: 'approval-1' }))
+      .rejects.toBeInstanceOf(ApprovalContentChangedError);
+    expect(prisma.publishJob.create).not.toHaveBeenCalled();
+
+    images[0] = { id: 'image-1', publicUrl: 'https://cdn.example.com/a.jpg', createdAt: new Date() };
+    await service.approveVariant('owner-1', 'campaign-1', 'variant-1', {}, { source: 'chat', approvalId: 'approval-1', expectedHash: shown });
+    expect(prisma.publishJob.create).toHaveBeenCalledTimes(1);
+    expect(audit.recordBestEffort).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'CAMPAIGN_AI_APPROVED', after: expect.objectContaining({ variantId: 'variant-1', trigger: 'chat', source: 'chat', approvalId: 'approval-1' }) as unknown,
+    }));
+    prisma.contentVariant.findMany.mockResolvedValue([other]);
+    await service.rejectVariant('owner-1', 'campaign-1', 'variant-2');
+    expect(chatOutbox.reviewClosed).toHaveBeenLastCalledWith('campaign-1', ['variant-2']);
   });
 
   it('turns "approve all" and "reject" into decisions on the drafts still waiting once one platform was decided', async () => {

@@ -28,6 +28,7 @@ Kiểm thử X bằng Chrome đã cài trên máy Windows 10: [WINDOWS_X_LOGIN.m
 - Medium, Reddit, TikTok và các destination không có create API phù hợp chạy bàn giao `MANUAL/NEEDS_ACTION`: AI vẫn tạo nội dung và giữ media để người dùng copy/mở editor/xác nhận kết quả. Hệ thống không bypass CAPTCHA, 2FA, anti-bot hay chính sách nền tảng.
 - OAuth hoàn chỉnh cho LinkedIn, Google→Blogger, Instagram (Instagram Login), Threads và Tumblr: bấm **Kết nối** một lần, token Instagram/Threads/Blogger/Tumblr được tự gia hạn. Provider khác hiển thị rõ `API_REVIEW_REQUIRED`, `API_RESEARCH_REQUIRED` hoặc `MANUAL`.
 - `src/account-health`: cron gia hạn token Meta, kiểm tra kết nối hằng ngày, cảnh báo qua `ALERT_WEBHOOK_URL`; `GET /api/v1/account-health` cấp dữ liệu cho bảng **Cần xử lý**.
+- `src/chat-integration`: kết nối chat VPSTTT (mặc định tắt) — gửi yêu cầu duyệt từng bài cho chủ chiến dịch, nhận kết quả duyệt qua webhook có chữ ký, báo đăng lỗi / tài khoản / chiến dịch xong vào kênh "Auto Social". Xem [CHAT_INTEGRATION.md](CHAT_INTEGRATION.md).
 
 Các connector chưa được coi là “đã kiểm chứng production” cho đến khi chạy integration test bằng app/account thật. Xem [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md).
 
@@ -390,6 +391,7 @@ ContentSource → SourceArticle → Content → AI ContentVariant
 - [CONNECTOR_GUIDE.md](CONNECTOR_GUIDE.md)
 - [QUEUE.md](QUEUE.md)
 - [SECURITY.md](SECURITY.md)
+- [CHAT_INTEGRATION.md](CHAT_INTEGRATION.md) — kết nối chat VPSTTT: duyệt bài trong chat, thông báo kênh "Auto Social"
 - [DEPLOYMENT.md](DEPLOYMENT.md)
 - [SOCIAL_CONFIGURATION.md](SOCIAL_CONFIGURATION.md)
 - [SOCIAL_API_SETUP_GUIDE.md](SOCIAL_API_SETUP_GUIDE.md) — lấy token/key từng nền tảng và điền vào form

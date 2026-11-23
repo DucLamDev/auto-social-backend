@@ -11,6 +11,8 @@ import { ApiResponseInterceptor } from './common/interceptors/api-response.inter
 import { RequestContextInterceptor } from './common/interceptors/request-context.interceptor';
 import { setupSwagger } from './swagger';
 import { GLOBAL_PREFIX, GLOBAL_PREFIX_OPTIONS } from './common/global-prefix';
+import { CHAT_EVENTS_PATH } from './chat-integration/chat-integration.constants';
+import { chatEventsRawBody } from './chat-integration/chat-webhook.guard';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -18,6 +20,8 @@ async function bootstrap(): Promise<void> {
     logger: loggerLevels(),
   });
   app.setGlobalPrefix(GLOBAL_PREFIX, GLOBAL_PREFIX_OPTIONS);
+  // The chat webhook signature covers the exact bytes: this one route reads its body raw (256 KB cap).
+  app.use(CHAT_EVENTS_PATH, chatEventsRawBody);
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cookieParser());
   app.enableCors({
